@@ -367,6 +367,31 @@ let test_cancellation_stops_work_and_stays_quiet () =
 
 (* The race the spec calls out: a cancellation arriving after the work is
    done must be ignored, not crash or confuse the next reply. *)
+(* The check is exact: a number and its decimal spelling are different ids.
+   Obliging the mismatch would hide a client bug, so the request keeps
+   running and the session stays busy. *)
+let test_cancelling_with_the_wrong_id_type_does_nothing () =
+  with_server @@ fun c ->
+  send_raw c
+    (`Assoc [ "jsonrpc", `String "2.0"; "id", `Int 7;
+              "method", `String "tools/call";
+              "params", `Assoc [ "name", `String "eval";
+                                 "arguments",
+                                 `Assoc [ "session", `String "s";
+                                          "code", `String
+                                            "let rec s n = s (n+1) in s 0;;" ] ] ]);
+  Unix.sleepf 0.5;
+  (* the id was issued as a number; cancel with its decimal spelling *)
+  send_raw c
+    (`Assoc [ "jsonrpc", `String "2.0";
+              "method", `String "notifications/cancelled";
+              "params", `Assoc [ "requestId", `String "7" ] ]);
+  Unix.sleepf 0.5;
+  let r = call c ~id:8 ~tool:"eval"
+      ~args:(`Assoc [ "session", `String "s"; "code", `String "1 + 1;;" ]) in
+  Alcotest.(check bool) "the request was not cancelled, so the session is busy"
+    true (has "busy" (text r))
+
 let test_cancelling_a_finished_request_is_ignored () =
   with_server @@ fun c ->
   let r = call c ~id:1 ~tool:"eval"
@@ -414,7 +439,9 @@ let () =
        [ Alcotest.test_case "stops work and stays quiet" `Slow
            test_cancellation_stops_work_and_stays_quiet;
          Alcotest.test_case "cancelling a finished request is ignored" `Slow
-           test_cancelling_a_finished_request_is_ignored ]);
+           test_cancelling_a_finished_request_is_ignored;
+         Alcotest.test_case "the wrong id type does nothing" `Slow
+           test_cancelling_with_the_wrong_id_type_does_nothing ]);
       ("sessions",
        [ Alcotest.test_case "worker death restarts the name" `Slow
            test_worker_death_restarts_the_name;

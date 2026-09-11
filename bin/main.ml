@@ -221,15 +221,32 @@ let handle_cancelled params =
   in
   match find id_matches with
   | None ->
-    (* Say so when the only reason it did not match is the spelling. Unknown
-       and already-finished ids are a race the spec expects, and are ignored
-       in silence; a type mismatch is a client bug and is not. *)
-    (match find id_matches_loosely with
-     | Some name ->
-       log "ignoring a cancellation for %s: session %S is waiting on the same \
-            id in the other JSON form, which is not the id it was issued"
-         (Yojson.Safe.to_string requested) name
-     | None -> ())
+    (* A cancellation for nothing at all is the race the spec expects, and is
+       ignored in silence. One that arrives while requests *are* pending is a
+       client bug, so name it and say what it could have meant: we hold every
+       pending id, so the candidates are known rather than guessed at. *)
+    if Hashtbl.length pending > 0 then begin
+      let describe (id : Jsonrpc.Id.t) =
+        match id with
+        | `Int n -> Printf.sprintf "%d (number)" n
+        | `String s -> Printf.sprintf "%S (string)" s
+      in
+      let candidates =
+        Hashtbl.fold
+          (fun name (id, _) acc ->
+             Printf.sprintf "session %S is waiting on %s" name (describe id) :: acc)
+          pending []
+      in
+      log "ignoring notifications/cancelled for %s: no request was issued with \
+           that id. Pending: %s"
+        (Yojson.Safe.to_string requested) (String.concat "; " candidates);
+      match find id_matches_loosely with
+      | Some name ->
+        log "  it differs only in JSON type from the id session %S is waiting \
+             on. Cancel with the id exactly as it was issued; a number and its \
+             decimal spelling are different ids." name
+      | None -> ()
+    end
   | Some name ->
     match Hashtbl.find_opt sessions name with
     | None -> Hashtbl.remove pending name

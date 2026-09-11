@@ -45,14 +45,28 @@ a request that already finished finds nothing pending and is ignored, as is
 one for an id that never existed. Both are tested, because the spec calls out
 that they will happen and must not disturb anything.
 
-**Ids are matched exactly, with no coercion, and a spelling mismatch is
-logged rather than obliged.** JSON-RPC 2.0 says an id "MUST contain a String,
-Number, or NULL value if included", and the MCP cancellation page's own
-example uses `"requestId": "123"`, so both forms are conforming and neither
-is refused. What is refused is a cancellation whose id matches only after
-coercing an integer to its decimal spelling: a client knows what it issued,
-so that is a client bug, and obliging it silently would hide it. Unknown and
-already-finished ids stay silent, since the spec says to expect those.
+**Ids are matched exactly, with no coercion.** JSON-RPC 2.0 says an id "MUST
+contain a String, Number, or NULL value if included", and the MCP
+cancellation page's own example uses `"requestId": "123"`, so both forms are
+conforming and neither is refused. What is refused is a cancellation whose id
+matches only after coercing a number to its decimal spelling: a client knows
+what it issued, so that is a client bug, and obliging it silently would hide
+it. The request keeps running and the session stays busy, which is tested.
+
+**The failure names what it could have meant.** Every pending id is held
+here, so the candidates are known rather than guessed:
+
+```
+ignoring notifications/cancelled for "7": no request was issued with that
+id. Pending: session "s" is waiting on 7 (number)
+  it differs only in JSON type from the id session "s" is waiting on. Cancel
+  with the id exactly as it was issued; a number and its decimal spelling are
+  different ids.
+```
+
+A cancellation arriving when nothing is pending stays silent: that is the
+race the spec says to expect. The distinguishing question is whether any
+request was in flight at all, not whether the id was recognised.
 
 Nothing needed thread-safe cancellation tokens, which
 [ocaml-mcp](https://github.com/tmattio/ocaml-mcp) lists as the reason it has
