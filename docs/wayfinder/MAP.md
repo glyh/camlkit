@@ -82,12 +82,20 @@ must evaluate it first. Tests are Alcotest.
   reusable and the first result after a restart says the toplevel is fresh.
 - [Automatic toplevel printers](tickets/018-automatic-toplevel-printers.md) —
   `[@@ocaml.toplevel_printer]` support was silently absent, so a project's own
-  types printed as `<abstr>`; reimplemented in `worker/printers.ml`.
+  types printed as `<abstr>`; reimplemented in `worker/printers.ml`, both the
+  required-package half and the in-session half, the latter by folding over the
+  environment rather than copying utop's Env-summary walk.
 - [Trust boundary](tickets/012-trust-boundary.md) — trusted local developer
   tool, deliberately not sandboxed; stdio implies a local parent and that
   assumption is load-bearing.
 - [Testing strategy](tickets/013-testing-strategy.md) — one tier, integration
   tests spawn a real utop in the default `dune test`.
+
+**Not forking utop.** Reconsidered once and re-declined on measurement: 76
+lines reimplemented here against 4,426 lines and 28 cppo version branches
+inherited. The full list of what `UTop_main` does and we do not is in
+[Should Lwt and Async expressions auto-run](tickets/019-lwt-async-auto-run.md);
+one item remains and it is a choice, not a gap.
 
 ## Fog
 

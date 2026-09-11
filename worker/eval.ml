@@ -22,6 +22,9 @@ let init () =
   Sys.interactive := false;
   Clflags.real_paths := false;          (* -short-paths *)
   Toploop.initialize_toplevel_env ();
+  (* utop sets this in common_init; it names the buffer in compiler messages. *)
+  Location.input_name := UTop.input_name;
+  Printers.prime ();
   install_handler ()
 
 (* Give every bare expression a name, so <expr>;; becomes let _N = <expr>;;

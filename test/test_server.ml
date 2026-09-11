@@ -189,6 +189,29 @@ let test_automatic_toplevel_printers () =
     (has "<mylib holding 5>" (text r));
   Alcotest.(check bool) "so the value is not opaque" false (has "<abstr>" (text r))
 
+(* The other half: a printer defined inside the session. utop finds these by
+   walking Env summaries; we fold over the environment instead, so this checks
+   the substitute actually behaves the same. *)
+let test_in_session_printer () =
+  with_server @@ fun c ->
+  let args code = `Assoc [ "session", `String "s"; "code", `String code ] in
+  let def =
+    "module Money : sig\n\
+    \  type t\n\
+    \  val of_int : int -> t\n\
+    \  val pp : Format.formatter -> t -> unit [@@ocaml.toplevel_printer]\n\
+     end = struct\n\
+    \  type t = int\n\
+    \  let of_int x = x\n\
+    \  let pp fmt x = Format.fprintf fmt \"$%d.00\" x\n\
+     end;;" in
+  let r = call c ~id:1 ~tool:"eval" ~args:(args def) in
+  Alcotest.(check bool) "the module defines" false (is_error r);
+  let r = call c ~id:2 ~tool:"eval" ~args:(args "Money.of_int 12;;") in
+  Alcotest.(check bool) "its own printer is used" true (has "$12.00" (text r));
+  Alcotest.(check bool) "the abstract type is not opaque" false
+    (has "<abstr>" (text r))
+
 let () =
   Alcotest.run "utop-mcp-server"
     [ ("mcp",
@@ -206,7 +229,8 @@ let () =
            test_a_stuck_session_does_not_block_the_server ]);
       ("printers",
        [ Alcotest.test_case "automatic toplevel printers" `Slow
-           test_automatic_toplevel_printers ]);
+           test_automatic_toplevel_printers;
+         Alcotest.test_case "in-session printer" `Slow test_in_session_printer ]);
       ("sessions",
        [ Alcotest.test_case "worker death restarts the name" `Slow
            test_worker_death_restarts_the_name;

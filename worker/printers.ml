@@ -6,10 +6,14 @@
    requiring a package and evaluating one of its values printed <abstr> where
    real utop printed the value.
 
-   ponytail: only the cmi half is reimplemented, which covers packages brought
-   in by require. Printers defined inside the session itself need Autoprinter's
-   scan_env, which walks Env summaries and is the part most exposed to
-   compiler-libs churn between releases. *)
+   Two halves: printers arriving with a loaded cmi (a required package), and
+   printers defined inside the session itself.
+
+   The second half is deliberately not a copy of Autoprinter.scan_env. That
+   walks Env summaries by matching every constructor, and already needs a cppo
+   branch for 5.5, which is the churn we chose not to inherit. Env.fold_modules
+   and Env.fold_values have stable signatures and say the same thing, so we
+   fold and remember what we have already seen. *)
 
 let is_auto_printer_attribute (attr : Parsetree.attribute) =
   match attr.attr_name.txt with
@@ -46,10 +50,48 @@ let pending = ref []
 
 let () = UTop_compat.add_cmi_hook (fun cmi -> pending := cmi :: !pending)
 
-let scan pp =
+let scan_cmis pp =
   let cmis = !pending in
   pending := [];
   List.iter
     (fun (cmi : Cmi_format.cmi_infos) ->
        walk_sig pp ~path:(Longident.Lident cmi.Cmi_format.cmi_name) cmi.Cmi_format.cmi_sign)
     cmis
+
+(* Names already accounted for. Primed at startup so the first phrase does not
+   walk the whole of the stdlib looking for an attribute it will never find. *)
+let seen_modules : (string, unit) Hashtbl.t = Hashtbl.create 64
+let seen_values : (string, unit) Hashtbl.t = Hashtbl.create 64
+
+let fold_names () =
+  let env = !Toploop.toplevel_env in
+  let modules =
+    Env.fold_modules (fun name _ decl acc -> (name, decl) :: acc) None env [] in
+  let values =
+    Env.fold_values (fun name _ vd acc -> (name, vd) :: acc) None env [] in
+  (modules, values)
+
+let prime () =
+  let modules, values = fold_names () in
+  List.iter (fun (name, _) -> Hashtbl.replace seen_modules name ()) modules;
+  List.iter (fun (name, _) -> Hashtbl.replace seen_values name ()) values
+
+let scan_env pp =
+  let modules, values = fold_names () in
+  List.iter
+    (fun (name, (decl : Types.module_declaration)) ->
+       if not (Hashtbl.mem seen_modules name) then begin
+         Hashtbl.replace seen_modules name ();
+         walk_mty pp (Longident.Lident name) decl.Types.md_type
+       end)
+    modules;
+  List.iter
+    (fun (name, (vd : Types.value_description)) ->
+       if not (Hashtbl.mem seen_values name) then begin
+         Hashtbl.replace seen_values name ();
+         if List.exists is_auto_printer_attribute vd.Types.val_attributes then
+           try Topdirs.dir_install_printer pp (Longident.Lident name) with _ -> ()
+       end)
+    values
+
+let scan pp = scan_cmis pp; scan_env pp
