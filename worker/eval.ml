@@ -134,10 +134,14 @@ let execute_all cap phrases =
       let wppf = Format.formatter_of_buffer wbuf in
       Location.formatter_for_warnings := wppf;
       interrupted := false;
+      (* Scan before and after, as utop does: a phrase may itself load the
+         cmis carrying the printers it then wants to use. *)
+      Printers.scan ppf;
       let ok =
         try Toploop.execute_phrase true ppf phrase
         with exn -> Buffer.add_string buf (message_of_exn exn); false
       in
+      Printers.scan ppf;
       Format.pp_print_flush ppf (); Format.pp_print_flush wppf ();
       let stop = Capture.mark cap in
       let record = Msg.{ rendering = Buffer.contents buf;

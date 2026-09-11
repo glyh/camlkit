@@ -1,0 +1,15 @@
+; Built as a real findlib package so a test can `require` it. Bytecode only,
+; because the worker that loads it is bytecode. META is generated rather than
+; checked in: dune treats a source file of that name specially and will not
+; copy it into the build directory.
+(rule
+ (targets mylib.cma mylib.cmi)
+ (deps mylib.mli mylib.ml)
+ (action
+  (run ocamlfind ocamlc -a -o mylib.cma mylib.mli mylib.ml)))
+
+(rule
+ (targets META)
+ (action
+  (with-stdout-to META
+   (echo "version = \"1.0\"\ndescription = \"fixture: automatic toplevel printer\"\narchive(byte) = \"mylib.cma\"\n"))))

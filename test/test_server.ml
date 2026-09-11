@@ -9,6 +9,8 @@ type client = { ic : in_channel; oc : out_channel; pid : int }
 
 let start () =
   Unix.putenv "UTOP_MCP_WORKER" worker_path;
+  (* a findlib package carrying an automatic toplevel printer *)
+  Unix.putenv "OCAMLPATH" (Filename.concat (Sys.getcwd ()) "fixtures");
   (* cloexec: OCaml defaults it to false, so without this the server, and then
      its workers, inherit the ends we keep. *)
   let in_r, in_w = Unix.pipe ~cloexec:true () in
@@ -171,6 +173,22 @@ let test_reset () =
   let r = call c ~id:5 ~tool:"eval" ~args:(args "let keep = 8;;") in
   Alcotest.(check bool) "the session still works" false (is_error r)
 
+(* utop installs printers for values marked [@@ocaml.toplevel_printer]. That
+   lives in UTop_main.Autoprinter, which is internal, reached through
+   UTop_main.execute_phrase, which we do not call. Without reimplementing it a
+   library's own types print as <abstr>, which undercuts exploring a codebase. *)
+let test_automatic_toplevel_printers () =
+  with_server @@ fun c ->
+  let r = call c ~id:1 ~tool:"require"
+      ~args:(`Assoc [ "session", `String "s";
+                      "packages", `List [ `String "mylib" ] ]) in
+  Alcotest.(check string) "the fixture package loads" "ok" (status r);
+  let r = call c ~id:2 ~tool:"eval"
+      ~args:(`Assoc [ "session", `String "s"; "code", `String "Mylib.make 5;;" ]) in
+  Alcotest.(check bool) "its printer is used, not <abstr>" true
+    (has "<mylib holding 5>" (text r));
+  Alcotest.(check bool) "so the value is not opaque" false (has "<abstr>" (text r))
+
 let () =
   Alcotest.run "utop-mcp-server"
     [ ("mcp",
@@ -186,6 +204,9 @@ let () =
            test_sessions_are_independent;
          Alcotest.test_case "a stuck session does not block the server" `Slow
            test_a_stuck_session_does_not_block_the_server ]);
+      ("printers",
+       [ Alcotest.test_case "automatic toplevel printers" `Slow
+           test_automatic_toplevel_printers ]);
       ("sessions",
        [ Alcotest.test_case "worker death restarts the name" `Slow
            test_worker_death_restarts_the_name;

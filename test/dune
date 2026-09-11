@@ -4,4 +4,9 @@
 (tests
  (names test_utop_mcp test_server)
  (libraries utop_mcp wire alcotest unix yojson str)
- (deps %{exe:../worker/main.bc.exe} %{exe:../bin/main.exe}))
+ (deps
+  %{exe:../worker/main.bc.exe}
+  %{exe:../bin/main.exe}
+  fixtures/mylib/META
+  fixtures/mylib/mylib.cma
+  fixtures/mylib/mylib.cmi))

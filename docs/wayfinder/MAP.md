@@ -80,6 +80,9 @@ must evaluate it first. Tests are Alcotest.
 - [Session lifecycle and the tool surface](tickets/006-tool-surface.md) — four
   tools, all with output schemas; sessions created on first use; a dead name is
   reusable and the first result after a restart says the toplevel is fresh.
+- [Automatic toplevel printers](tickets/018-automatic-toplevel-printers.md) —
+  `[@@ocaml.toplevel_printer]` support was silently absent, so a project's own
+  types printed as `<abstr>`; reimplemented in `worker/printers.ml`.
 - [Trust boundary](tickets/012-trust-boundary.md) — trusted local developer
   tool, deliberately not sandboxed; stdio implies a local parent and that
   assumption is load-bearing.
