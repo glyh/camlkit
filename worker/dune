@@ -1,8 +1,14 @@
 ; utop has no native archive (archive(native) = ""), so the worker is bytecode.
 ; It is installed as its own binary because the server spawns it by name; see
 ; lib/session.ml for how it is found.
+;
+; -linkall because the toplevel loads code we never referenced at build time.
+; Without it the linker drops stdlib units nothing in the worker mentions, and
+; loading a project that uses one fails with "Reference to undefined
+; compilation unit Stdlib__Dynarray" even though the switch has it.
 (executable
  (name main)
  (public_name utop-mcp-worker)
  (modes byte_complete)
+ (link_flags (-linkall))
  (libraries utop wire unix))

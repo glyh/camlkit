@@ -27,6 +27,10 @@ type failure = {
   message : string;
   spans : (int * int) list;  (* byte offsets into the submitted source *)
   lines : (int * int) list;  (* the same errors as line ranges *)
+  (* Phrases that ran before this one. Empty for a parse or typecheck
+     failure, where nothing runs, but not for a runtime failure: those
+     phrases really did execute and their output is worth keeping. *)
+  done_ : phrase list;
 }
 
 type response =
@@ -92,13 +96,14 @@ let json_of_response = function
   | Completed ps ->
     `Assoc [ "status", `String "completed";
              "phrases", `List (List.map json_of_phrase ps) ]
-  | Failed { phase; phrase_index; message; spans; lines } ->
+  | Failed { phase; phrase_index; message; spans; lines; done_ } ->
     `Assoc [ "status", `String "failed";
              "phase", `String (string_of_phase phase);
              "phrase_index", `Int phrase_index;
              "message", `String message;
              "spans", `List (List.map (fun (a, b) -> `List [ `Int a; `Int b ]) spans);
-             "lines", `List (List.map (fun (a, b) -> `List [ `Int a; `Int b ]) lines) ]
+             "lines", `List (List.map (fun (a, b) -> `List [ `Int a; `Int b ]) lines);
+             "phrases", `List (List.map json_of_phrase done_) ]
   | Interrupted { phrase_index; done_ } ->
     `Assoc [ "status", `String "interrupted";
              "phrase_index", `Int phrase_index;
@@ -120,7 +125,10 @@ let response_of_json j =
              lines = member "lines" j |> to_list
                      |> List.map (fun s -> match to_list s with
                          | [ a; b ] -> (to_int a, to_int b)
-                         | _ -> failwith "bad line range") }
+                         | _ -> failwith "bad line range");
+             done_ = (match member "phrases" j with
+                 | `List ps -> List.map phrase_of_json ps
+                 | _ -> []) }
   | "interrupted" ->
     Interrupted { phrase_index = member "phrase_index" j |> to_int;
                   done_ = member "phrases" j |> to_list |> List.map phrase_of_json }

@@ -24,6 +24,12 @@ let init () =
   Toploop.initialize_toplevel_env ();
   (* utop sets this in common_init; it names the buffer in compiler messages. *)
   Location.input_name := UTop.input_name;
+  (* UTop_main installs print_out_signature and print_out_phrase hooks from a
+     module initializer, and -linkall means they now run. They hide
+     identifiers beginning with an underscore, which is exactly what our
+     implicit bindings are called, so a bare expression rendered as nothing at
+     all. This is what -show-reserved does in the utop binary. *)
+  UTop.set_hide_reserved false;
   Printers.prime ();
   install_handler ()
 
@@ -86,7 +92,8 @@ let parse src =
   match !UTop.parse_use_file src false with
   | UTop.Value phrases -> Ok phrases
   | UTop.Error (spans, message) ->
-    Error Msg.{ phase = Parse; phrase_index = -1; message; spans; lines = [] }
+    Error Msg.{ phase = Parse; phrase_index = -1; message; spans; lines = [];
+                done_ = [] }
 
 (* Directives are not typeable, so skipping them in the typing pass falsely
    rejects valid code: "#require \"yojson\";; Yojson.Safe.from_string ..."
@@ -118,7 +125,8 @@ let typecheck_all phrases =
        | exception exn ->
          let message, spans, lines = describe_exn exn in
          restore ();
-         Error Msg.{ phase = Typecheck; phrase_index = i; message; spans; lines })
+         Error Msg.{ phase = Typecheck; phrase_index = i; message; spans; lines;
+                     done_ = [] })
   in
   go 0 phrases
 
@@ -157,8 +165,13 @@ let execute_all cap phrases =
         Msg.Interrupted { phrase_index = i; done_ = List.rev !acc }
       else if ok then go (i + 1) rest
       else
+        (* The phrases before this one really ran. Keep their records, and
+           this one's, so their output is not thrown away with the error. *)
         Msg.Failed { phase = Execute; phrase_index = i;
-                     message = record.Msg.rendering; spans = []; lines = [] }
+                     message = record.Msg.rendering; spans = []; lines = [];
+                     (* everything except the failing phrase, whose rendering
+                        is already the message *)
+                     done_ = List.rev (List.tl !acc) }
   in
   go 0 phrases
 
@@ -217,4 +230,4 @@ let require cap packages =
                       truncated = false } ]
   | Error message ->
     Msg.Failed { phase = Msg.Execute; phrase_index = 0; message;
-                 spans = []; lines = [] }
+                 spans = []; lines = []; done_ = [] }

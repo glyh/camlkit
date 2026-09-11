@@ -65,14 +65,25 @@ let of_response (response : Msg.response) payload =
       | [], (a, b) :: _ when b > a -> Printf.sprintf " (characters %d-%d)" a b
       | _ -> ""
     in
-    { content = Printf.sprintf "%s%s\n\n%s\n\nNothing was executed." where at
-          (String.trim f.message);
+    (* "Nothing ran" is true of a parse or typecheck failure, where the whole
+       request is rejected before execution, and false of a runtime one. *)
+    let aftermath = match f.phase with
+      | Msg.Parse | Msg.Typecheck -> "Nothing was executed."
+      | Msg.Execute ->
+        if f.phrase_index <= 0 then "Nothing before it ran."
+        else Printf.sprintf "The %d phrase%s before it did run."
+            f.phrase_index (if f.phrase_index = 1 then "" else "s")
+    in
+    let before = transcript payload f.done_ in
+    { content = Printf.sprintf "%s%s%s\n\n%s\n\n%s"
+          before where at (String.trim f.message) aftermath;
       structured = `Assoc [ "status", `String "failed";
                             "phase", `String (Msg.string_of_phase f.phase);
                             "phrase", `Int (f.phrase_index + 1);
                             "message", `String f.message;
                             "spans", spans_json f.spans;
-                            "lines", spans_json f.lines ];
+                            "lines", spans_json f.lines;
+                            "phrases", `List (List.map (json_phrase payload) f.done_) ];
       is_error = false }
   | Msg.Interrupted { phrase_index; done_ } ->
     { content = Printf.sprintf

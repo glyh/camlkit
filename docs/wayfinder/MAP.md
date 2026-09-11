@@ -107,13 +107,9 @@ one item remains and it is a choice, not a gap.
 
 ## Fog
 
-- **Project launch context.** Deferred deliberately, and the shape of the
-  question changed with the worker. `dune utop` is no longer available to us,
-  because we do not spawn the utop binary at all. So getting a project's own
-  libraries into a session means something else: findlib names through the
-  require tool, or adding the project's build directories to the search path,
-  or running the worker under `dune exec`. Undecided which, and whether a
-  session names a project directory at all.
+- **Project launch context.** No longer fog: the mechanism is confirmed and
+  the work is specified in
+  [Loading a dune project's own libraries](tickets/021-dune-aware-load.md).
 - **Toplevel printers.** Hermetic spawn suppresses the ones a user
   installs in `init.ml`, so their own types print as `<abstr>`. Tracked as
   [Let a session opt out of hermetic spawn](tickets/010-hermetic-opt-out.md);

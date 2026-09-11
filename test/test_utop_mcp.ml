@@ -70,7 +70,7 @@ let test_response_roundtrip () =
                            out_start = 0; out_len = 0; truncated = false } ]);
   check (Msg.Failed { phase = Msg.Typecheck; phrase_index = 1;
                       message = "Error: ..."; spans = [ (4, 8) ];
-                      lines = [ (1, 1) ] });
+                      lines = [ (1, 1) ]; done_ = [] });
   check (Msg.Rejected "directives not accepted")
 
 (* Output is capped because an MCP result is one payload with no streaming.
@@ -292,6 +292,60 @@ let test_error_locations () =
     [ (0, 17) ] g.Msg.spans;
   Alcotest.(check (list (pair int int))) "later line ranges too" [ (1, 1) ] g.Msg.lines
 
+(* Reported from a session driving a real project: loading its code died with
+   "Reference to undefined compilation unit Stdlib__Dynarray" even though the
+   switch has it. The worker is byte_complete, so the linker drops stdlib units
+   nothing in the worker mentions. Fixed with -linkall, which in turn activated
+   utop's hide-reserved filter and hid the implicit bindings, so the two are
+   tested together. *)
+let test_stdlib_is_fully_linked () =
+  with_worker @@ fun s ->
+  let r, _ = ask s (Msg.Eval
+      "let d : int Dynarray.t = Dynarray.create () in \
+       Dynarray.add_last d 7; Dynarray.get d 0;;") in
+  (match r with
+   | Msg.Failed f ->
+     Alcotest.failf "a stdlib module was not linked: %s" f.Msg.message
+   | _ -> ());
+  Alcotest.(check bool) "and the value renders" true
+    (has_substring "= 7" (List.hd (phrases r)).Msg.rendering)
+
+(* Reported: three phrases, the second throws, and the first one's output was
+   gone even though it ran. A runtime failure is not a rejected request. *)
+let test_output_survives_a_later_failure () =
+  with_worker @@ fun s ->
+  let r, output = ask s
+      (Msg.Eval "let () = print_string \"ran-first\";; \
+                 failwith \"boom\";; \
+                 let () = print_string \"never\";;") in
+  match r with
+  | Msg.Failed f ->
+    Alcotest.(check string) "failed while executing, not before"
+      "execute" (Msg.string_of_phase f.Msg.phase);
+    Alcotest.(check int) "the phrase that ran is kept" 1 (List.length f.Msg.done_);
+    let p = List.hd f.Msg.done_ in
+    Alcotest.(check string) "with its output intact"
+      "ran-first" (String.sub output p.Msg.out_start p.Msg.out_len);
+    Alcotest.(check bool) "and the failing phrase is not duplicated into it"
+      false (has_substring "boom" p.Msg.rendering)
+  | _ -> Alcotest.fail "expected a runtime failure"
+
+(* Reported as a sharp edge rather than a bug: because nothing runs unless
+   every phrase typechecks, a phrase that changes the search path cannot be
+   used by a later phrase in the same call. Worth pinning so the behaviour is
+   deliberate rather than accidental. *)
+let test_path_changes_need_their_own_call () =
+  with_worker @@ fun s ->
+  let r, _ = ask s (Msg.Eval
+      "let () = Topdirs.dir_directory \"/tmp\";; Mylib.make 1;;") in
+  match r with
+  | Msg.Failed f ->
+    Alcotest.(check string) "rejected at typecheck, before anything ran"
+      "typecheck" (Msg.string_of_phase f.Msg.phase);
+    Alcotest.(check int) "so nothing is reported as having run" 0
+      (List.length f.Msg.done_)
+  | _ -> Alcotest.fail "expected the whole request to be rejected"
+
 (* The capture file exists so output can be recovered from a phrase that had
    to be interrupted. Worth proving, since OCaml buffers stdout and a hung
    phrase never reaches a flush of its own. *)
@@ -349,5 +403,11 @@ let () =
          Alcotest.test_case "require" `Slow test_require;
          Alcotest.test_case "hermetic" `Slow test_hermetic;
          Alcotest.test_case "error locations" `Slow test_error_locations;
+         Alcotest.test_case "stdlib is fully linked" `Slow
+           test_stdlib_is_fully_linked;
+         Alcotest.test_case "output survives a later failure" `Slow
+           test_output_survives_a_later_failure;
+         Alcotest.test_case "path changes need their own call" `Slow
+           test_path_changes_need_their_own_call;
          Alcotest.test_case "partial output recovered on interrupt" `Slow
            test_partial_output_recovered_on_interrupt ]) ]
