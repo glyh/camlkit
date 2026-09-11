@@ -1,0 +1,7 @@
+; One tier: integration tests spawn a real worker. utop is a hard dependency
+; anyway, and the behaviours that matter here are timing and signal ones that
+; a recorded transcript cannot express.
+(test
+ (name test_utop_mcp)
+ (libraries utop_mcp wire alcotest unix yojson str)
+ (deps %{exe:../worker/main.bc.exe}))

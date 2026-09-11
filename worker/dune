@@ -1,5 +1,5 @@
-; utop is bytecode-only (archive(native) = ""), so the worker is too.
+; utop has no native archive (archive(native) = ""), so the worker is bytecode.
 (executable
- (name utop_worker)
+ (name main)
  (modes byte_complete)
- (libraries utop))
+ (libraries utop wire unix))

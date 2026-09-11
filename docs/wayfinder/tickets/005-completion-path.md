@@ -51,6 +51,11 @@ So the describe tool is an evaluation of `#show <path>` whose rendering is
 returned. No walking of `Env`, no per-candidate type lookup, no new
 machinery. Verified in the worker prototype.
 
+Implementation note found while scaffolding: directives print to stdout
+rather than to the formatter passed to `execute_phrase`, so a describe
+answer arrives in the captured output segment with an empty rendering. The
+tool must read the raw segment.
+
 The output is formatted OCaml signature text rather than structured data.
 That is acceptable: signature syntax is exactly what an agent reads
 natively, and structuring it would mean reimplementing the printer.

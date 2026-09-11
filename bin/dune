@@ -1,4 +1,4 @@
 (executable
  (name main)
  (public_name utop-mcp)
- (libraries unix jsonrpc yojson))
+ (libraries utop_mcp unix jsonrpc yojson wire))
