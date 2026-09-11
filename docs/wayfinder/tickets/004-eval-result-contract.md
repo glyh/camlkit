@@ -1,7 +1,7 @@
 ---
 status: open
 type: grilling
-blocked-by: [003]
+blocked-by: [002, 003]
 assignee:
 ---
 
@@ -20,4 +20,5 @@ map back onto the submitted source, and whether a failed phrase is an MCP
 tool error or a successful call carrying a failure payload.
 
 Needs real captures from the session driver to decide against, not
-guesses.
+guesses, and cannot be settled before the MCP result shape is pinned,
+since whatever is decided here has to be expressed in it.
