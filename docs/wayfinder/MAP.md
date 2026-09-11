@@ -140,6 +140,12 @@ must evaluate it first. Tests are Alcotest.
   tool reports fields, `load` is not expressible as directives at all, and a
   buffer containing one cannot be typed before it runs. Wording only; `eval`
   already rejected them. `#trace` is the one real loss and stays in the fog.
+- [A ceiling on a phrase's heap](tickets/030-heap-ceiling.md) — a Gc alarm
+  armed only while a phrase runs, raising at 2048 MiB by default, so a runaway
+  allocation is stopped the way a runaway loop is interrupted rather than by
+  the allocator killing the worker. Detected by a flag because execute_phrase
+  swallows the exception, and the catch compacts or the next phrase trips on
+  the dead one's garbage.
 - [Trust boundary](tickets/012-trust-boundary.md) — trusted local developer
   tool, deliberately not sandboxed; stdio implies a local parent and that
   assumption is load-bearing.
@@ -221,8 +227,10 @@ it is also where `dune top` came from.
   [Toplevel directives are not part of the tool surface](tickets/029-directives-are-not-the-surface.md).
   Whether an agent wants a call trace at all is the open part; the machinery
   for it already exists.
-- **Resource limits.** A phrase can allocate until the machine dies. A
-  deadline bounds time but nothing bounds memory.
+- **Resource limits beyond time and heap.** Both are now bounded, see
+  [A ceiling on a phrase's heap](tickets/030-heap-ceiling.md). File
+  descriptors, subprocesses and disk are not, and a phrase can still spawn
+  something the worker's death would not reap.
 - **History.** utop's protocol exposes history navigation and
   `save-history`. Unclear whether an agent client wants any of it.
 - **Publishing.** Installing and client registration are done. What remains

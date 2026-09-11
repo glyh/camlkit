@@ -378,6 +378,31 @@ let test_incomplete_input_is_an_error_not_a_crash () =
   let r, _ = ask s (ev "1 + 1;;") in
   Alcotest.(check bool) "the session survives" true (phrases r <> [])
 
+(* A phrase can allocate until the machine dies; a heap ceiling stops it the
+   way the deadline stops one that will not return. The ceiling is lowered
+   through the environment so this trips in a second rather than at 2 GiB. *)
+let test_heap_limit () =
+  Unix.putenv "CAMLKIT_HEAP_LIMIT_MIB" "64";
+  Fun.protect ~finally:(fun () -> Unix.putenv "CAMLKIT_HEAP_LIMIT_MIB" "")
+    (fun () ->
+       with_worker (fun s ->
+           (match ask s (ev "let kept = 41 + 1;;") with
+            | Msg.Completed _, _ -> ()
+            | _ -> Alcotest.fail "expected a completed phrase");
+           (match ask s (ev "let r = ref [] in \
+                             for i = 1 to 100_000_000 do r := i :: !r done;;") with
+            | Msg.Failed f, _ ->
+              Alcotest.(check bool) "the ceiling is named" true
+                (has_substring "heap passed 64 MiB" f.Msg.message)
+            | _ -> Alcotest.fail "a runaway allocation should be stopped");
+           (* the session survived, which is the point of stopping rather than
+              letting the kernel do it *)
+           (match ask s (ev "kept;;") with
+            | Msg.Completed { phrases = [ p ]; _ }, _ ->
+              Alcotest.(check bool) "earlier bindings are intact" true
+                (has_substring "= 42" p.Msg.rendering)
+            | _ -> Alcotest.fail "the session should still be usable")))
+
 (* An Lwt expression at a toplevel otherwise yields a promise nobody ran.
    Rewritten to run, as utop does. The rule self-gates on the type and on the
    runner existing, so a session that never loads Lwt is unaffected. *)
@@ -603,6 +628,8 @@ let () =
          Alcotest.test_case "bindings carry names and types" `Slow
            test_bindings_carry_names_and_types;
          Alcotest.test_case "lwt expressions run" `Slow test_lwt_expressions_run;
+         Alcotest.test_case "a heap ceiling stops a runaway phrase" `Slow
+           test_heap_limit;
          Alcotest.test_case "incomplete input is an error not a crash" `Slow
            test_incomplete_input_is_an_error_not_a_crash;
          Alcotest.test_case "stdlib is fully linked" `Slow

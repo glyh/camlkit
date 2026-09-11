@@ -14,6 +14,10 @@ open Wire
 
 let interrupted = ref false
 
+(* The ceiling on a phrase's heap, in MiB; see with_heap_limit below. *)
+let heap_limit_mib = ref 2048
+let heap_limit_words () = !heap_limit_mib * 1024 * 1024 / (Sys.word_size / 8)
+
 let install_handler () =
   ignore (Sys.signal Sys.sigint
             (Sys.Signal_handle (fun _ -> interrupted := true; raise Sys.Break)))
@@ -25,6 +29,11 @@ let init () =
   (* utop used to do this for us. Without it Topfind has no configuration and
      every require fails; the byte predicate matters because this worker is
      bytecode and would otherwise be offered native archives. *)
+  (* The ceiling is fixed, but a small machine may want it lower and a test
+     needs it low enough to trip cheaply. *)
+  (match Option.bind (Sys.getenv_opt "CAMLKIT_HEAP_LIMIT_MIB") int_of_string_opt with
+   | Some n when n > 0 -> heap_limit_mib := n
+   | _ -> ());
   Findlib.init ();
   (* ld.conf names <switch>/lib/ocaml/stublibs, but opam installs package
      stubs one level up in <switch>/lib/stublibs, and only opam env's
@@ -134,6 +143,37 @@ let typecheck_all phrases =
   in
   go 0 [] phrases
 
+(* Nothing bounded a phrase's allocation: a runaway one took the machine with
+   it and the worker died by the kernel's hand rather than ours, losing the
+   session. A Gc alarm runs at the end of every major cycle, so a ceiling
+   checked there stops the phrase while the heap is still ours to unwind, the
+   same way the deadline stops one that will not return.
+
+   Armed only while a phrase runs, so nothing can trip while the response is
+   being built. The reading is the heap's size rather than its live words:
+   quick_stat does not walk the heap, and a heap that has grown this far is
+   the thing being bounded. That is also why the catch compacts - without it
+   the heap stays at the ceiling and the next phrase trips at once.
+
+   ponytail: one fixed ceiling for every session, make it an argument if
+   anyone needs a bigger one. *)
+exception Over_heap_limit
+
+
+(* Detected by a flag, not by catching the exception, for the same reason as
+   the interrupt: execute_phrase catches what evaluated code raises and turns
+   it into a printed rendering, so the exception never reaches us. *)
+let over_limit = ref false
+
+let with_heap_limit f =
+  let alarm =
+    Gc.create_alarm (fun () ->
+        if (Gc.quick_stat ()).Gc.heap_words > heap_limit_words () then begin
+          over_limit := true; raise Over_heap_limit
+        end)
+  in
+  Fun.protect ~finally:(fun () -> Gc.delete_alarm alarm) f
+
 (* execute_phrase swallows Sys.Break itself, printing "Interrupted." and
    returning false, so an interrupt is detected by the handler's flag rather
    than by catching an exception. It does raise on compile errors, which the
@@ -149,12 +189,29 @@ let execute_all cap phrases =
       let wppf = Format.formatter_of_buffer wbuf in
       Location.formatter_for_warnings := wppf;
       interrupted := false;
+      over_limit := false;
       (* Scan before and after, as utop does: a phrase may itself load the
          cmis carrying the printers it then wants to use. *)
       Printers.scan ppf;
       let ok =
-        try Toploop.execute_phrase true ppf phrase
+        try with_heap_limit (fun () -> Toploop.execute_phrase true ppf phrase)
         with exn -> Buffer.add_string buf (message_of_exn exn); false
+      in
+      let ok =
+        if not !over_limit then ok
+        else begin
+          (* Give the heap back: the ceiling reads its size, so without this
+             the next phrase trips on the runaway one's garbage. *)
+          Gc.compact ();
+          Buffer.clear buf;
+          Buffer.add_string buf
+            (Printf.sprintf
+               "Exception: the phrase was stopped after the heap passed %d \
+                MiB, which is this worker's ceiling. The session is still \
+                usable and its earlier bindings are intact.\n"
+               !heap_limit_mib);
+          false
+        end
       in
       Printers.scan ppf;
       Format.pp_print_flush ppf (); Format.pp_print_flush wppf ();

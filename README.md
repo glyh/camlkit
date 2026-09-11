@@ -236,6 +236,11 @@ never leaves partial state behind.
 typeable, so allowing them would break that guarantee. Loading a library and
 showing a signature are separate tools.
 
+**A phrase that allocates without bound is stopped.** The worker raises when
+its heap passes 2048 MiB, which leaves the session usable with its bindings,
+rather than letting the allocator kill the worker and lose it.
+`CAMLKIT_HEAP_LIMIT_MIB` changes the ceiling.
+
 **A runaway phrase is interrupted before it is killed.** An interrupt leaves
 the toplevel usable with its bindings intact; only an unanswered interrupt
 escalates to a kill, which loses the session.

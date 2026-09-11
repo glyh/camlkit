@@ -100,6 +100,12 @@ swallowed by `execute_phrase`, so interrupts are detected by a flag set in
 the signal handler; toplevel state survives. Only an unanswered interrupt
 escalates to a kill.
 
+**A phrase that allocates without bound is stopped too.** A Gc alarm armed
+only while a phrase runs raises past a heap ceiling (2048 MiB, or
+`CAMLKIT_HEAP_LIMIT_MIB`), so the session survives instead of the allocator
+killing the worker. Ticket 030 has the three details that are easy to get
+wrong.
+
 **Sessions are hermetic.** `~/.config/utop/init.ml` is not loaded.
 
 Prefer stability over linking: merlin is shelled out to in single mode and
