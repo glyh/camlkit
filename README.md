@@ -126,16 +126,16 @@ signature, `require` loads findlib packages, `load` brings in a dune
 project's own libraries, and `reset` empties a session. Sessions are created
 on first use under whatever name you pick, and state persists between calls.
 
-To explore the project you are working in:
+To explore the project you are working in, build it, then:
 
 ```
-require  { packages: ["sedlex", ...] }   # its external dependencies
-load     { path: "/path/to/project" }    # its own libraries
+load { path: "/path/to/project" }
 ```
 
-`load` finds the archives under `_build/default`, adds the `.objs/byte`
-directories where dune hides the compiled interfaces, and retries until
-dependency order settles. After rebuilding the project, pass `reset: true`:
+That is the whole thing. `load` asks `dune top` for the directives the
+project needs, so its own libraries and its external dependencies arrive
+together, in dependency order. For a directory that is not a dune project it
+falls back to scanning for archives. After rebuilding the project, pass `reset: true`:
 loading a changed archive into a session holding the old one fails on an
 interface mismatch. The session remembers which findlib packages it was
 required to load, and restores them across that reset, so the rebuild loop

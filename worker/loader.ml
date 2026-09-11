@@ -10,6 +10,55 @@
    retry the failures until a pass makes no progress, which settles any
    dependency order in a few passes. *)
 
+(* dune knows the answer already. `dune top` prints the exact directives a
+   toplevel needs for a project: the .objs/byte directories, the external
+   package directories, and the archives in dependency order, externals
+   included. That subsumes the scan below, the retry-until-settled ordering,
+   and the separate require step for things like sedlex. *)
+(* Look for dune beside our own executable before trusting PATH. We are
+   installed into an opam switch, and dune lives in that switch's bin; a client
+   may well spawn us with a PATH that has neither. *)
+let dune_binary =
+  lazy
+    (let beside =
+       Filename.concat (Filename.dirname Sys.executable_name) "dune" in
+     if Sys.file_exists beside then beside else "dune")
+
+(* Only ask when the path is itself a project root. dune searches upwards for
+   a dune-project, so pointing at a subdirectory would silently answer for the
+   enclosing project, and running it inside another dune invocation contends
+   for the build lock. *)
+let is_dune_project path = Sys.file_exists (Filename.concat path "dune-project")
+
+let dune_top path =
+  if not (is_dune_project path) then []
+  else
+  let cmd =
+    Printf.sprintf "cd %s && %s top . 2>/dev/null" (Filename.quote path)
+      (Filename.quote (Lazy.force dune_binary)) in
+  let ic = Unix.open_process_in cmd in
+  let rec drain acc =
+    match input_line ic with
+    | line -> drain (line :: acc)
+    | exception End_of_file -> List.rev acc
+  in
+  let lines = drain [] in
+  match Unix.close_process_in ic with
+  | Unix.WEXITED 0 -> lines
+  | _ -> []
+
+(* #directory "..." ;; and #load "..." ;; *)
+let directive_arg prefix line =
+  let line = String.trim line in
+  let p = "#" ^ prefix ^ " \"" in
+  if String.length line > String.length p
+  && String.sub line 0 (String.length p) = p then
+    match String.index_from_opt line (String.length p) '"' with
+    | Some close ->
+      Some (String.sub line (String.length p) (close - String.length p))
+    | None -> None
+  else None
+
 let rec walk acc dir =
   match Sys.readdir dir with
   | exception Sys_error _ -> acc
@@ -76,10 +125,11 @@ let provider ~archives unit_ =
 (* Topdirs writes the real diagnosis to its formatter and then raises something
    opaque: a bare Compenv.Exit_with_status 125 says nothing, while the
    formatter holds "The files ... disagree over interface Debug". Capture it. *)
-let attempt archive =
+let attempt ?(add_dirs = true) archive =
   let buf = Buffer.create 256 in
   let ppf = Format.formatter_of_buffer buf in
-  List.iter (fun d -> Topdirs.dir_directory d) (interface_dirs archive);
+  if add_dirs then
+    List.iter (fun d -> Topdirs.dir_directory d) (interface_dirs archive);
   let raised =
     try Topdirs.dir_load ppf archive; None
     (* Printexc gives "Symtable.Error(_)", which says nothing. The compiler's
@@ -98,7 +148,39 @@ let attempt archive =
   | Some e, "" -> Error e
   | Some e, said -> Error (said ^ " (" ^ e ^ ")")
 
+(* Ask dune, and fall back to scanning for a directory that is not a dune
+   project (or a dune that cannot answer). *)
+let load_via_dune ~libraries path =
+  match dune_top path with
+  | [] -> None
+  | lines ->
+    let dirs = List.filter_map (directive_arg "directory") lines in
+    let archives = List.filter_map (directive_arg "load") lines in
+    let archives =
+      match libraries with
+      | [] -> archives
+      | wanted -> List.filter (fun a -> List.mem (name_of a) wanted) archives
+    in
+    if archives = [] then None
+    else begin
+      List.iter (fun d -> Topdirs.dir_directory d) dirs;
+      (* dune's order is already correct, so load once through, in order. *)
+      let loaded, failed =
+        List.fold_left
+          (fun (loaded, failed) a ->
+             match attempt ~add_dirs:false a with
+             | Ok () -> (a :: loaded, failed)
+             | Error e -> (loaded, (a, e) :: failed))
+          ([], []) archives
+      in
+      Some (List.rev loaded, List.rev failed)
+    end
+
 let load ~libraries path =
+  match load_via_dune ~libraries path with
+  | Some (loaded, failed) ->
+    Ok (List.map name_of loaded, List.map (fun (a, e) -> (name_of a, e)) failed)
+  | None ->
   match build_root path with
   | Error e -> Error e
   | Ok root ->
@@ -121,6 +203,7 @@ let load ~libraries path =
         else (loaded, failed)
       in
       let loaded, failed = pass found [] [] in
+      let name_of = name_of in
             let failed_names = List.map (fun (a, _) -> name_of a) failed in
       let annotate (archive, err) =
         let hint =
@@ -146,4 +229,5 @@ let load ~libraries path =
         in
         (archive, err ^ hint)
       in
-      Ok (List.rev loaded, List.map annotate (List.rev failed))
+      Ok (List.map name_of (List.rev loaded),
+          List.map (fun (a, e) -> (name_of a, e)) (List.map annotate (List.rev failed)))

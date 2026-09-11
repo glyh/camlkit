@@ -122,3 +122,31 @@ that was the wrong shape.
 `failed` as an array of `{library, error}`, with `status` distinguishing a
 complete load from a partial one. The readable summary still ships as text
 content alongside.
+
+## Amendment: ask dune instead of reconstructing what it knows
+
+`dune top .` prints exactly the directives a toplevel needs for a project:
+every `.objs/byte` directory, every external package directory, and every
+archive in dependency order with the externals included. Found while looking
+at [ocaml-mcp](https://github.com/tmattio/ocaml-mcp), which uses it for the
+same purpose.
+
+That subsumes three things this ticket had built by hand: the archive scan,
+the retry-until-settled ordering, and the separate `require` step for
+externals. Loading a real compiler project now takes one call with no prior
+`require`, and brings in `sedlex`, `gen`, `ppx_deriving_runtime` and
+`linenoise` alongside the project's own seven libraries.
+
+The scanner is kept as a fallback for a directory that is not a dune project.
+
+Two things had to be got right. **dune is found beside our own executable
+before PATH**, because we are installed into an opam switch where dune also
+lives, and a client may spawn us with neither on PATH. And **dune is only
+consulted when the path is itself a project root**, since it searches upwards
+for a `dune-project`: pointing at a subdirectory would silently answer for
+the enclosing project, and running it inside another dune invocation contends
+for the build lock. Both were found by the suite failing, not by reasoning.
+
+The dune path is verified against a real project rather than in the suite,
+because running dune inside `dune runtest` is exactly the lock contention
+described above.

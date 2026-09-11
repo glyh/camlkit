@@ -233,10 +233,7 @@ let load cap ~libraries ~packages path =
   | Ok () ->
   match Loader.load ~libraries path with
   | Error e -> fail_result e
-  | Ok (loaded, failed) ->
-    let name a = Filename.remove_extension (Filename.basename a) in
-    Msg.Loaded { loaded = List.map name loaded;
-                 failed = List.map (fun (a, e) -> (name a, e)) failed }
+  | Ok (loaded, failed) -> Msg.Loaded { loaded; failed }
 
 (* Directive-backed operations. These bypass the typing pass by design:
    directives are not typeable, which is why they are not allowed in eval. *)

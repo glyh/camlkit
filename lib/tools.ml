@@ -97,13 +97,14 @@ let load_tool =
     "name", `String "load";
     "description", `String
       "Load a dune project's own libraries into a session, so its modules \
-       become available. Use this for the project you are working in; \
-       require only reaches findlib packages, and dune libraries are usually \
-       private. Point it at the project root. Pass reset after rebuilding the \
-       project: loading a changed archive into a session that already has the \
-       old one fails on an interface mismatch, so the session must start \
-       clean. The worker must have been built with the same OCaml version as \
-       the project, because bytecode is version-locked.";
+       become available. Point it at the project root, the directory holding \
+       dune-project. Build the project first; this loads what is already \
+       compiled. External dependencies come with it, so there is no need to \
+       require them separately. Pass reset after rebuilding: loading a changed \
+       archive into a session that already has the old one fails on an \
+       interface mismatch, so the session must start clean. The worker must \
+       have been built with the same OCaml version as the project, because \
+       bytecode is version-locked.";
     "inputSchema", obj ~required:[ "session"; "path" ]
       [ session_arg;
         ("path", `Assoc [ "type", `String "string";
