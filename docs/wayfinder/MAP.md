@@ -42,6 +42,10 @@ must evaluate it first. Tests are Alcotest.
   `opam exec -- dune utop . -- -emacs`. What is undecided is whether a
   session names a project directory, and how that interacts with hermetic
   spawn flags.
+- **Toplevel printers.** Hermetic spawn suppresses the ones a user
+  installs in `init.ml`, so their own types print as `<abstr>`. Tracked as
+  [Let a session opt out of hermetic spawn](tickets/010-hermetic-opt-out.md);
+  noted here only because it is a visible behavioural difference.
 - **Beyond completion.** Type lookup, documentation lookup, jump-to-source.
   utop's completion may or may not be the right substrate; merlin may be a
   better fit for some of it, at the cost of a second subsystem.
