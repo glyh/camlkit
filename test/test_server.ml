@@ -98,13 +98,15 @@ let test_tools_listed () =
     Yojson.Safe.Util.(member "tools" r |> to_list
                       |> List.map (fun t -> member "name" t |> to_string)) in
   Alcotest.(check (slist string compare)) "the tools"
-    [ "describe"; "eval"; "load"; "require"; "reset" ] names;
+    [ "describe"; "eval"; "load"; "locate"; "outline"; "require"; "reset";
+      "search_type"; "type_at"; "uses" ] names;
   let schemas =
     Yojson.Safe.Util.(member "tools" r |> to_list
                       |> List.filter (fun t -> member "outputSchema" t <> `Null)
                       |> List.map (fun t -> member "name" t |> to_string)) in
   Alcotest.(check (slist string compare)) "every tool declares an output schema"
-    [ "describe"; "eval"; "load"; "require"; "reset" ] schemas
+    [ "describe"; "eval"; "load"; "locate"; "outline"; "require"; "reset";
+      "search_type"; "type_at"; "uses" ] schemas
 
 let test_eval_through_the_loop () =
   with_server @@ fun c ->
@@ -403,6 +405,69 @@ let test_cancelling_a_finished_request_is_ignored () =
       ~args:(`Assoc [ "session", `String "s"; "code", `String "2 + 2;;" ]) in
   Alcotest.(check bool) "the server carries on" true (has "4" (text r))
 
+(* Merlin answers about source rather than values, so these need no session.
+
+   The fixture is written outside this project on purpose: merlin finds a
+   dune project's configuration by invoking dune, which would contend for the
+   build lock while `dune runtest` holds it. A standalone file needs no
+   configuration beyond the stdlib. *)
+let with_source f =
+  let dir = Filename.temp_dir "utop-mcp-src" "" in
+  let path = Filename.concat dir "sample.ml" in
+  let oc = open_out path in
+  output_string oc
+    "let greet name = \"hello \" ^ name\n\
+     type colour = Red | Blue\n\
+     let shout name = String.uppercase_ascii (greet name)\n";
+  close_out oc;
+  Fun.protect
+    ~finally:(fun () ->
+        (try Sys.remove path with Sys_error _ -> ());
+        (try Unix.rmdir dir with Unix.Unix_error _ -> ()))
+    (fun () -> f path)
+
+let test_outline () =
+  with_server @@ fun c ->
+  with_source @@ fun path ->
+  let r = call c ~id:1 ~tool:"outline" ~args:(`Assoc [ "file", `String path ]) in
+  Alcotest.(check bool) "not an error" false (is_error r);
+  let names =
+    Yojson.Safe.Util.(
+      r |> member "structuredContent" |> member "items" |> to_list
+      |> List.map (fun i -> member "name" i |> to_string))
+  in
+  Alcotest.(check (slist string compare)) "every definition in the file"
+    [ "colour"; "greet"; "shout" ] names
+
+let test_type_at () =
+  with_server @@ fun c ->
+  with_source @@ fun path ->
+  (* line 3, on the call to greet *)
+  let r = call c ~id:1 ~tool:"type_at"
+      ~args:(`Assoc [ "file", `String path; "line", `Int 3; "col", `Int 41 ]) in
+  let types =
+    Yojson.Safe.Util.(
+      r |> member "structuredContent" |> member "enclosings" |> to_list
+      |> List.map (fun e -> member "type" e |> to_string))
+  in
+  Alcotest.(check bool) "the innermost type is reported" true
+    (List.exists (fun t -> has "string" t) types)
+
+let test_locate () =
+  with_server @@ fun c ->
+  with_source @@ fun path ->
+  let r = call c ~id:1 ~tool:"locate"
+      ~args:(`Assoc [ "file", `String path; "line", `Int 3; "col", `Int 41 ]) in
+  let loc = Yojson.Safe.Util.(r |> member "structuredContent" |> member "location") in
+  Alcotest.(check int) "greet is defined on line 1" 1
+    Yojson.Safe.Util.(loc |> member "pos" |> member "line" |> to_int)
+
+let test_source_query_on_a_missing_file () =
+  with_server @@ fun c ->
+  let r = call c ~id:1 ~tool:"outline"
+      ~args:(`Assoc [ "file", `String "/nope/nowhere.ml" ]) in
+  Alcotest.(check bool) "reported as a failure, not a crash" true (is_error r)
+
 let () =
   Alcotest.run "utop-mcp-server"
     [ ("mcp",
@@ -435,6 +500,12 @@ let () =
            test_reset_load_restores_required_packages;
          Alcotest.test_case "explicit reset forgets packages" `Slow
            test_explicit_reset_forgets_packages ]);
+      ("source",
+       [ Alcotest.test_case "outline" `Slow test_outline;
+         Alcotest.test_case "type at a position" `Slow test_type_at;
+         Alcotest.test_case "locate a definition" `Slow test_locate;
+         Alcotest.test_case "a missing file fails cleanly" `Slow
+           test_source_query_on_a_missing_file ]);
       ("cancellation",
        [ Alcotest.test_case "stops work and stays quiet" `Slow
            test_cancellation_stops_work_and_stays_quiet;

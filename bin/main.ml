@@ -51,13 +51,84 @@ let reply id (r : Render.t) =
 let reply_error id (e : Jsonrpc.Response.Error.t) =
   Mcp.respond stdout (Jsonrpc.Packet.Response (Jsonrpc.Response.error id e))
 
-(* --- tool calls --------------------------------------------------------- *)
-
 let arg_string args name =
   match Yojson.Safe.Util.member name args with
   | `String s -> Ok s
   | `Null -> Error (Printf.sprintf "missing required argument %S" name)
   | _ -> Error (Printf.sprintf "argument %S must be a string" name)
+
+(* --- source queries ------------------------------------------------------ *)
+
+(* These ask merlin about code as written, so they need no session and no
+   worker: they answer inside this call rather than going through pending. *)
+
+let arg_int args name =
+  match Yojson.Safe.Util.member name args with
+  | `Int n -> Ok n
+  | `Null -> Error (Printf.sprintf "missing required argument %S" name)
+  | _ -> Error (Printf.sprintf "argument %S must be an integer" name)
+
+let is_source_query = function
+  | "locate" | "type_at" | "outline" | "uses" | "search_type" -> true
+  | _ -> false
+
+let source_query id name args =
+  let ( let* ) = Result.bind in
+  let at () =
+    let* line = arg_int args "line" in
+    let* col = arg_int args "col" in
+    Ok [ "-position"; Merlin.position line col ]
+  in
+  let run () =
+    let* file = arg_string args "file" in
+    match name with
+    | "outline" -> Merlin.query ~command:"outline" ~args:[] ~file
+    | "locate" ->
+      let* pos = at () in
+      Merlin.query ~command:"locate" ~args:pos ~file
+    | "type_at" ->
+      let* pos = at () in
+      Merlin.query ~command:"type-enclosing" ~args:pos ~file
+    | "uses" ->
+      let* line = arg_int args "line" in
+      let* col = arg_int args "col" in
+      let scope = match Yojson.Safe.Util.member "scope" args with
+        | `String s -> s | _ -> "project" in
+      Merlin.query ~command:"occurrences"
+        ~args:[ "-identifier-at"; Merlin.position line col; "-scope"; scope ]
+        ~file
+    | "search_type" ->
+      let* pos = at () in
+      let* query = arg_string args "query" in
+      let limit = match Yojson.Safe.Util.member "limit" args with
+        | `Int n -> [ "-limit"; string_of_int n ] | _ -> [] in
+      Merlin.query ~command:"search-by-type"
+        ~args:(pos @ [ "-query"; query ] @ limit) ~file
+    | other -> Error ("no such source query: " ^ other)
+  in
+  match run () with
+  | Error e -> reply id (Render.infrastructure_failure e)
+  | Ok value ->
+    (* merlin already answers in structure; name it so the result says what it
+       is, and give the text half something readable. *)
+    let key = match name with
+      | "locate" -> "location" | "type_at" -> "enclosings"
+      | "outline" -> "items" | "uses" -> "occurrences" | _ -> "results" in
+    let summary =
+      match value with
+      | `List [] -> "no results"
+      | `List l ->
+        Printf.sprintf "%d result%s\n%s" (List.length l)
+          (if List.length l = 1 then "" else "s")
+          (Yojson.Safe.pretty_to_string value)
+      | v -> Yojson.Safe.pretty_to_string v
+    in
+    reply id { Render.content = summary;
+               structured = `Assoc [ key, value ];
+               is_error = false }
+
+
+(* --- tool calls --------------------------------------------------------- *)
 
 let arg_strings args name =
   match Yojson.Safe.Util.member name args with
@@ -110,6 +181,7 @@ let handle_call id params =
     | `String s -> s | _ -> "" in
   let args = match Yojson.Safe.Util.member "arguments" params with
     | `Assoc _ as a -> a | _ -> `Assoc [] in
+  if is_source_query name then source_query id name args else
   match arg_string args "session" with
   | Error e -> reply id (Render.infrastructure_failure e)
   | Ok session_name ->

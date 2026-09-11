@@ -122,4 +122,86 @@ let reset_tool =
     "inputSchema", obj ~required:[ "session" ] [ session_arg ];
     "outputSchema", obj [ ("status", `Assoc [ "type", `String "string" ]) ] ]
 
-let all = [ eval_tool; describe_tool; require_tool; load_tool; reset_tool ]
+(* Source queries. These take a file and a position rather than a session:
+   they ask about code as written, not about values in a toplevel, so they
+   need nothing loaded and no build. *)
+
+let file_arg =
+  ("file", `Assoc [ "type", `String "string";
+                    "description", `String "Absolute path to an OCaml source \
+                      file in the project." ])
+
+let line_arg =
+  ("line", `Assoc [ "type", `String "integer";
+                    "description", `String "1-based line." ])
+
+let col_arg =
+  ("col", `Assoc [ "type", `String "integer";
+                   "description", `String "0-based column." ])
+
+let locate_tool =
+  `Assoc [
+    "name", `String "locate";
+    "description", `String
+      "Find where the name at a position is defined. Answers from source, so \
+       nothing needs to be built or loaded into a session.";
+    "inputSchema", obj ~required:[ "file"; "line"; "col" ]
+      [ file_arg; line_arg; col_arg ];
+    "outputSchema", obj
+      [ ("file", `Assoc [ "type", `String "string" ]);
+        ("line", `Assoc [ "type", `String "integer" ]);
+        ("col", `Assoc [ "type", `String "integer" ]) ] ]
+
+let type_at_tool =
+  `Assoc [
+    "name", `String "type_at";
+    "description", `String
+      "The type of the expression at a position, and of each enclosing \
+       expression, innermost first. Answers from source: no build, no load, \
+       no session.";
+    "inputSchema", obj ~required:[ "file"; "line"; "col" ]
+      [ file_arg; line_arg; col_arg ];
+    "outputSchema", obj
+      [ ("enclosings", `Assoc [ "type", `String "array";
+                                "description", `String "Each with type and the \
+                                  range it covers, innermost first." ]) ] ]
+
+let outline_tool =
+  `Assoc [
+    "name", `String "outline";
+    "description", `String
+      "What a source file defines: every value, type, module and class, with \
+       its kind and position. Cheaper than reading the file when you only \
+       need to know what is in it.";
+    "inputSchema", obj ~required:[ "file" ] [ file_arg ];
+    "outputSchema", obj [ ("items", `Assoc [ "type", `String "array" ]) ] ]
+
+let uses_tool =
+  `Assoc [
+    "name", `String "uses";
+    "description", `String
+      "Every occurrence of the name at a position. Defaults to the whole \
+       project rather than the one file.";
+    "inputSchema", obj ~required:[ "file"; "line"; "col" ]
+      [ file_arg; line_arg; col_arg;
+        ("scope", `Assoc [ "type", `String "string";
+                           "description", `String "project (the default) or \
+                             buffer." ]) ];
+    "outputSchema", obj [ ("occurrences", `Assoc [ "type", `String "array" ]) ] ]
+
+let search_type_tool =
+  `Assoc [
+    "name", `String "search_type";
+    "description", `String
+      "Find values by their type rather than their name, in scope at a \
+       position. A query is a type with holes, such as \"int -> string\" or \
+       \"'a list -> 'a option\".";
+    "inputSchema", obj ~required:[ "file"; "line"; "col"; "query" ]
+      [ file_arg; line_arg; col_arg;
+        ("query", `Assoc [ "type", `String "string" ]);
+        ("limit", `Assoc [ "type", `String "integer" ]) ];
+    "outputSchema", obj [ ("results", `Assoc [ "type", `String "array" ]) ] ]
+
+let all =
+  [ eval_tool; describe_tool; require_tool; load_tool; reset_tool;
+    locate_tool; type_at_tool; outline_tool; uses_tool; search_type_tool ]

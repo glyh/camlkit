@@ -121,6 +121,9 @@ must evaluate it first. Tests are Alcotest.
 - [Let a session opt out of hermetic spawn](tickets/010-hermetic-opt-out.md) —
   closed unimplemented: attribute printers already work regardless of an init
   file, and there is no init file to opt back into.
+- [Merlin-backed source queries](tickets/027-merlin-source-queries.md) — five
+  session-less tools over `ocamlmerlin`, shelled out rather than linked, in
+  server mode; answers about source rather than values.
 - [Trust boundary](tickets/012-trust-boundary.md) — trusted local developer
   tool, deliberately not sandboxed; stdio implies a local parent and that
   assumption is load-bearing.
