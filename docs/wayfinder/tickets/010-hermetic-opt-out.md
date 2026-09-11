@@ -1,8 +1,8 @@
 ---
-status: open
+status: closed
 type: grilling
 blocked-by: [006]
-assignee:
+assignee: lyh
 ---
 
 # Let a session opt out of hermetic spawn
@@ -28,3 +28,17 @@ reproducible elsewhere.
 
 Depends on the tool surface, which decides how a session is created and
 what parameters it takes.
+
+## Resolution: not worth doing
+
+Closed without implementing. Its premise was eaten twice.
+
+First by [Automatic toplevel printers](018-automatic-toplevel-printers.md):
+printers declared with `[@@ocaml.toplevel_printer]` are installed regardless
+of any init file, which was most of what this ticket was protecting.
+
+Then by looking: there is no `~/.config/utop/init.ml` and no `~/.ocamlinit`
+on the machine this is built for, so there is nothing to opt back into. What
+remains is imperative `#install_printer` calls in a file that does not exist.
+
+Reopen if someone turns up who has such a file and misses it.

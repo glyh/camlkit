@@ -115,6 +115,12 @@ must evaluate it first. Tests are Alcotest.
 - [Loading libraries into a session](tickets/007-library-loading.md) — calls
   `Topfind` directly rather than a directive, so a missing package fails
   honestly; largely superseded by `dune top` reporting externals too.
+- [Honour a cancellation notification](tickets/023-mcp-cancellation.md) —
+  interrupt rather than kill, so the session survives; the answer is read and
+  discarded rather than replied with, and the completed-request race is ignored.
+- [Let a session opt out of hermetic spawn](tickets/010-hermetic-opt-out.md) —
+  closed unimplemented: attribute printers already work regardless of an init
+  file, and there is no init file to opt back into.
 - [Trust boundary](tickets/012-trust-boundary.md) — trusted local developer
   tool, deliberately not sandboxed; stdio implies a local parent and that
   assumption is load-bearing.

@@ -30,6 +30,11 @@ let remember_required name packages =
   let fresh = List.filter (fun p -> not (List.mem p had)) packages in
   Hashtbl.replace required name (had @ fresh)
 
+(* Sessions whose pending request was cancelled. The worker still owes us an
+   answer, and we still have to read it or the pipe fills and the session
+   wedges - we just do not reply with it. *)
+let cancelled : (string, unit) Hashtbl.t = Hashtbl.create 8
+
 (* Names whose session died. The name stays usable, but the first result after
    the restart says so, since the new toplevel is empty. *)
 let restarted : (string, string) Hashtbl.t = Hashtbl.create 8
@@ -184,8 +189,47 @@ let handle_call id params =
         | Error e -> reply id (Render.infrastructure_failure e)
         | Ok () -> Hashtbl.replace pending session_name (id, note)
 
+(* A client may send the id in either JSON form; compare tolerantly rather
+   than drop a cancellation over an int against its own decimal spelling. *)
+let id_matches (stored : Jsonrpc.Id.t) json =
+  match stored, json with
+  | `Int a, `Int b -> a = b
+  | `String a, `String b -> a = b
+  | `Int a, `String b -> string_of_int a = b
+  | `String a, `Int b -> a = string_of_int b
+  | _ -> false
+
+(* notifications/cancelled: stop work, free what it holds, and send no
+   response for the cancelled request. An interrupt is the right first move
+   because it leaves the toplevel usable; if the worker ignores it, the
+   deadline already in flight escalates to a kill. *)
+let handle_cancelled params =
+  let requested = Yojson.Safe.Util.member "requestId" params in
+  let reason = match Yojson.Safe.Util.member "reason" params with
+    | `String r -> " (" ^ r ^ ")" | _ -> "" in
+  let target =
+    Hashtbl.fold
+      (fun name (id, _) acc ->
+         if acc = None && id_matches id requested then Some name else acc)
+      pending None
+  in
+  match target with
+  (* Unknown or already finished. The spec expects this race and says to
+     ignore it. *)
+  | None -> ()
+  | Some name ->
+    match Hashtbl.find_opt sessions name with
+    | None -> Hashtbl.remove pending name
+    | Some s ->
+      log "cancelling the request on session %S%s" name reason;
+      Hashtbl.replace cancelled name ();
+      Session.on_deadline s ~grace
+
 let handle_packet (packet : Jsonrpc.Packet.t) =
   match packet with
+  | Jsonrpc.Packet.Notification { method_ = "notifications/cancelled"; params }
+    ->
+    handle_cancelled (match params with Some (`Assoc _ as a) -> a | _ -> `Assoc [])
   | Jsonrpc.Packet.Notification _ -> ()          (* nothing to answer *)
   | Jsonrpc.Packet.Request ({ id; method_ = "tools/call"; params } as _r) ->
     let params = match params with Some (`Assoc _ as a) -> a | _ -> `Assoc [] in
@@ -217,6 +261,14 @@ let drain_worker name s =
   | None -> log "a worker answered with nothing waiting on it"
   | Some (id, note) ->
     Hashtbl.remove pending name;
+    if Hashtbl.mem cancelled name then begin
+      (* Read and discard: the caller is gone, but the session is not, and an
+         unread frame would wedge it. *)
+      Hashtbl.remove cancelled name;
+      match answer with
+      | Ok _ -> log "discarded the answer to a cancelled request on %S" name
+      | Error e -> discard name e
+    end else
     (match answer with
      | Ok (response, payload) ->
        let r = Render.of_response response payload in
@@ -229,6 +281,12 @@ let drain_worker name s =
 let reap_dead () =
   Hashtbl.iter (fun name s ->
       match Session.state s with
+      | Supervision.Dead why when Hashtbl.mem pending name
+                                  && Hashtbl.mem cancelled name ->
+        (* Nobody is waiting for this one. *)
+        Hashtbl.remove pending name;
+        Hashtbl.remove cancelled name;
+        discard name why
       | Supervision.Dead why when Hashtbl.mem pending name ->
         let id, _ = Hashtbl.find pending name in
         Hashtbl.remove pending name;

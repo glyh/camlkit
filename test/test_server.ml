@@ -329,6 +329,55 @@ let test_explicit_reset_forgets_packages () =
                       "code", `String "Yojson.Safe.from_string;;" ]) in
   Alcotest.(check string) "the package is gone too" "failed" (status r)
 
+(* notifications/cancelled: stop the work and send no response. The session
+   survives, because an interrupt leaves the toplevel usable. *)
+let send_raw c v =
+  output_string c.oc (Yojson.Safe.to_string v); output_char c.oc '\n'; flush c.oc
+
+let cancel c id =
+  send_raw c
+    (`Assoc [ "jsonrpc", `String "2.0";
+              "method", `String "notifications/cancelled";
+              "params", `Assoc [ "requestId", `Int id;
+                                 "reason", `String "test" ] ])
+
+let test_cancellation_stops_work_and_stays_quiet () =
+  with_server @@ fun c ->
+  send_raw c
+    (`Assoc [ "jsonrpc", `String "2.0"; "id", `Int 1;
+              "method", `String "tools/call";
+              "params", `Assoc [ "name", `String "eval";
+                                 "arguments",
+                                 `Assoc [ "session", `String "s";
+                                          "code", `String
+                                            "let rec s n = s (n+1) in s 0;;" ] ] ]);
+  Unix.sleepf 0.5;
+  cancel c 1;
+  (* No response for the cancelled request. The next thing on the wire must be
+     the answer to a later call, not a late reply to this one. *)
+  let r = call c ~id:2 ~tool:"eval"
+      ~args:(`Assoc [ "session", `String "other"; "code", `String "1 + 1;;" ]) in
+  Alcotest.(check bool) "a later request is answered normally" true
+    (has "2" (text r));
+  (* and the cancelled session is usable again, because it was interrupted
+     rather than killed *)
+  let r = call c ~id:3 ~tool:"eval"
+      ~args:(`Assoc [ "session", `String "s"; "code", `String "40 + 2;;" ]) in
+  Alcotest.(check bool) "the cancelled session survives" true (has "42" (text r))
+
+(* The race the spec calls out: a cancellation arriving after the work is
+   done must be ignored, not crash or confuse the next reply. *)
+let test_cancelling_a_finished_request_is_ignored () =
+  with_server @@ fun c ->
+  let r = call c ~id:1 ~tool:"eval"
+      ~args:(`Assoc [ "session", `String "s"; "code", `String "1 + 1;;" ]) in
+  Alcotest.(check bool) "the request completed" false (is_error r);
+  cancel c 1;                       (* too late *)
+  cancel c 999;                     (* never existed *)
+  let r = call c ~id:2 ~tool:"eval"
+      ~args:(`Assoc [ "session", `String "s"; "code", `String "2 + 2;;" ]) in
+  Alcotest.(check bool) "the server carries on" true (has "4" (text r))
+
 let () =
   Alcotest.run "utop-mcp-server"
     [ ("mcp",
@@ -361,6 +410,11 @@ let () =
            test_reset_load_restores_required_packages;
          Alcotest.test_case "explicit reset forgets packages" `Slow
            test_explicit_reset_forgets_packages ]);
+      ("cancellation",
+       [ Alcotest.test_case "stops work and stays quiet" `Slow
+           test_cancellation_stops_work_and_stays_quiet;
+         Alcotest.test_case "cancelling a finished request is ignored" `Slow
+           test_cancelling_a_finished_request_is_ignored ]);
       ("sessions",
        [ Alcotest.test_case "worker death restarts the name" `Slow
            test_worker_death_restarts_the_name;
