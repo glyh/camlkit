@@ -54,6 +54,9 @@ must evaluate it first. Tests are Alcotest.
 - [Exploring the environment: describe, not complete](tickets/005-completion-path.md)
   — completion returns names without types and suits a human typing; `#show`
   already returns full signatures, so the agent-facing tool is describe.
+- [Interrupting a runaway phrase in the worker](tickets/016-worker-interrupt.md)
+  — `Sys.Break` is swallowed by `execute_phrase`, so interrupts are detected
+  by a flag set in the signal handler; toplevel state survives intact.
 - [Trust boundary](tickets/012-trust-boundary.md) — trusted local developer
   tool, deliberately not sandboxed; stdio implies a local parent and that
   assumption is load-bearing.
