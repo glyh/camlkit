@@ -139,11 +139,13 @@ must evaluate it first. Tests are Alcotest.
   tool, deliberately not sandboxed; stdio implies a local parent and that
   assumption is load-bearing.
 - [C stubs are unreachable in a bare environment](tickets/028-c-stubs-in-a-bare-environment.md)
-  — **open defect.** `require` of any package carrying C stubs kills the worker
-  unless `CAML_LD_LIBRARY_PATH` is set, because `ld.conf` names
-  `lib/ocaml/stublibs` and opam installs stubs to `lib/stublibs`. Separately, a
-  dynlink failure raises `Compenv.Exit_with_status`, which `require_packages`
-  does not catch, so it ends the process instead of filling in `failed`.
+  — **fixed.** `require` of any package carrying C stubs killed the worker
+  unless `CAML_LD_LIBRARY_PATH` was set, because `ld.conf` names
+  `lib/ocaml/stublibs` and opam installs stubs to `lib/stublibs`; the worker now
+  adds that directory itself through `Dll.add_path`. Separately, a dynlink
+  failure raises `Compenv.Exit_with_status`, which `require_packages` did not
+  catch, so it ended the process instead of filling in `failed`; it now catches
+  everything and carries the captured stderr back with it.
 - [Testing strategy](tickets/013-testing-strategy.md) — one tier, integration
   tests spawn a real worker and the real server in the default `dune test`.
 

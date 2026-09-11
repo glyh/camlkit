@@ -117,8 +117,10 @@ For any other MCP client that reads a JSON config:
 
 Nothing else needs opam at runtime. The server locates the worker by its own
 path rather than through `PATH`, and findlib's configuration is compiled in,
-so `require` works from a bare environment. Verified with `PATH=/usr/bin:/bin`
-and no opam variables set.
+so `require` works from a bare environment, including packages carrying C
+stubs: the worker adds the switch's `stublibs` to its own search path rather
+than relying on `CAML_LD_LIBRARY_PATH`. Verified with `PATH=/usr/bin:/bin`,
+an empty environment and `lwt.unix`.
 
 ## Using it
 

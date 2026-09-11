@@ -1,5 +1,5 @@
 ---
-status: open
+status: resolved
 type: defect
 blocked-by: []
 assignee: lyh
@@ -83,9 +83,9 @@ one that matters here.
 The test suite cannot see it either: tests run under `dune`, which runs under
 opam's environment.
 
-## Proposed resolution
+## Resolution
 
-Not yet implemented. Two changes, and the second alone is enough to stop
+Both changes made, at `worker/eval.ml`. The second alone is enough to stop
 losing sessions.
 
 1. Catch every exception out of the findlib load, not three named ones, and
@@ -99,9 +99,27 @@ losing sessions.
    existing search path over overwriting a variable the user may have set
    deliberately.
 
-The README's bare-environment claim then needs re-verifying against a
-stub-carrying package, with `CAML_LD_LIBRARY_PATH` explicitly unset, and the
-claim narrowed or dropped if it still does not hold.
+What was done: `require_packages` now catches every exception, not three
+named ones, and appends the captured stderr to the message, since neither the
+`failed` list nor a `load` failure carried the toplevel's own detail back.
+`Eval.init` adds `Findlib.default_location ()/stublibs` through `Dll.add_path`,
+which is what `#directory` uses for the bytecode dll search, rather than
+setting a variable the user may have set deliberately.
+
+The README's bare-environment claim was re-verified against `lwt.unix` in an
+empty environment and now names the stub case.
+
+Measured after the fix, from `env -i PATH=/usr/bin:/bin`, with the repro
+below pointed at the build tree:
+
+| Worker | `require lwt.unix` |
+| --- | --- |
+| fixed | `loaded: ["lwt.unix"]` |
+| stub path removed, exception fix kept | `failed`, naming the shared library, session alive |
+
+No test covers this: `dune test` runs under opam's environment, which is the
+one environment where the defect cannot appear. The repro below is the
+check.
 
 ## Reproducing it
 

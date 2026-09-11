@@ -26,6 +26,14 @@ let init () =
      every require fails; the byte predicate matters because this worker is
      bytecode and would otherwise be offered native archives. *)
   Findlib.init ();
+  (* ld.conf names <switch>/lib/ocaml/stublibs, but opam installs package
+     stubs one level up in <switch>/lib/stublibs, and only opam env's
+     CAML_LD_LIBRARY_PATH bridges the two. A client does not start us from
+     that environment, so any package with C stubs would fail to load; see
+     docs/wayfinder/tickets/028. Added to the search path rather than by
+     setting the variable, which the user may have set deliberately. *)
+  (let stubs = Filename.concat (Findlib.default_location ()) "stublibs" in
+   if Sys.file_exists stubs then Dll.add_path [ stubs ]);
   Topfind.add_predicates [ "byte" ];
   Topfind.don't_load_deeply [ "compiler-libs.toplevel" ];
   (* utop sets this in common_init; it names the buffer in compiler messages. *)
@@ -230,7 +238,8 @@ let eval cap ?autorun src =
    errors into printed text, so a missing package reported as success. Worse,
    UTop.require reports through Lwt_main.run, which would start an Lwt loop
    inside a worker that deliberately has none. *)
-let require_packages packages =
+let require_packages cap packages =
+  match
   try
     Topfind.load (Findlib.package_deep_ancestors !Topfind.predicates packages);
     Ok ()
@@ -240,6 +249,23 @@ let require_packages packages =
              (if reason = "" then "" else " - " ^ reason))
   | Fl_package_base.Package_loop pkg -> Error ("package requires itself: " ^ pkg)
   | Failure m -> Error m
+  (* Anything else is still a package that did not load, which require
+     already has a field for. In particular a missing C stub raises
+     Compenv.Exit_with_status, which used to escape and end the worker,
+     losing the session over one bad package; see tickets/028. The toplevel
+     printed the detail to stderr, which is captured and returned. *)
+  | Compenv.Exit_with_status _ ->
+    Error "the toplevel aborted the load, commonly a shared library it could \
+           not open"
+  | e -> Error (Printexc.to_string e)
+  with
+  | Ok () -> Ok ()
+  (* The detail is on stderr, which is captured, and neither a failed library
+     nor a failed load carries the captured output back on its own. *)
+  | Error message ->
+    (match String.trim (fst (Capture.contents cap)) with
+     | "" -> Error message
+     | detail -> Error (message ^ "\n" ^ detail))
 
 let ok_result cap rendering =
   Msg.Completed { phrases = [ { rendering; warnings = ""; out_start = 0;
@@ -259,7 +285,7 @@ let load cap ~libraries ~packages path =
   match
     (match packages with
      | [] -> Ok ()
-     | ps -> require_packages ps)
+     | ps -> require_packages cap ps)
   with
   | Error e -> fail_result ("could not load required packages: " ^ e)
   | Ok () ->
@@ -283,7 +309,7 @@ let describe cap path = directive cap (Printf.sprintf "#show %s;;" path)
    a caller should not have to infer success from the absence of an error. *)
 let require cap packages =
   Capture.reset cap;
-  match require_packages packages with
+  match require_packages cap packages with
   | Ok () -> Msg.Loaded { loaded = packages; failed = [] }
   | Error message ->
     Msg.Loaded { loaded = [];
