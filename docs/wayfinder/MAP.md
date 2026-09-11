@@ -49,6 +49,9 @@ must evaluate it first. Tests are Alcotest.
 - [Protocol between server and worker](tickets/015-worker-ipc.md) — two-segment
   frames, per-phrase records with offsets, warnings split out via
   `Location.formatter_for_warnings`, whole-buffer parse before any execution.
+- [Exploring the environment: describe, not complete](tickets/005-completion-path.md)
+  — completion returns names without types and suits a human typing; `#show`
+  already returns full signatures, so the agent-facing tool is describe.
 - [Trust boundary](tickets/012-trust-boundary.md) — trusted local developer
   tool, deliberately not sandboxed; stdio implies a local parent and that
   assumption is load-bearing.
@@ -67,9 +70,9 @@ must evaluate it first. Tests are Alcotest.
   installs in `init.ml`, so their own types print as `<abstr>`. Tracked as
   [Let a session opt out of hermetic spawn](tickets/010-hermetic-opt-out.md);
   noted here only because it is a visible behavioural difference.
-- **Beyond completion.** Type lookup, documentation lookup, jump-to-source.
-  utop's completion may or may not be the right substrate; merlin may be a
-  better fit for some of it, at the cost of a second subsystem.
+- **Jump to source, and documentation.** Type lookup is settled by the
+  describe tool; these two are not. Merlin may fit better than anything in
+  utop, at the cost of a second subsystem.
 - **Toplevel directives.** How `#use`, `#load` and `#directory` interact
   with a server-managed session. Possibly a security boundary, possibly a
   feature. The init file and autoload questions are settled by hermetic
