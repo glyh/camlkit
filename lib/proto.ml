@@ -28,3 +28,12 @@ let sentinel_marker id = Printf.sprintf "@@utop-mcp:%d@@" id
 let terminate ~terminator phrase =
   let t = String.trim phrase in
   if Filename.check_suffix t terminator then t else t ^ terminator
+
+(* Spawn hermetically so a session does not inherit the developer's
+   ~/.config/utop/init.ml or autoload dir, and via opam exec because an MCP
+   client launches us with a minimal environment in which utop is usually not
+   on PATH. opam exec execve's, so the child pid is utop itself and signals
+   reach the toplevel directly. *)
+let spawn_argv =
+  [ "opam"; "exec"; "--"; "utop"; "-emacs";
+    "-init"; "/dev/null"; "-no-autoload"; "-implicit-bindings" ]

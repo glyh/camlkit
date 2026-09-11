@@ -33,10 +33,17 @@ let test_sentinel () =
     (Printf.sprintf "let () = Stdlib.print_endline \"%s\";;" (Proto.sentinel_marker 7))
     (Proto.sentinel_phrase 7)
 
+let test_spawn_argv () =
+  Alcotest.(check (list string)) "hermetic, via opam exec, implicit bindings"
+    [ "opam"; "exec"; "--"; "utop"; "-emacs"; "-init"; "/dev/null";
+      "-no-autoload"; "-implicit-bindings" ]
+    Proto.spawn_argv
+
 let () =
   Alcotest.run "utop-mcp"
     [ ("proto",
        [ Alcotest.test_case "parse" `Quick test_parse;
          Alcotest.test_case "encode_input" `Quick test_encode_input;
          Alcotest.test_case "terminate" `Quick test_terminate;
-         Alcotest.test_case "sentinel" `Quick test_sentinel ]) ]
+         Alcotest.test_case "sentinel" `Quick test_sentinel;
+         Alcotest.test_case "spawn_argv" `Quick test_spawn_argv ]) ]
