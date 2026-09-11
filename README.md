@@ -54,6 +54,19 @@ command. For a client that reads a JSON config:
 
 For Claude Code: `claude mcp add utop utop-mcp`.
 
+**Give the absolute path if your shell does not have `opam env` loaded.**
+The client spawns the command with the environment it inherited, so a bare
+`utop-mcp` only resolves when the opam bin directory is on `PATH`:
+
+```sh
+claude mcp add utop "$(opam var bin)/utop-mcp"
+```
+
+Nothing else needs opam at runtime. The server locates the worker beside
+its own executable rather than through `PATH`, and findlib's configuration
+is compiled in, so `require` works from a bare environment. Verified with
+`PATH=/usr/bin:/bin` and no opam variables set.
+
 Four tools become available. `eval` runs OCaml phrases in a named session,
 `describe` shows a signature, `require` loads findlib packages, and `reset`
 empties a session. Sessions are created on first use under whatever name
