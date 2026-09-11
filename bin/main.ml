@@ -19,6 +19,17 @@ let sessions : (string, Session.t) Hashtbl.t = Hashtbl.create 8
    evaluation is refused rather than queued. *)
 let pending : (string, Jsonrpc.Id.t * string option) Hashtbl.t = Hashtbl.create 8
 
+(* findlib packages a session has required. A reset empties the toplevel,
+   including those, and a project's own libraries usually cannot load without
+   them, so a load that resets replays them first. The caller said which
+   packages once; it should not have to say again. *)
+let required : (string, string list) Hashtbl.t = Hashtbl.create 8
+
+let remember_required name packages =
+  let had = Option.value ~default:[] (Hashtbl.find_opt required name) in
+  let fresh = List.filter (fun p -> not (List.mem p had)) packages in
+  Hashtbl.replace required name (had @ fresh)
+
 (* Names whose session died. The name stays usable, but the first result after
    the restart says so, since the new toplevel is empty. *)
 let restarted : (string, string) Hashtbl.t = Hashtbl.create 8
@@ -56,16 +67,7 @@ let request_of_call name args =
   | "eval" -> Result.map (fun c -> Msg.Eval c) (arg_string args "code")
   | "describe" -> Result.map (fun p -> Msg.Describe p) (arg_string args "path")
   | "require" -> Result.map (fun p -> Msg.Require p) (arg_strings args "packages")
-  | "load" ->
-    Result.map
-      (fun path ->
-         let libraries =
-           match Yojson.Safe.Util.member "libraries" args with
-           | `List l -> List.filter_map
-                          (function `String s -> Some s | _ -> None) l
-           | _ -> [] in
-         Msg.Load { path; libraries })
-      (arg_string args "path")
+  | "load" -> assert false                       (* handled before we get here *)
   | "reset" -> assert false                      (* handled before we get here *)
   | other -> Error (Printf.sprintf "no such tool: %s" other)
 
@@ -106,16 +108,46 @@ let handle_call id params =
   match arg_string args "session" with
   | Error e -> reply id (Render.infrastructure_failure e)
   | Ok session_name ->
-    (* Reloading a rebuilt archive into a session that still holds the old one
-       fails on an interface mismatch, so a reset-and-load has to happen in
-       that order, server-side, before the request reaches a worker. *)
-    if name = "load" && Yojson.Safe.Util.member "reset" args = `Bool true then
-      discard session_name "reset was requested before loading";
+    if name = "load" then begin
+      let strings key =
+        match Yojson.Safe.Util.member key args with
+        | `List l -> List.filter_map (function `String s -> Some s | _ -> None) l
+        | _ -> [] in
+      (* Reloading a rebuilt archive into a session that still holds the old
+         one fails on an interface mismatch, so the reset has to happen in
+         that order, server-side, before the request reaches a worker. *)
+      let resetting = Yojson.Safe.Util.member "reset" args = `Bool true in
+      if resetting then begin
+        discard session_name "reset was requested before loading";
+        (* The caller asked for this, so it is not a surprise restart, and the
+           note would claim the required packages are gone when the load is
+           about to put them back. *)
+        Hashtbl.remove restarted session_name
+      end;
+      let asked = strings "packages" in
+      remember_required session_name asked;
+      (* Only replay after a reset: otherwise the session still has them. *)
+      let packages =
+        if resetting then Option.value ~default:[] (Hashtbl.find_opt required session_name)
+        else asked in
+      match arg_string args "path" with
+      | Error e -> reply id (Render.infrastructure_failure e)
+      | Ok path ->
+        let request = Msg.Load { path; libraries = strings "libraries"; packages } in
+        match session_for session_name with
+        | Error e -> reply id (Render.infrastructure_failure e)
+        | Ok (s, note) ->
+          match Session.send s request ~timeout:eval_timeout with
+          | Error e -> reply id (Render.infrastructure_failure e)
+          | Ok () -> Hashtbl.replace pending session_name (id, note)
+    end else
     if name = "reset" then begin
       (* Server-side only: no worker round trip, and it clears the restart
          note too, since the caller asked for the fresh toplevel. *)
       discard session_name "reset was requested";
       Hashtbl.remove restarted session_name;
+      (* An explicit reset means empty, including what was required. *)
+      Hashtbl.remove required session_name;
       reply id { Render.content =
                    Printf.sprintf "Session %S is now empty." session_name;
                  structured = `Assoc [ "status", `String "reset" ];
@@ -124,6 +156,11 @@ let handle_call id params =
     match request_of_call name args with
     | Error e -> reply id (Render.infrastructure_failure e)
     | Ok request ->
+      (* Remember what the session was told to require, so a later reset-load
+         can restore it instead of making the caller say it twice. *)
+      (match request with
+       | Msg.Require ps -> remember_required session_name ps
+       | Msg.Eval _ | Msg.Describe _ | Msg.Load _ -> ());
       match session_for session_name with
       | Error e -> reply id (Render.infrastructure_failure e)
       | Ok (s, note) ->

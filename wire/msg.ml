@@ -7,7 +7,11 @@ type request =
   | Describe of string      (* a module path, answered via #show *)
   | Require of string list  (* findlib packages *)
   (* A dune build tree, whose private libraries findlib cannot see. *)
-  | Load of { path : string; libraries : string list }
+  | Load of { path : string; libraries : string list;
+              (* findlib packages to load first. A reset empties the session,
+                 including anything it had required, and a project's libraries
+                 usually need some of those to load at all. *)
+              packages : string list }
 
 (* One record per phrase. [rendering] is the toplevel's own output, such as
    "val x : int = 42"; program output lives in the raw segment at
@@ -54,9 +58,10 @@ let json_of_request = function
   | Require ps ->
     `Assoc [ "kind", `String "require";
              "packages", `List (List.map (fun p -> `String p) ps) ]
-  | Load { path; libraries } ->
+  | Load { path; libraries; packages } ->
     `Assoc [ "kind", `String "load"; "path", `String path;
-             "libraries", `List (List.map (fun l -> `String l) libraries) ]
+             "libraries", `List (List.map (fun l -> `String l) libraries);
+             "packages", `List (List.map (fun p -> `String p) packages) ]
 
 let request_of_json j =
   let open Yojson.Safe.Util in
@@ -67,6 +72,8 @@ let request_of_json j =
   | "load" ->
     Load { path = member "path" j |> to_string;
            libraries = (match member "libraries" j with
+               | `List l -> List.map to_string l | _ -> []);
+           packages = (match member "packages" j with
                | `List l -> List.map to_string l | _ -> []) }
   | k -> failwith ("unknown request kind: " ^ k)
 

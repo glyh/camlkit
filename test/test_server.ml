@@ -284,6 +284,40 @@ let test_load_with_reset_empties_first () =
   Alcotest.(check bool) "and the library is loaded in the fresh session" true
     (has "mylib holding 5" (text (ev "Mylib.make 5;;")))
 
+(* A reset empties the toplevel, including the findlib packages a project's
+   libraries need to load at all. Reported twice: the rebuild loop was reset,
+   require, load. The session remembers what it was told to require. *)
+let test_reset_load_restores_required_packages () =
+  with_server @@ fun c ->
+  let fixtures = Filename.concat (Sys.getcwd ()) "fixtures/mylib" in
+  ignore (call c ~id:1 ~tool:"require"
+            ~args:(`Assoc [ "session", `String "s";
+                            "packages", `List [ `String "yojson" ] ]));
+  let r = call c ~id:2 ~tool:"load"
+      ~args:(`Assoc [ "session", `String "s"; "path", `String fixtures;
+                      "reset", `Bool true ]) in
+  Alcotest.(check bool) "the load succeeds after the reset" false (is_error r);
+  Alcotest.(check bool) "and does not claim packages were lost" false
+    (has "restarted" (text r));
+  let r = call c ~id:3 ~tool:"eval"
+      ~args:(`Assoc [ "session", `String "s";
+                      "code", `String "Yojson.Safe.from_string;;" ]) in
+  Alcotest.(check bool) "the required package survived the reset" false
+    (is_error r);
+  Alcotest.(check string) "genuinely usable" "ok" (status r)
+
+(* An explicit reset means empty, including what was required. *)
+let test_explicit_reset_forgets_packages () =
+  with_server @@ fun c ->
+  ignore (call c ~id:1 ~tool:"require"
+            ~args:(`Assoc [ "session", `String "s";
+                            "packages", `List [ `String "yojson" ] ]));
+  ignore (call c ~id:2 ~tool:"reset" ~args:(`Assoc [ "session", `String "s" ]));
+  let r = call c ~id:3 ~tool:"eval"
+      ~args:(`Assoc [ "session", `String "s";
+                      "code", `String "Yojson.Safe.from_string;;" ]) in
+  Alcotest.(check string) "the package is gone too" "failed" (status r)
+
 let () =
   Alcotest.run "utop-mcp-server"
     [ ("mcp",
@@ -311,7 +345,11 @@ let () =
        [ Alcotest.test_case "load a project" `Slow test_load_a_project;
          Alcotest.test_case "missing path" `Slow test_load_a_missing_path;
          Alcotest.test_case "reset empties first" `Slow
-           test_load_with_reset_empties_first ]);
+           test_load_with_reset_empties_first;
+         Alcotest.test_case "reset-load restores required packages" `Slow
+           test_reset_load_restores_required_packages;
+         Alcotest.test_case "explicit reset forgets packages" `Slow
+           test_explicit_reset_forgets_packages ]);
       ("sessions",
        [ Alcotest.test_case "worker death restarts the name" `Slow
            test_worker_death_restarts_the_name;

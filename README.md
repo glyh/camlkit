@@ -137,7 +137,9 @@ load     { path: "/path/to/project" }    # its own libraries
 directories where dune hides the compiled interfaces, and retries until
 dependency order settles. After rebuilding the project, pass `reset: true`:
 loading a changed archive into a session holding the old one fails on an
-interface mismatch.
+interface mismatch. The session remembers which findlib packages it was
+required to load, and restores them across that reset, so the rebuild loop
+stays one call.
 
 The worker must be built with the same OCaml version as the project, because
 bytecode is version-locked. Install into the project's own switch.

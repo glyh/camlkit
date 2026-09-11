@@ -33,7 +33,8 @@ let () =
         | Msg.Eval src -> Eval.eval cap src
         | Msg.Describe path -> Eval.describe cap path
         | Msg.Require packages -> Eval.require cap packages
-        | Msg.Load { path; libraries } -> Eval.load cap ~libraries path
+        | Msg.Load { path; libraries; packages } ->
+          Eval.load cap ~libraries ~packages path
       in
       (* Cap the payload: a phrase can print without bound, and an MCP result
          is a single payload with no streaming. Spans are clamped to match, so

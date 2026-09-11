@@ -40,12 +40,38 @@ let archives ~libraries root =
       (fun p -> List.mem (Filename.remove_extension (Filename.basename p)) wanted)
       all
 
+let name_of archive = Filename.remove_extension (Filename.basename archive)
+
 (* dune puts a library's .cmi files in .<name>.objs/byte beside its archive. *)
 let interface_dirs archive =
   let dir = Filename.dirname archive in
   let name = Filename.remove_extension (Filename.basename archive) in
   List.filter Sys.file_exists
     [ dir; Filename.concat dir (Printf.sprintf ".%s.objs/byte" name) ]
+
+let missing_unit err =
+  let re = Str.regexp "undefined compilation unit `\\([A-Za-z0-9_]+\\)'" in
+  try ignore (Str.search_forward re err 0); Some (Str.matched_group 1 err)
+  with Not_found -> None
+
+(* Which library provides a module. The failing unit is a module name, not a
+   library name, so comparing it against archive names says "external" for a
+   project's own modules. The modules live as .cmo files in the library's
+   objs directory, so look there. *)
+let provider ~archives unit_ =
+  let wanted = String.lowercase_ascii unit_ ^ ".cmo" in
+  List.find_map
+    (fun a ->
+       List.find_map
+         (fun d ->
+            match Sys.readdir d with
+            | exception Sys_error _ -> None
+            | entries ->
+              if Array.exists
+                  (fun e -> String.lowercase_ascii e = wanted) entries
+              then Some (name_of a) else None)
+         (interface_dirs a))
+    archives
 
 (* Topdirs writes the real diagnosis to its formatter and then raises something
    opaque: a bare Compenv.Exit_with_status 125 says nothing, while the
@@ -95,32 +121,29 @@ let load ~libraries path =
         else (loaded, failed)
       in
       let loaded, failed = pass found [] [] in
-      (* A unit this project does not build is an external dependency dune
-         would have linked for us. Say so, because the compiler's hint suggests
-         #load, which is the wrong answer here. *)
+            let failed_names = List.map (fun (a, _) -> name_of a) failed in
       let annotate (archive, err) =
-        let external_hint =
-          try
-            let i = Str.search_forward
-                (Str.regexp "undefined compilation unit `\\([A-Za-z0-9_]+\\)'") err 0 in
-            ignore i;
-            let unit_ = Str.matched_group 1 err in
-            let built_here =
-              List.exists
-                (fun a ->
-                   String.lowercase_ascii (Filename.remove_extension
-                                             (Filename.basename a))
-                   = String.lowercase_ascii unit_)
-                found
-            in
-            if built_here then ""
-            else
+        let hint =
+          match missing_unit err with
+          | None -> ""
+          | Some unit_ ->
+            match provider ~archives:found unit_ with
+            | Some lib when List.mem lib failed_names ->
+              (* The common cascade: one library failed and everything that
+                 depends on it reports the same shape of error. Saying
+                 "external" here sent a reader chasing four phantom problems
+                 instead of the one real one. *)
+              Printf.sprintf
+                "\n  %s comes from %s, which failed above. Fix that one first; \
+                 this is a knock-on failure." unit_ lib
+            | Some lib ->
+              Printf.sprintf "\n  %s comes from %s, in this project." unit_ lib
+            | None ->
               Printf.sprintf
                 "\n  %s is not built by this project, so it comes from an \
                  external library. Load it with the require tool first, then \
                  load again." unit_
-          with Not_found -> ""
         in
-        (archive, err ^ external_hint)
+        (archive, err ^ hint)
       in
       Ok (List.rev loaded, List.map annotate (List.rev failed))

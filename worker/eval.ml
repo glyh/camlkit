@@ -194,6 +194,21 @@ let eval cap src =
       | Error f -> Msg.Failed f
       | Ok () -> implicit_counter := next; execute_all cap phrases
 
+(* Not the #require directive, and not UTop.require: both swallow findlib
+   errors into printed text, so a missing package reported as success. Worse,
+   UTop.require reports through Lwt_main.run, which would start an Lwt loop
+   inside a worker that deliberately has none. *)
+let require_packages packages =
+  try
+    Topfind.load (Findlib.package_deep_ancestors !Topfind.predicates packages);
+    Ok ()
+  with
+  | Fl_package_base.No_such_package (pkg, reason) ->
+    Error (Printf.sprintf "no such package: %s%s" pkg
+             (if reason = "" then "" else " - " ^ reason))
+  | Fl_package_base.Package_loop pkg -> Error ("package requires itself: " ^ pkg)
+  | Failure m -> Error m
+
 let ok_result cap rendering =
   Msg.Completed [ { rendering; warnings = ""; out_start = 0;
                     out_len = Capture.mark cap; truncated = false } ]
@@ -205,8 +220,15 @@ let fail_result message =
 (* Load a dune project's private libraries. Not an eval: it changes the search
    path and loads archives, neither of which can share a call with code that
    uses them, since nothing runs until every phrase typechecks. *)
-let load cap ~libraries path =
+let load cap ~libraries ~packages path =
   Capture.reset cap;
+  match
+    (match packages with
+     | [] -> Ok ()
+     | ps -> require_packages ps)
+  with
+  | Error e -> fail_result ("could not load required packages: " ^ e)
+  | Ok () ->
   match Loader.load ~libraries path with
   | Error e -> fail_result e
   | Ok (loaded, failed) ->
@@ -237,24 +259,9 @@ let directive cap src =
    so the answer arrives in the captured output with an empty rendering. *)
 let describe cap path = directive cap (Printf.sprintf "#show %s;;" path)
 
-(* Not the #require directive, and not UTop.require: both swallow findlib
-   errors into printed text, so a missing package reported as success. Worse,
-   UTop.require reports through Lwt_main.run, which would start an Lwt loop
-   inside a worker that deliberately has none. *)
 let require cap packages =
   Capture.reset cap;
-  match
-    (try
-       Topfind.load (Findlib.package_deep_ancestors !Topfind.predicates packages);
-       Ok ()
-     with
-     | Fl_package_base.No_such_package (pkg, reason) ->
-       Error (Printf.sprintf "no such package: %s%s" pkg
-                (if reason = "" then "" else " - " ^ reason))
-     | Fl_package_base.Package_loop pkg ->
-       Error ("package requires itself: " ^ pkg)
-     | Failure m -> Error m)
-  with
+  match require_packages packages with
   | Ok () ->
     Msg.Completed [ { rendering = ""; warnings = "";
                       out_start = 0; out_len = Capture.mark cap;

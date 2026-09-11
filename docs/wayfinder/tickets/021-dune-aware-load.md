@@ -75,3 +75,25 @@ libraries.
 session server-side before the request reaches a worker, so the stale
 interfaces are gone rather than conflicting. No per-session load history is
 needed, because the request already carries everything required to replay it.
+
+## Amendment: two things the first version got wrong
+
+Both reported from a session using it on a real project.
+
+**A reset wiped the findlib packages the load needed.** The rebuild loop was
+three calls (reset, require, load) because emptying the session also emptied
+what it had required, and `core_tt_syntax` cannot load without `sedlex`. The
+server now remembers what a session was told to require and replays it as
+part of a reset-load, so the loop is one call. An explicit `reset` still
+forgets them, because there "empty" is the whole point. The restart note is
+also suppressed for a requested reset: it claimed the packages were gone
+while the same call was putting them back.
+
+**The cascade messages blamed the wrong thing.** A failure naming
+`Raw_syntax` reported it as an external library, because the check compared
+the missing *module* name against *archive* names. Every module of this
+project failed that test, so four knock-on failures each looked like a
+separate missing dependency and only one was real. The missing unit is now
+matched against the `.cmo` files in each discovered library's objs
+directory, so it says "comes from core_tt_syntax, which failed above; this
+is a knock-on failure" and points at the single genuine error.
