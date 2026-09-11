@@ -5,6 +5,9 @@ description: """
 Gives an MCP client one or more live OCaml toplevels. A worker process
 links the utop library and owns the toplevel; the server supervises one
 worker per session and speaks MCP over stdio."""
+maintainer: ["Yihang Liu"]
+authors: ["Yihang Liu"]
+license: "MIT"
 homepage: "https://github.com/glyh/utop-mcp"
 bug-reports: "https://github.com/glyh/utop-mcp/issues"
 depends: [

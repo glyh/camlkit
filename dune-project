@@ -4,6 +4,12 @@
 (source
  (github glyh/utop-mcp))
 
+(authors "Yihang Liu")
+
+(maintainers "Yihang Liu")
+
+(license MIT)
+
 (package
  (name utop-mcp)
  (synopsis "MCP server exposing an OCaml utop toplevel")
