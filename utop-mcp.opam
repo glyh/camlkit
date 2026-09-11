@@ -18,6 +18,7 @@ depends: [
   "ocamlfind" {>= "1.9"}
   "yojson" {>= "2.0"}
   "alcotest" {>= "1.7" & with-test}
+  "lwt" {with-test}
   "odoc" {with-doc}
 ]
 build: [

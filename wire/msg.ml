@@ -3,7 +3,9 @@
    segment, addressed by per-phrase offsets. *)
 
 type request =
-  | Eval of string          (* OCaml phrases; directives are rejected *)
+  (* [autorun] names the rewrites this session performs, if the caller wants
+     to change them. Absent leaves the session as it was. *)
+  | Eval of { source : string; autorun : string list option }
   | Describe of string      (* a module path, answered via #show *)
   | Require of string list  (* findlib packages *)
   (* A dune build tree, whose private libraries findlib cannot see. *)
@@ -65,7 +67,13 @@ let phase_of_string = function
   | s -> failwith ("unknown phase: " ^ s)
 
 let json_of_request = function
-  | Eval src -> `Assoc [ "kind", `String "eval"; "source", `String src ]
+  | Eval { source; autorun } ->
+    `Assoc
+      ([ "kind", `String "eval"; "source", `String source ]
+       @ (match autorun with
+           | None -> []
+           | Some names ->
+             [ "autorun", `List (List.map (fun n -> `String n) names) ]))
   | Describe p -> `Assoc [ "kind", `String "describe"; "path", `String p ]
   | Require ps ->
     `Assoc [ "kind", `String "require";
@@ -78,7 +86,11 @@ let json_of_request = function
 let request_of_json j =
   let open Yojson.Safe.Util in
   match member "kind" j |> to_string with
-  | "eval" -> Eval (member "source" j |> to_string)
+  | "eval" ->
+    Eval { source = member "source" j |> to_string;
+           autorun = (match member "autorun" j with
+               | `List l -> Some (List.map to_string l)
+               | _ -> None) }
   | "describe" -> Describe (member "path" j |> to_string)
   | "require" -> Require (member "packages" j |> to_list |> List.map to_string)
   | "load" ->

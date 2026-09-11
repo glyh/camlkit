@@ -256,7 +256,15 @@ let arg_strings args name =
 
 let request_of_call name args =
   match name with
-  | "eval" -> Result.map (fun c -> Msg.Eval c) (arg_string args "code")
+  | "eval" ->
+    let autorun =
+      match Yojson.Safe.Util.member "autorun" args with
+      | `List l -> Some (List.filter_map (function `String s -> Some s | _ -> None) l)
+      | _ -> None
+    in
+    (match arg_string args "code" with
+     | Error _ as e -> e
+     | Ok source -> Ok (Msg.Eval { source; autorun }))
   | "describe" -> Result.map (fun p -> Msg.Describe p) (arg_string args "path")
   | "require" -> Result.map (fun p -> Msg.Require p) (arg_strings args "packages")
   | "load" -> assert false                       (* handled before we get here *)

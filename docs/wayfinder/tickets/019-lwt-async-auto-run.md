@@ -1,8 +1,8 @@
 ---
-status: open
+status: closed
 type: grilling
 blocked-by: []
-assignee:
+assignee: lyh
 ---
 
 # Should Lwt and Async expressions auto-run
@@ -31,3 +31,40 @@ Everything else from that audit is either done or a deliberate omission:
 `Location.input_name` is now set, init files and history stay skipped for
 hermeticity, and `Sys.catch_break` has an equivalent in the worker's own
 SIGINT handler.
+
+## Resolution
+
+Implemented as `worker/autorun.ml`, following utop's approach: type the
+structure, and for each bare expression whose type is `Lwt.t` or
+`Async.Deferred.t`, rewrite it to run rather than to return.
+
+**Two orderings matter and both were wrong at first.** The rewrite needs the
+typed tree, so it happens inside the typing pass, where
+`Typemod.type_toplevel_phrase` already hands back a `Typedtree.structure`. And
+it must run *before* bare expressions are given implicit `_N` names, because
+after that a phrase is a `let` rather than a `Pstr_eval` and there is nothing
+left to match. A rewritten phrase is typed again so the environment the next
+phrase sees is right, its type having changed from a promise to the value.
+
+**Only bare expressions are rewritten.** `let p = Lwt.return 7` keeps its
+promise, which is what someone binding it meant. Same as utop, and tested.
+
+**Configurable per session, as a list of rule names.** A list rather than an
+enum so another rule can be added without changing the shape callers pass.
+Both are on by default, matching utop; an empty list gets the promise itself.
+An unknown name is refused with the list of known rules rather than silently
+ignored.
+
+**No spawn parameter was needed.** Each rule self-gates on the expression's
+type *and* on the runner existing in the environment, so a session that never
+loads Lwt is unaffected whatever the setting. The setting exists for the case
+where the library is loaded and the caller wants the promise anyway.
+
+`Ast_helper.Exp.fun_` is gone in current OCaml, which is what utop needs cppo
+for. `Exp.function_` with a `Pparam_val` is identical on 5.3 and 5.4, so no
+version branch is needed here.
+
+Async is untested: nothing in reach uses it. The rule mirrors utop's, and the
+runner it calls, `Async.Thread_safe.block_on_async_exn`, starts the scheduler
+around the work rather than waiting on a running deferred, which is why it
+takes a thunk.

@@ -55,7 +55,8 @@ let test_request_roundtrip () =
       (Yojson.Safe.to_string
          (Msg.json_of_request (Msg.request_of_json (Msg.json_of_request r))))
   in
-  check (Msg.Eval "1 + 1;;");
+  check (Msg.Eval { source = "1 + 1;;"; autorun = None });
+  check (Msg.Eval { source = "1;;"; autorun = Some [ "lwt" ] });
   check (Msg.Describe "List");
   check (Msg.Require [ "yojson"; "str" ])
 
@@ -154,6 +155,9 @@ let ask s request =
      | Error e -> Alcotest.fail e
      | Ok (response, output) -> (response, output))
 
+(* Most tests only care about the source, so name the common shape. *)
+let ev ?autorun source = Msg.Eval { source; autorun }
+
 let has_substring needle hay =
   let re = Str.regexp_string needle in
   try ignore (Str.search_forward re hay 0); true with Not_found -> false
@@ -167,17 +171,17 @@ let phrases = function
 
 let test_eval_and_state () =
   with_worker @@ fun s ->
-  let r, _ = ask s (Msg.Eval "let x = 6 * 7;;") in
+  let r, _ = ask s (ev "let x = 6 * 7;;") in
   let p = List.hd (phrases r) in
   Alcotest.(check bool) "renders the binding" true
     (String.length p.Msg.rendering > 0);
-  let r, _ = ask s (Msg.Eval "x + 1;;") in
+  let r, _ = ask s (ev "x + 1;;") in
   Alcotest.(check bool) "state persists across calls" true
     (phrases r <> [])
 
 let test_output_is_separate_from_rendering () =
   with_worker @@ fun s ->
-  let r, output = ask s (Msg.Eval "let () = print_string \"printed\";;") in
+  let r, output = ask s (ev "let () = print_string \"printed\";;") in
   let p = List.hd (phrases r) in
   Alcotest.(check string) "program output lands in the raw segment"
     "printed" (String.sub output p.Msg.out_start p.Msg.out_len);
@@ -186,20 +190,20 @@ let test_output_is_separate_from_rendering () =
 
 let test_type_error_executes_nothing () =
   with_worker @@ fun s ->
-  let r, _ = ask s (Msg.Eval "let survivor = 1;; survivor + true;;") in
+  let r, _ = ask s (ev "let survivor = 1;; survivor + true;;") in
   (match r with
    | Msg.Failed f -> Alcotest.(check string) "failed at typecheck"
                        "typecheck" (Msg.string_of_phase f.Msg.phase)
    | _ -> Alcotest.fail "expected a typecheck failure");
   (* the first phrase must not have run *)
-  let r, _ = ask s (Msg.Eval "survivor;;") in
+  let r, _ = ask s (ev "survivor;;") in
   match r with
   | Msg.Failed _ -> ()
   | _ -> Alcotest.fail "the earlier phrase ran despite a later type error"
 
 let test_directives_rejected () =
   with_worker @@ fun s ->
-  let r, _ = ask s (Msg.Eval "#require \"str\";;") in
+  let r, _ = ask s (ev "#require \"str\";;") in
   match r with
   | Msg.Rejected _ -> ()
   | _ -> Alcotest.fail "eval accepted a directive"
@@ -223,19 +227,19 @@ let test_describe () =
 let test_implicit_bindings () =
   with_worker @@ fun s ->
   let render r = (List.hd (phrases r)).Msg.rendering in
-  let r, _ = ask s (Msg.Eval "1 + 41;;") in
+  let r, _ = ask s (ev "1 + 41;;") in
   Alcotest.(check bool) "a bare expression is bound, not just printed" true
     (has_substring "val _0 : int = 42" (render r));
-  let r, _ = ask s (Msg.Eval "\"hello\";;") in
+  let r, _ = ask s (ev "\"hello\";;") in
   Alcotest.(check bool) "numbering advances across calls, not just within one"
     true (has_substring "val _1" (render r));
-  let r, _ = ask s (Msg.Eval "true;; 3.5;;") in
+  let r, _ = ask s (ev "true;; 3.5;;") in
   (match phrases r with
    | [ a; b ] ->
      Alcotest.(check bool) "and within a call" true
        (has_substring "val _2" a.Msg.rendering && has_substring "val _3" b.Msg.rendering)
    | _ -> Alcotest.fail "expected two phrase records");
-  let r, _ = ask s (Msg.Eval "_0 + 1;;") in
+  let r, _ = ask s (ev "_0 + 1;;") in
   Alcotest.(check bool) "earlier results stay referenceable" true
     (has_substring "= 43" (render r))
 
@@ -249,7 +253,7 @@ let test_require () =
      Alcotest.(check (list string)) "names what it loaded" [ "str" ] loaded;
      Alcotest.(check int) "and nothing failed" 0 (List.length failed)
    | _ -> Alcotest.fail "expected a load result");
-  let r, _ = ask s (Msg.Eval "Str.regexp;;") in
+  let r, _ = ask s (ev "Str.regexp;;") in
   Alcotest.(check bool) "a required package becomes usable" true (phrases r <> []);
   let r, _ = ask s (Msg.Require [ "no-such-package-xyz" ]) in
   match r with
@@ -275,7 +279,7 @@ let test_hermetic () =
     ~finally:(fun () -> Unix.putenv "XDG_CONFIG_HOME" "")
     (fun () ->
        with_worker @@ fun s ->
-       let r, _ = ask s (Msg.Eval "injected_by_user_init;;") in
+       let r, _ = ask s (ev "injected_by_user_init;;") in
        match r with
        | Msg.Failed _ -> ()
        | _ -> Alcotest.fail "the user's init.ml leaked into a session")
@@ -288,7 +292,7 @@ let test_error_locations () =
   let fail_of r = match r with
     | Msg.Failed f -> f
     | _ -> Alcotest.fail "expected a typecheck failure" in
-  let r, _ = ask s (Msg.Eval "let a = 1;; a + true;;") in
+  let r, _ = ask s (ev "let a = 1;; a + true;;") in
   let f = fail_of r in
   Alcotest.(check (list (pair int int))) "byte offsets point at the bad token"
     [ (16, 20) ] f.Msg.spans;
@@ -297,7 +301,7 @@ let test_error_locations () =
   Alcotest.(check bool) "the message has no location prefix, since it is structured"
     false (has_substring "characters" f.Msg.message);
   (* the regression: a second error in the same worker *)
-  let r, _ = ask s (Msg.Eval "nonexistent_value;;") in
+  let r, _ = ask s (ev "nonexistent_value;;") in
   let g = fail_of r in
   Alcotest.(check (list (pair int int))) "a later error still locates correctly"
     [ (0, 17) ] g.Msg.spans;
@@ -310,7 +314,7 @@ let test_error_locations () =
 let test_bindings_carry_names_and_types () =
   with_worker @@ fun s ->
   let bindings code =
-    let r, _ = ask s (Msg.Eval code) in (List.hd (phrases r)).Msg.bindings in
+    let r, _ = ask s (ev code) in (List.hd (phrases r)).Msg.bindings in
   (match bindings "let n = 41;;" with
    | [ b ] ->
      Alcotest.(check string) "name" "n" b.Msg.bound;
@@ -338,7 +342,7 @@ let test_bindings_carry_names_and_types () =
 let test_rendering_carries_the_transcript () =
   with_worker @@ fun s ->
   let rendering code =
-    let r, _ = ask s (Msg.Eval code) in (List.hd (phrases r)).Msg.rendering in
+    let r, _ = ask s (ev code) in (List.hd (phrases r)).Msg.rendering in
   Alcotest.(check bool) "a binding, with its type and value" true
     (has_substring "val _0 : int = 42" (rendering "1 + 41;;"));
   Alcotest.(check bool) "a function's type" true
@@ -355,7 +359,7 @@ let test_incomplete_input_is_an_error_not_a_crash () =
   with_worker @@ fun s ->
   List.iter
     (fun src ->
-       let r, _ = ask s (Msg.Eval src) in
+       let r, _ = ask s (ev src) in
        match r with
        | Msg.Failed f ->
          Alcotest.(check string) "rejected while parsing" "parse"
@@ -363,8 +367,56 @@ let test_incomplete_input_is_an_error_not_a_crash () =
        | _ -> Alcotest.failf "expected a parse failure for %S" src)
     [ "let x = "; "let x = (1 +"; "match x with" ];
   (* and the session is still alive *)
-  let r, _ = ask s (Msg.Eval "1 + 1;;") in
+  let r, _ = ask s (ev "1 + 1;;") in
   Alcotest.(check bool) "the session survives" true (phrases r <> [])
+
+(* An Lwt expression at a toplevel otherwise yields a promise nobody ran.
+   Rewritten to run, as utop does. The rule self-gates on the type and on the
+   runner existing, so a session that never loads Lwt is unaffected. *)
+let test_lwt_expressions_run () =
+  with_worker @@ fun s ->
+  (match ask s (Msg.Require [ "lwt.unix" ]) with
+   | Msg.Loaded { failed = []; _ }, _ -> ()
+   | _ -> Alcotest.fail "lwt.unix is needed for this test");
+  let render code =
+    let r, _ = ask s (ev code) in (List.hd (phrases r)).Msg.rendering in
+  let typ ?autorun code =
+    let r, _ = ask s (ev ?autorun code) in
+    (List.hd (List.hd (phrases r)).Msg.bindings).Msg.bound_type
+  in
+  Alcotest.(check string) "a promise is run, not returned" "int"
+    (typ "Lwt.return 42;;");
+  Alcotest.(check bool) "and its value is the result" true
+    (has_substring "= 42" (render "Lwt.return 42;;"));
+  Alcotest.(check string) "it really waits" "string"
+    (typ "Lwt.bind (Lwt_unix.sleep 0.02) (fun () -> Lwt.return \"slept\");;");
+  (* Only a bare expression is rewritten. A let keeps the promise, which is
+     what someone binding it intended. *)
+  Alcotest.(check bool) "a let binding keeps its promise" true
+    (has_substring "Lwt.t" (render "let p = Lwt.return 7;;"));
+  (* and ordinary code is untouched *)
+  Alcotest.(check string) "nothing else changes" "int" (typ "40 + 2;;");
+  (* the caller can ask for the promise itself *)
+  (match ask s (ev ~autorun:[] "Lwt.return 42;;") with
+   | Msg.Completed [ p ], _ ->
+     Alcotest.(check bool) "an empty list returns the promise" true
+       (has_substring "Lwt.t" p.Msg.rendering)
+   | _ -> Alcotest.fail "expected a completed phrase");
+  (* naming only async leaves lwt alone *)
+  (match ask s (ev ~autorun:[ "async" ] "Lwt.return 42;;") with
+   | Msg.Completed [ p ], _ ->
+     Alcotest.(check bool) "async only does not run lwt" true
+       (has_substring "Lwt.t" p.Msg.rendering)
+   | _ -> Alcotest.fail "expected a completed phrase");
+  (* and turning it back on works *)
+  Alcotest.(check string) "re-enabling runs it again" "int"
+    (typ ~autorun:[ "lwt" ] "Lwt.return 42;;");
+  (* an unknown rule is refused rather than ignored *)
+  (match ask s (ev ~autorun:[ "nonsense" ] "1;;") with
+   | Msg.Failed f, _ ->
+     Alcotest.(check bool) "and says what it knows" true
+       (has_substring "no such autorun rule" f.Msg.message)
+   | _ -> Alcotest.fail "an unknown autorun rule should be refused")
 
 (* Reported from a session driving a real project: loading its code died with
    "Reference to undefined compilation unit Stdlib__Dynarray" even though the
@@ -374,7 +426,7 @@ let test_incomplete_input_is_an_error_not_a_crash () =
    tested together. *)
 let test_stdlib_is_fully_linked () =
   with_worker @@ fun s ->
-  let r, _ = ask s (Msg.Eval
+  let r, _ = ask s (ev
       "let d : int Dynarray.t = Dynarray.create () in \
        Dynarray.add_last d 7; Dynarray.get d 0;;") in
   (match r with
@@ -389,7 +441,7 @@ let test_stdlib_is_fully_linked () =
 let test_output_survives_a_later_failure () =
   with_worker @@ fun s ->
   let r, output = ask s
-      (Msg.Eval "let () = print_string \"ran-first\";; \
+      (ev "let () = print_string \"ran-first\";; \
                  failwith \"boom\";; \
                  let () = print_string \"never\";;") in
   match r with
@@ -410,7 +462,7 @@ let test_output_survives_a_later_failure () =
 let test_large_output_is_capped_honestly () =
   with_worker @@ fun s ->
   let r, output = ask s
-      (Msg.Eval "let () = print_string (String.make 500_000 'x');;") in
+      (ev "let () = print_string (String.make 500_000 'x');;") in
   let p = List.hd (phrases r) in
   Alcotest.(check int) "capped at the limit, not at Unix.read's buffer"
     Msg.output_limit (String.length output);
@@ -421,7 +473,7 @@ let test_large_output_is_capped_honestly () =
 (* The flag has to be honest in both directions, or it is worse than useless. *)
 let test_small_output_is_not_marked_truncated () =
   with_worker @@ fun s ->
-  let r, _ = ask s (Msg.Eval "let () = print_string \"small\";; 1 + 1;;") in
+  let r, _ = ask s (ev "let () = print_string \"small\";; 1 + 1;;") in
   List.iter
     (fun p -> Alcotest.(check bool) "not truncated" false p.Msg.truncated)
     (phrases r)
@@ -431,7 +483,7 @@ let test_small_output_is_not_marked_truncated () =
 let test_output_between_64k_and_the_cap () =
   with_worker @@ fun s ->
   let r, output = ask s
-      (Msg.Eval "let () = print_string (String.make 12_000 'y');;") in
+      (ev "let () = print_string (String.make 12_000 'y');;") in
   let p = List.hd (phrases r) in
   Alcotest.(check int) "nothing is lost below the cap" 12_000 p.Msg.out_len;
   Alcotest.(check bool) "and it is not marked truncated" false p.Msg.truncated;
@@ -443,7 +495,7 @@ let test_output_between_64k_and_the_cap () =
    deliberate rather than accidental. *)
 let test_path_changes_need_their_own_call () =
   with_worker @@ fun s ->
-  let r, _ = ask s (Msg.Eval
+  let r, _ = ask s (ev
       "let () = Topdirs.dir_directory \"/tmp\";; Mylib.make 1;;") in
   match r with
   | Msg.Failed f ->
@@ -459,7 +511,7 @@ let test_path_changes_need_their_own_call () =
 let test_partial_output_recovered_on_interrupt () =
   with_worker @@ fun s ->
   (match Session.send s
-           (Msg.Eval "let () = print_string \"printed-before-hanging\";\n\
+           (ev "let () = print_string \"printed-before-hanging\";\n\
                       let rec spin n = spin (n + 1) in spin 0;;")
            ~timeout:0.5 with
    | Error e -> Alcotest.fail e | Ok () -> ());
@@ -477,7 +529,7 @@ let test_partial_output_recovered_on_interrupt () =
      Alcotest.(check bool) "mid-flight read saw nothing, because it was buffered"
        false (has_substring "printed-before-hanging" mid));
   (* and the session is still usable *)
-  let r, _ = ask s (Msg.Eval "1 + 1;;") in
+  let r, _ = ask s (ev "1 + 1;;") in
   Alcotest.(check bool) "session survives" true (phrases r <> [])
 
 let () =
@@ -514,6 +566,7 @@ let () =
            test_rendering_carries_the_transcript;
          Alcotest.test_case "bindings carry names and types" `Slow
            test_bindings_carry_names_and_types;
+         Alcotest.test_case "lwt expressions run" `Slow test_lwt_expressions_run;
          Alcotest.test_case "incomplete input is an error not a crash" `Slow
            test_incomplete_input_is_an_error_not_a_crash;
          Alcotest.test_case "stdlib is fully linked" `Slow

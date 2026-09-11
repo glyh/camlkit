@@ -91,22 +91,40 @@ let reject_directives phrases =
   in
   go phrases
 
+(* Types every phrase against an advancing environment, and returns the
+   phrases that will actually run: an Lwt or Async expression is rewritten to
+   run rather than to hand back a promise, which needs the typed tree and so
+   happens here. See worker/autorun.ml. *)
 let typecheck_all phrases =
   let env0 = !Toploop.toplevel_env in
   let restore () = Toploop.toplevel_env := env0 in
-  let rec go i = function
-    | [] -> restore (); Ok ()
-    | Parsetree.Ptop_dir _ :: rest -> go (i + 1) rest   (* unreachable: rejected above *)
+  let rec go i acc = function
+    | [] -> restore (); Ok (List.rev acc)
+    | (Parsetree.Ptop_dir _ as d) :: rest -> go (i + 1) (d :: acc) rest
     | Parsetree.Ptop_def str :: rest ->
       (match Typemod.type_toplevel_phrase !Toploop.toplevel_env str with
-       | (_, _, _, _, env) -> Toploop.toplevel_env := env; go (i + 1) rest
+       | (tstr, _, _, _, env) ->
+         let env_before = !Toploop.toplevel_env in
+         let str' = Autorun.rewrite env_before str tstr in
+         (* A rewritten phrase has a different type - unit rather than a
+            promise - so it has to be typed again for the environment the next
+            phrase sees to be right. *)
+         let env =
+           if str' == str then env
+           else
+             match Typemod.type_toplevel_phrase env_before str' with
+             | (_, _, _, _, env) -> env
+             | exception _ -> env
+         in
+         Toploop.toplevel_env := env;
+         go (i + 1) (Parsetree.Ptop_def str' :: acc) rest
        | exception exn ->
          let message, spans, lines = Toplevel.describe_exn exn in
          restore ();
          Error Msg.{ phase = Typecheck; phrase_index = i; message; spans; lines;
                      done_ = [] })
   in
-  go 0 phrases
+  go 0 [] phrases
 
 (* execute_phrase swallows Sys.Break itself, printing "Interrupted." and
    returning false, so an interrupt is detected by the handler's flag rather
@@ -153,8 +171,17 @@ let execute_all cap phrases =
   in
   go 0 phrases
 
-let eval cap src =
+let eval cap ?autorun src =
   Capture.reset cap;
+  match
+    match autorun with
+    | None -> Ok ()
+    | Some names -> Autorun.set names
+  with
+  | Error message ->
+    Msg.Failed { phase = Msg.Execute; phrase_index = 0; message;
+                 spans = []; lines = []; done_ = [] }
+  | Ok () ->
   match parse src with
   | Error f -> Msg.Failed f
   | Ok phrases ->
@@ -167,10 +194,15 @@ let eval cap src =
       (* Rewrite before typing, so the pre-check sees exactly what will run.
          The counter only advances once the whole request typechecks, so a
          rejected request leaves no gap in the numbering. *)
-      let phrases, next = bind_expressions !implicit_counter phrases in
+      (* Auto-run first, then implicit names: after a bare expression becomes
+         "let _N = ...", it is no longer an expression to rewrite. *)
       match typecheck_all phrases with
       | Error f -> Msg.Failed f
-      | Ok () -> implicit_counter := next; execute_all cap phrases
+      | Ok phrases ->
+        let phrases, next = bind_expressions !implicit_counter phrases in
+        (match typecheck_all phrases with
+         | Error f -> Msg.Failed f
+         | Ok phrases -> implicit_counter := next; execute_all cap phrases)
 
 (* Not the #require directive, and not UTop.require: both swallow findlib
    errors into printed text, so a missing package reported as success. Worse,

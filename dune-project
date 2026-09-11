@@ -26,4 +26,6 @@
   merlin
   (ocamlfind (>= 1.9))
   (yojson (>= 2.0))
-  (alcotest (and (>= 1.7) :with-test))))
+  (alcotest (and (>= 1.7) :with-test))
+  ; Only to exercise the Lwt half of auto-run; nothing links against it.
+  (lwt :with-test)))

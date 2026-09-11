@@ -44,7 +44,16 @@ let eval_tool =
       [ session_arg;
         ("code", `Assoc [ "type", `String "string";
                           "description", `String "OCaml source. Phrases are \
-                            terminated with ;; as usual." ]) ];
+                            terminated with ;; as usual." ]);
+        ("autorun", `Assoc
+           [ "type", `String "array";
+             "items", `Assoc [ "type", `String "string" ];
+             "description", `String
+               "Which promise types a bare expression should run rather than \
+                return, by name: lwt, async. Both by default, which does \
+                nothing in a session that has loaded neither. Pass an empty \
+                list to get the promise itself. Applies to this session from \
+                now on, not just this call." ]) ];
     "outputSchema", obj [ ("phrases", `Assoc [ "type", `String "array";
                                                "items", phrase_schema ]) ] ]
 

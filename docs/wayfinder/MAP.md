@@ -128,6 +128,9 @@ must evaluate it first. Tests are Alcotest.
   build` shelled out, after five obstacles on the RPC route, the last of which
   was unexplained; diagnostics are parsed into fields, dune emits no structured
   form.
+- [Should Lwt and Async expressions auto-run](tickets/019-lwt-async-auto-run.md)
+  — yes, as utop does, rewriting bare expressions only; configurable per session
+  as a list of rule names, and self-gating so it is inert without the library.
 - [Trust boundary](tickets/012-trust-boundary.md) — trusted local developer
   tool, deliberately not sandboxed; stdio implies a local parent and that
   assumption is load-bearing.

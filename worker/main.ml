@@ -51,7 +51,7 @@ let () =
       watching ();
       let response =
         match Msg.request_of_json meta with
-        | Msg.Eval src -> Eval.eval cap src
+        | Msg.Eval { source; autorun } -> Eval.eval cap ?autorun source
         | Msg.Describe path -> Eval.describe cap path
         | Msg.Require packages -> Eval.require cap packages
         | Msg.Load { path; libraries; packages } ->

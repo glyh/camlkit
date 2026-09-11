@@ -123,6 +123,10 @@ and no opam variables set.
 
 Ten tools, in two groups.
 
+A bare `Lwt` or `Async` expression is run rather than handed back as a
+promise, as in utop. `eval` takes an `autorun` list to change that per
+session; an empty list keeps the promise.
+
 **About values, in a session.** `eval` runs OCaml phrases, `describe` shows a
 signature, `require` loads findlib packages, `load` brings in a dune
 project's own libraries, `reset` empties a session. Sessions are created on
