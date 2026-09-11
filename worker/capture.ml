@@ -26,10 +26,21 @@ let reset t =
 (* Bytes written so far. Taken after each phrase to give that phrase's span. *)
 let mark t = flush Stdlib.stdout; flush Stdlib.stderr; (Unix.fstat t.fd).Unix.st_size
 
-let contents t =
-  let len = mark t in
+(* Read in a loop. Unix.read copies through a fixed internal buffer and returns
+   at most 64K per call, so a single read silently lost everything a phrase
+   printed beyond that, while reporting no truncation at all. *)
+let contents ?limit t =
+  let available = mark t in
+  let len = match limit with Some l -> min l available | None -> available in
   let b = Bytes.create len in
   ignore (Unix.lseek t.fd 0 Unix.SEEK_SET);
-  let n = Unix.read t.fd b 0 len in
+  let rec fill got =
+    if got >= len then got
+    else
+      match Unix.read t.fd b got (len - got) with
+      | 0 -> got
+      | n -> fill (got + n)
+  in
+  let got = fill 0 in
   ignore (Unix.lseek t.fd 0 Unix.SEEK_END);
-  Bytes.sub_string b 0 n
+  (Bytes.sub_string b 0 got, available > got)

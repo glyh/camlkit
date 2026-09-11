@@ -37,16 +37,24 @@ let () =
       (* Cap the payload: a phrase can print without bound, and an MCP result
          is a single payload with no streaming. Spans are clamped to match, so
          an agent never reads past the end of what it was sent. *)
-      let payload = Capture.contents cap in
-      let payload, response =
-        if String.length payload <= Msg.output_limit then (payload, response)
-        else
-          let cut = String.sub payload 0 Msg.output_limit in
-          let clamp ps = fst (Msg.clamp ~limit:Msg.output_limit ps) in
-          (cut, match response with
-            | Msg.Completed ps -> Msg.Completed (clamp ps)
-            | Msg.Interrupted r -> Msg.Interrupted { r with done_ = clamp r.done_ }
-            | other -> other)
+      (* Read at most the cap, and be told whether more existed, so the
+         truncated flag reports what actually happened rather than only what
+         the clamp did. *)
+      let payload, cut_by_reader = Capture.contents ~limit:Msg.output_limit cap in
+      let clamp ps =
+        let ps, clamped = Msg.clamp ~limit:(String.length payload) ps in
+        (* Only a phrase that actually printed can have lost anything. *)
+        if cut_by_reader || clamped then
+          List.map (fun p ->
+              if p.Msg.out_len > 0 then Msg.{ p with truncated = true } else p) ps
+        else ps
+      in
+      let response =
+        match response with
+        | Msg.Completed ps -> Msg.Completed (clamp ps)
+        | Msg.Interrupted r -> Msg.Interrupted { r with done_ = clamp r.done_ }
+        | Msg.Failed f -> Msg.Failed { f with done_ = clamp f.done_ }
+        | other -> other
       in
       Frame_io.write oc { Frame.meta = Msg.json_of_response response; payload };
       loop ()

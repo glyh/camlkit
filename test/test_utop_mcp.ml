@@ -330,6 +330,39 @@ let test_output_survives_a_later_failure () =
       false (has_substring "boom" p.Msg.rendering)
   | _ -> Alcotest.fail "expected a runtime failure"
 
+(* Reported as output being capped too generously; the real defect was that
+   Unix.read copies through a fixed 64K buffer, so a single read silently lost
+   everything past 65536 bytes while reporting no truncation at all. *)
+let test_large_output_is_capped_honestly () =
+  with_worker @@ fun s ->
+  let r, output = ask s
+      (Msg.Eval "let () = print_string (String.make 500_000 'x');;") in
+  let p = List.hd (phrases r) in
+  Alcotest.(check int) "capped at the limit, not at Unix.read's buffer"
+    Msg.output_limit (String.length output);
+  Alcotest.(check int) "and the span matches what was sent"
+    Msg.output_limit p.Msg.out_len;
+  Alcotest.(check bool) "truncation is reported" true p.Msg.truncated
+
+(* The flag has to be honest in both directions, or it is worse than useless. *)
+let test_small_output_is_not_marked_truncated () =
+  with_worker @@ fun s ->
+  let r, _ = ask s (Msg.Eval "let () = print_string \"small\";; 1 + 1;;") in
+  List.iter
+    (fun p -> Alcotest.(check bool) "not truncated" false p.Msg.truncated)
+    (phrases r)
+
+(* Output that is merely long, rather than enormous, must survive intact:
+   the 64K bug was invisible until something printed more than that. *)
+let test_output_between_64k_and_the_cap () =
+  with_worker @@ fun s ->
+  let r, output = ask s
+      (Msg.Eval "let () = print_string (String.make 12_000 'y');;") in
+  let p = List.hd (phrases r) in
+  Alcotest.(check int) "nothing is lost below the cap" 12_000 p.Msg.out_len;
+  Alcotest.(check bool) "and it is not marked truncated" false p.Msg.truncated;
+  Alcotest.(check int) "payload carries it all" 12_000 (String.length output)
+
 (* Reported as a sharp edge rather than a bug: because nothing runs unless
    every phrase typechecks, a phrase that changes the search path cannot be
    used by a later phrase in the same call. Worth pinning so the behaviour is
@@ -409,5 +442,11 @@ let () =
            test_output_survives_a_later_failure;
          Alcotest.test_case "path changes need their own call" `Slow
            test_path_changes_need_their_own_call;
+         Alcotest.test_case "large output is capped honestly" `Slow
+           test_large_output_is_capped_honestly;
+         Alcotest.test_case "small output is not marked truncated" `Slow
+           test_small_output_is_not_marked_truncated;
+         Alcotest.test_case "output between 64k and the cap" `Slow
+           test_output_between_64k_and_the_cap;
          Alcotest.test_case "partial output recovered on interrupt" `Slow
            test_partial_output_recovered_on_interrupt ]) ]

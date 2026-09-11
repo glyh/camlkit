@@ -29,8 +29,12 @@ let eval_tool =
     "description", `String
       "Evaluate OCaml phrases in a session. Accepts several phrases in one \
        call. Nothing is executed unless every phrase parses and typechecks, \
-       so a failure never leaves partial state behind. Directives such as \
-       #require are not accepted here; use the require and describe tools.";
+       so a failure never leaves partial state behind. One consequence worth \
+       knowing: a phrase that changes the search path, such as one calling \
+       Topdirs.dir_directory, cannot be used by a later phrase in the same \
+       call, because that later phrase is typechecked before anything runs. \
+       Put the path change in its own call. Directives such as #require are \
+       not accepted here; use the require and describe tools.";
     "inputSchema", obj ~required:[ "session"; "code" ]
       [ session_arg;
         ("code", `Assoc [ "type", `String "string";

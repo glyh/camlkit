@@ -61,16 +61,20 @@ let request_of_json j =
   | "require" -> Require (member "packages" j |> to_list |> List.map to_string)
   | k -> failwith ("unknown request kind: " ^ k)
 
-(* A phrase can print without bound and an MCP result is a single payload with
-   no streaming, so captured output is capped. Clamping is pure so it can be
-   tested without running a toplevel.
+(* A phrase can print without bound, and an MCP result is a single payload with
+   no streaming, so captured output is capped. The limit is small because the
+   result lands in a model's context: 16K of text is already about four
+   thousand tokens, and a half-megabyte result overflows a tool-result limit
+   and spills to a file, which helps nobody.
+   Clamping is pure so it can be tested without running a toplevel.
    ponytail: one fixed limit; make it per-request if anyone needs more. *)
-let output_limit = 4 * 1024 * 1024
+let output_limit = 16 * 1024
 
 let clamp ~limit phrases =
   let any = ref false in
   let clamp_one p =
-    if p.out_start >= limit then (any := true;
+    if p.out_len <= 0 then p                       (* nothing to cut *)
+    else if p.out_start >= limit then (any := true;
       { p with out_start = limit; out_len = 0; truncated = true })
     else if p.out_start + p.out_len > limit then (any := true;
       { p with out_len = limit - p.out_start; truncated = true })
