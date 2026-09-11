@@ -18,6 +18,12 @@
  (depends
   (ocaml (>= 5.3.0))
   (jsonrpc (>= 1.20))
+  ; A runtime dependency on a binary rather than a library: the source-query
+  ; tools shell out to ocamlmerlin, which is looked up beside our own
+  ; executable first and so must live in the same switch. Nothing links
+  ; against merlin, and no version is pinned because merlin's own versions
+  ; track the compiler. The other binary dependency, dune, comes in above.
+  merlin
   (ocamlfind (>= 1.9))
   (yojson (>= 2.0))
   (alcotest (and (>= 1.7) :with-test))))

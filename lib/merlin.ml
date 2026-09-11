@@ -62,7 +62,12 @@ let query ~command ~args ~file =
     in
     ignore (Unix.close_process (out, inp));
     if String.trim answer = "" then
-      Error "merlin returned nothing; is ocamlmerlin installed in this switch?"
+      Error
+        (Printf.sprintf
+           "ocamlmerlin produced no answer. It is a runtime dependency and \
+            must be installed in the same opam switch as this server: try \
+            `opam install --switch <switch> merlin`. Looked for %s."
+           (Lazy.force binary))
     else
       match Yojson.Safe.from_string answer with
       | exception Yojson.Json_error e -> Error ("unparseable merlin reply: " ^ e)

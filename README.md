@@ -121,10 +121,17 @@ and no opam variables set.
 
 ## Using it
 
-Five tools. `eval` runs OCaml phrases in a named session, `describe` shows a
+Ten tools, in two groups.
+
+**About values, in a session.** `eval` runs OCaml phrases, `describe` shows a
 signature, `require` loads findlib packages, `load` brings in a dune
-project's own libraries, and `reset` empties a session. Sessions are created
-on first use under whatever name you pick, and state persists between calls.
+project's own libraries, `reset` empties a session. Sessions are created on
+first use under whatever name you pick, and state persists between calls.
+
+**About source, with no session.** `locate` finds where a name is defined,
+`type_at` gives the type at a position, `outline` lists what a file defines,
+`uses` finds every occurrence, `search_type` finds values by their type.
+These need nothing built and nothing loaded.
 
 To explore the project you are working in, build it, then:
 
