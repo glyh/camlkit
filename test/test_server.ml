@@ -68,6 +68,20 @@ let has needle hay =
 
 let with_server f = let c = start () in Fun.protect ~finally:(fun () -> stop c) (fun () -> f c)
 
+(* A client refuses to connect to a server that answers initialize with a
+   revision it does not speak, so the version asked for is the version agreed.
+   Claude Code sends 2025-11-25. *)
+let test_initialize_agrees_on_the_client_version () =
+  with_server @@ fun c ->
+  let ask v =
+    let r = result (rpc c ~id:1 ~meth:"initialize"
+                      ~params:(`Assoc [ "protocolVersion", `String v ])) in
+    Yojson.Safe.Util.(member "protocolVersion" r |> to_string) in
+  Alcotest.(check string) "echoes what the client speaks" "2025-11-25"
+    (ask "2025-11-25");
+  Alcotest.(check string) "and a different one too" "2025-06-18"
+    (ask "2025-06-18")
+
 let test_handshake () =
   with_server @@ fun c ->
   let r = result (rpc c ~id:1 ~meth:"initialize" ~params:(`Assoc [])) in
@@ -234,6 +248,8 @@ let () =
   Alcotest.run "utop-mcp-server"
     [ ("mcp",
        [ Alcotest.test_case "both handshakes" `Slow test_handshake;
+         Alcotest.test_case "initialize agrees on the client version" `Slow
+           test_initialize_agrees_on_the_client_version;
          Alcotest.test_case "tools listed" `Slow test_tools_listed ]);
       ("tools",
        [ Alcotest.test_case "eval through the loop" `Slow test_eval_through_the_loop;

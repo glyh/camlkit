@@ -25,6 +25,17 @@ retired.** That exchange, `notifications/initialized`, and the
 `server/discover` to learn capabilities, but no handshake is required and
 any request can land on any server instance.
 
+**Agree on the client's protocol version, do not impose ours.** Found by
+registering with a real client: Claude Code sends
+`protocolVersion: "2025-11-25"` and refuses to connect to a server that
+answers `initialize` with anything else, reporting
+`Server's protocol version is not supported`. Tool dispatch is identical
+across these revisions, so `initialize` echoes back whatever the client
+asked for and only `server/discover` advertises our own newest.
+
+Nothing caught this, because every test sent `initialize` with no
+`protocolVersion` at all. The first real client found it immediately.
+
 **Speak both handshakes.** Answer `initialize` if a client sends it,
 answer `server/discover` if it sends that, and dispatch tools identically
 either way. The divergence is confined to a couple of methods at the edge,
