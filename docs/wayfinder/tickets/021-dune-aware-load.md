@@ -97,3 +97,16 @@ separate missing dependency and only one was real. The missing unit is now
 matched against the `.cmo` files in each discovered library's objs
 directory, so it says "comes from core_tt_syntax, which failed above; this
 is a knock-on failure" and points at the single genuine error.
+
+## Amendment: say that the reset happened
+
+Suppressing the generic restart note on a requested reset was an
+overcorrection. The note was wrong, because it claimed the required packages
+were gone while the same call restored them, but removing it left a
+successful reset-load reading exactly like one that reused the session, so
+the caller had to probe a binding to tell them apart.
+
+A reset-load now carries its own note: the session was reset, earlier
+bindings are gone, and these packages were re-required. A load that reused
+the session says nothing, which is the distinguishing signal. Both
+directions are tested.

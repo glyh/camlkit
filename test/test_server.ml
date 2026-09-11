@@ -253,6 +253,8 @@ let test_load_a_project () =
   let r = call c ~id:1 ~tool:"load"
       ~args:(`Assoc [ "session", `String "s"; "path", `String fixtures ]) in
   Alcotest.(check bool) "loading succeeds" false (is_error r);
+  Alcotest.(check bool) "a load that reused the session says nothing about reset"
+    false (has "was reset" (text r));
   Alcotest.(check bool) "and says what it loaded" true (has "mylib" (text r));
   let r = call c ~id:2 ~tool:"eval"
       ~args:(`Assoc [ "session", `String "s"; "code", `String "Mylib.make 5;;" ]) in
@@ -297,8 +299,17 @@ let test_reset_load_restores_required_packages () =
       ~args:(`Assoc [ "session", `String "s"; "path", `String fixtures;
                       "reset", `Bool true ]) in
   Alcotest.(check bool) "the load succeeds after the reset" false (is_error r);
-  Alcotest.(check bool) "and does not claim packages were lost" false
-    (has "restarted" (text r));
+  (* A successful reset-load otherwise reads exactly like one that reused the
+     session, so it has to say what it did - and say it accurately, since the
+     generic restart note claims the packages are gone. *)
+  Alcotest.(check bool) "it says the session was reset" true
+    (has "was reset before loading" (text r));
+  Alcotest.(check bool) "and that bindings went with it" true
+    (has "bindings are gone" (text r));
+  Alcotest.(check bool) "and names what it restored" true
+    (has "Re-required yojson" (text r));
+  Alcotest.(check bool) "without claiming the packages were lost" false
+    (has "loaded packages are gone" (text r));
   let r = call c ~id:3 ~tool:"eval"
       ~args:(`Assoc [ "session", `String "s";
                       "code", `String "Yojson.Safe.from_string;;" ]) in

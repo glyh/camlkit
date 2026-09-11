@@ -119,9 +119,11 @@ let handle_call id params =
       let resetting = Yojson.Safe.Util.member "reset" args = `Bool true in
       if resetting then begin
         discard session_name "reset was requested before loading";
-        (* The caller asked for this, so it is not a surprise restart, and the
-           note would claim the required packages are gone when the load is
-           about to put them back. *)
+        (* Not the generic restart note: that one says the required packages
+           are gone, while this call is about to put them back. Suppress it
+           and say what actually happened instead, because a successful
+           reset-load otherwise reads exactly like one that reused the
+           session, and the caller would have to probe a binding to tell. *)
         Hashtbl.remove restarted session_name
       end;
       let asked = strings "packages" in
@@ -130,6 +132,17 @@ let handle_call id params =
       let packages =
         if resetting then Option.value ~default:[] (Hashtbl.find_opt required session_name)
         else asked in
+      let reset_note =
+        if not resetting then None
+        else
+          Some (Printf.sprintf
+                  "Session %S was reset before loading: earlier bindings are \
+                   gone.%s" session_name
+                  (match packages with
+                   | [] -> ""
+                   | ps -> Printf.sprintf " Re-required %s."
+                             (String.concat ", " ps)))
+      in
       match arg_string args "path" with
       | Error e -> reply id (Render.infrastructure_failure e)
       | Ok path ->
@@ -137,6 +150,7 @@ let handle_call id params =
         match session_for session_name with
         | Error e -> reply id (Render.infrastructure_failure e)
         | Ok (s, note) ->
+          let note = match reset_note with Some _ -> reset_note | None -> note in
           match Session.send s request ~timeout:eval_timeout with
           | Error e -> reply id (Render.infrastructure_failure e)
           | Ok () -> Hashtbl.replace pending session_name (id, note)
