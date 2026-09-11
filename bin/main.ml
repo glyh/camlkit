@@ -333,7 +333,8 @@ let handle_call id params =
          | Ok (s, _) ->
            let note =
              Printf.sprintf
-               "Session %S was reset; what follows is the code the reset                 carried, evaluated in the empty toplevel." session_name
+               "Session %S was reset; what follows is the code the reset \
+                carried, evaluated in the empty toplevel." session_name
            in
            (match Session.send s (Msg.Eval { source = code; autorun = None })
                     ~timeout:eval_timeout with
