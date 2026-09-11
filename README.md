@@ -144,6 +144,29 @@ stays one call.
 The worker must be built with the same OCaml version as the project, because
 bytecode is version-locked. Install into the project's own switch.
 
+## Testing it by hand
+
+Most behaviour is reachable through the tools, so a session can exercise it
+directly: evaluate something, break it, load a project, reset.
+
+Cancellation is the exception. A model never sends it; the client does, when
+a user interrupts or a client-side timeout fires. So from inside a session
+the only way to see it is to start something long and then interrupt at the
+client. To exercise it deliberately, drive the server directly:
+
+```sh
+python3 scripts/cancel-check.py \
+  "$(opam var bin)/utop-mcp" "$(opam var bin)/utop-mcp-worker"
+```
+
+It starts an infinite loop, cancels it, and checks two things: that no reply
+arrives for the cancelled request, and that the session still evaluates
+afterwards. The second matters because cancelling interrupts rather than
+kills, so it should cost the phrase and not the session.
+
+The same shape works for anything else the tool surface does not reach:
+newline-delimited JSON-RPC on stdin, one JSON object per line.
+
 ## Notes on the build
 
 The worker is bytecode, because utop ships no native archive; the server is
