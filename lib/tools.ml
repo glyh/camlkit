@@ -13,28 +13,13 @@ let obj ?(required = []) props =
            "properties", `Assoc props;
            "required", `List (List.map (fun r -> `String r) required) ]
 
-let outcome_schema =
-  `Assoc [ "type", `String "object";
-           "description", `String "What the phrase produced, as data. kind is \
-             one of nothing, value, bindings, exception.";
-           "properties", `Assoc [
-             "kind", `Assoc [ "type", `String "string" ];
-             "type", `Assoc [ "type", `String "string";
-               "description", `String "For kind=value, the type of the result." ];
-             "exception", `Assoc [ "type", `String "string" ];
-             "items", `Assoc [ "type", `String "array";
-               "description", `String "For kind=bindings, one entry per name \
-                 bound, each with name, kind (value, type, module, ...) and \
-                 type. The values themselves are in rendering, which is where \
-                 the printer put them." ] ] ]
-
 let phrase_schema =
   `Assoc [ "type", `String "object";
            "properties", `Assoc [
-             "outcome", outcome_schema;
              "rendering", `Assoc [ "type", `String "string";
-               "description", `String "The same thing as text, as the toplevel \
-                 prints it. Prefer outcome." ];
+               "description", `String "What the toplevel printed about the \
+                 phrase, verbatim: bindings with their types and values, as a \
+                 utop transcript." ];
              "warnings", `Assoc [ "type", `String "string" ];
              "output", `Assoc [ "type", `String "string";
                "description", `String "What the phrase printed." ] ] ]

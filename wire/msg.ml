@@ -17,32 +17,12 @@ type request =
    "val x : int = 42"; program output lives in the raw segment at
    [out_start, out_start + out_len). These are different questions and the
    first worker prototype wrongly concatenated them. *)
-(* What the toplevel produced, as data rather than as the sentence it prints.
-   "val _0 : int = 42" packs a name, a type and a value into one string, and
-   the type is the thing a caller most often wants. *)
-(* Name and type only. The value is deliberately absent: it duplicates the
-   rendering exactly, and it is a printed representation rather than data -
-   "<fun>", "<abstr>", or a list the printer elided. Measured at two to four
-   times the rendering's size before it was dropped. *)
-type binding = {
-  bound : string;         (* the name, or "" where the item has none *)
-  bound_kind : string;    (* value, type, module, modtype, class, exception *)
-  bound_type : string;    (* its type, or the whole declaration for a type *)
-}
-
-type outcome =
-  | No_outcome                                   (* the phrase printed nothing *)
-  | Value of { value_type : string }             (* a bare expression *)
-  | Bindings of binding list                     (* let, type, module, ... *)
-  | Raised of string                             (* an uncaught exception *)
-
 type phrase = {
   rendering : string;
   warnings : string;
   out_start : int;
   out_len : int;
   truncated : bool;   (* this phrase printed more than the cap allowed *)
-  outcome : outcome;  (* the rendering, decomposed *)
 }
 
 type phase = Parse | Typecheck | Execute
@@ -122,37 +102,10 @@ let clamp ~limit phrases =
   let clamped = List.map clamp_one phrases in
   (clamped, !any)
 
-let json_of_binding { bound; bound_kind; bound_type } =
-  `Assoc [ "name", `String bound; "kind", `String bound_kind;
-           "type", `String bound_type ]
-
-let json_of_outcome = function
-  | No_outcome -> `Assoc [ "kind", `String "nothing" ]
-  | Value { value_type } -> `Assoc [ "kind", `String "value";
-                                     "type", `String value_type ]
-  | Bindings bs ->
-    `Assoc [ "kind", `String "bindings";
-             "items", `List (List.map json_of_binding bs) ]
-  | Raised e -> `Assoc [ "kind", `String "exception"; "exception", `String e ]
-
-let outcome_of_json j =
-  let open Yojson.Safe.Util in
-  match member "kind" j |> to_string with
-  | "value" -> Value { value_type = member "type" j |> to_string }
-  | "bindings" ->
-    Bindings (member "items" j |> to_list
-              |> List.map (fun b ->
-                  { bound = member "name" b |> to_string;
-                    bound_kind = (match member "kind" b with
-                        | `String k -> k | _ -> "value");
-                    bound_type = member "type" b |> to_string }))
-  | "exception" -> Raised (member "exception" j |> to_string)
-  | _ -> No_outcome
-
-let json_of_phrase { rendering; warnings; out_start; out_len; truncated; outcome } =
+let json_of_phrase { rendering; warnings; out_start; out_len; truncated } =
   `Assoc [ "rendering", `String rendering; "warnings", `String warnings;
            "out_start", `Int out_start; "out_len", `Int out_len;
-           "truncated", `Bool truncated; "outcome", json_of_outcome outcome ]
+           "truncated", `Bool truncated ]
 
 let phrase_of_json j =
   let open Yojson.Safe.Util in
@@ -160,8 +113,7 @@ let phrase_of_json j =
     warnings = member "warnings" j |> to_string;
     out_start = member "out_start" j |> to_int;
     out_len = member "out_len" j |> to_int;
-    truncated = member "truncated" j |> to_bool;
-    outcome = outcome_of_json (member "outcome" j) }
+    truncated = member "truncated" j |> to_bool }
 
 let json_of_response = function
   | Completed ps ->

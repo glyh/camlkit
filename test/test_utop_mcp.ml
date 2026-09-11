@@ -67,8 +67,7 @@ let test_response_roundtrip () =
          (Msg.json_of_response (Msg.response_of_json (Msg.json_of_response r))))
   in
   check (Msg.Completed [ { rendering = "val x : int = 42"; warnings = "";
-                           out_start = 0; out_len = 0; truncated = false;
-                           outcome = Msg.Value { value_type = "int" } } ]);
+                           out_start = 0; out_len = 0; truncated = false } ]);
   check (Msg.Failed { phase = Msg.Typecheck; phrase_index = 1;
                       message = "Error: ..."; spans = [ (4, 8) ];
                       lines = [ (1, 1) ]; done_ = [] });
@@ -81,7 +80,7 @@ let test_response_roundtrip () =
 let test_clamp () =
   let p start len =
     Msg.{ rendering = ""; warnings = ""; out_start = start; out_len = len;
-          truncated = false; outcome = No_outcome } in
+          truncated = false } in
   let ps, any = Msg.clamp ~limit:100 [ p 0 50; p 50 50 ] in
   Alcotest.(check bool) "nothing under the limit is touched" false any;
   Alcotest.(check bool) "spans unchanged" true
@@ -303,34 +302,22 @@ let test_error_locations () =
     [ (0, 17) ] g.Msg.spans;
   Alcotest.(check (list (pair int int))) "later line ranges too" [ (1, 1) ] g.Msg.lines
 
-(* The rendering "val _0 : int = 42" packs a name, a type and a value into one
-   string; the type is what a caller most often wants, so it is also a field. *)
-let test_outcome_is_structured () =
+(* The rendering is a utop transcript and stays one. A structured decomposition
+   was tried and removed: every kind it could report turned out to be derivable
+   from whether the rendering was empty, and the names and types it carried are
+   what the transcript already says. *)
+let test_rendering_carries_the_transcript () =
   with_worker @@ fun s ->
-  let outcome_of code =
-    let r, _ = ask s (Msg.Eval code) in (List.hd (phrases r)).Msg.outcome in
-  (match outcome_of "1 + 41;;" with
-   | Msg.Bindings [ b ] ->
-     Alcotest.(check string) "the implicit binding is named" "_0" b.Msg.bound;
-     Alcotest.(check string) "its type is a field" "int" b.Msg.bound_type;
-     Alcotest.(check string) "and its kind" "value" b.Msg.bound_kind
-   | _ -> Alcotest.fail "expected a binding");
-  (match outcome_of "let g a b = a +. b;;" with
-   | Msg.Bindings [ b ] ->
-     Alcotest.(check string) "a function's type, unparsed"
-       "float -> float -> float" b.Msg.bound_type
-   | _ -> Alcotest.fail "expected a binding");
-  (match outcome_of "type colour = Red | Blue;;" with
-   | Msg.Bindings [ b ] ->
-     Alcotest.(check string) "a type declaration is named" "colour" b.Msg.bound;
-     Alcotest.(check string) "and says what sort of thing it is" "type"
-       b.Msg.bound_kind;
-     Alcotest.(check bool) "and carries its declaration" true
-       (has_substring "Red" b.Msg.bound_type)
-   | _ -> Alcotest.fail "expected a binding");
-  (match outcome_of "let () = print_string \"quiet\";;" with
-   | Msg.No_outcome -> ()
-   | _ -> Alcotest.fail "a phrase producing nothing should say so")
+  let rendering code =
+    let r, _ = ask s (Msg.Eval code) in (List.hd (phrases r)).Msg.rendering in
+  Alcotest.(check bool) "a binding, with its type and value" true
+    (has_substring "val _0 : int = 42" (rendering "1 + 41;;"));
+  Alcotest.(check bool) "a function's type" true
+    (has_substring "int -> int -> int" (rendering "let g x y = x + y;;"));
+  Alcotest.(check bool) "a type declaration" true
+    (has_substring "type colour = Red | Blue" (rendering "type colour = Red | Blue;;"));
+  Alcotest.(check string) "and a phrase that produced nothing renders nothing"
+    "" (rendering "let () = print_string \"quiet\";;")
 
 (* Incomplete input used to kill the worker outright: utop raised Need_more to
    ask a line editor for more, and nothing here can prompt, so it escaped. It
@@ -494,7 +481,8 @@ let () =
          Alcotest.test_case "require" `Slow test_require;
          Alcotest.test_case "hermetic" `Slow test_hermetic;
          Alcotest.test_case "error locations" `Slow test_error_locations;
-         Alcotest.test_case "outcome is structured" `Slow test_outcome_is_structured;
+         Alcotest.test_case "rendering carries the transcript" `Slow
+           test_rendering_carries_the_transcript;
          Alcotest.test_case "incomplete input is an error not a crash" `Slow
            test_incomplete_input_is_an_error_not_a_crash;
          Alcotest.test_case "stdlib is fully linked" `Slow

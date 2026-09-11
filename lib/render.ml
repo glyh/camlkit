@@ -20,11 +20,10 @@ let slice payload (p : Msg.phrase) =
   if p.out_len <= 0 || p.out_start < 0 || p.out_start > n then ""
   else String.sub payload p.out_start (min p.out_len (n - p.out_start))
 
-(* The outcome is the structured half: a caller asking what type a phrase
-   produced should not have to parse "val _0 : int = 42". *)
+(* The rendering is a utop transcript and stays one. Structuring it was tried
+   and removed: see docs/wayfinder/tickets/004. *)
 let json_phrase payload (p : Msg.phrase) =
-  `Assoc [ "outcome", Msg.json_of_outcome p.outcome;
-           "rendering", `String p.rendering;
+  `Assoc [ "rendering", `String p.rendering;
            "warnings", `String p.warnings;
            "output", `String (slice payload p);
            "truncated", `Bool p.truncated ]

@@ -41,7 +41,10 @@ line ranges as data, and a failure names the thing that failed in a field
 rather than only inside a sentence. Human-readable text ships alongside for
 display, never instead. The test is whether a caller could act on the result
 without reading the prose: if it has to regex a message to learn which
-library failed, the shape is wrong.
+library failed, the shape is wrong. The converse also holds - structure that
+merely restates readable text is not worth its bytes. The eval rendering is a
+utop transcript and stays one; see
+[What an eval returns to the agent](tickets/004-eval-result-contract.md).
 
 **Standing preferences.** Build against opam's utop, never the reference
 checkout at `/home/lyh/pullground/mina/utop`, which is behind opam. The

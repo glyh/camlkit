@@ -103,3 +103,38 @@ extension. For a type or module declaration the "type" is the declaration,
 which is also what the rendering shows, so the kind is what makes the
 structured form worth having there: it says what sort of thing was bound
 without parsing the text.
+
+## Amendment: the decomposition is removed
+
+Structuring the rendering was tried for two rounds and is now gone. What
+settled it was measuring which kinds the outcome could actually report:
+
+| phrase | kind |
+| --- | --- |
+| `1 + 41;;` | bindings |
+| `let x = 1;;` | bindings |
+| `type t = A;;` | bindings |
+| `let () = print_string "p";;` | nothing |
+| `failwith "boom";;` | no phrase at all |
+
+Only `bindings` and `nothing` ever occur. `value` is unreachable because
+implicit bindings turn every bare expression into a binding, and `exception`
+is unreachable because a raise becomes `status: failed` with the phrase
+excluded from the list. So a kind hint says exactly "is the rendering
+empty", which the rendering already says.
+
+That left names and types, and those are what a utop transcript is: a
+consumer that reads OCaml reads `val f : int -> int -> int = <fun>` without
+help. The decomposition also cost two to four times the rendering's size
+before the value was dropped from it, and even after, added bytes to every
+declaration for a `kind` that restated the first word of the type.
+
+Removed: 184 lines, including `worker/outcome.ml` and its
+`Toploop.print_out_phrase` wrapper.
+
+This is not a retreat from the standing preference that an endpoint serves
+structure. That rule's own test is whether a caller could act without
+reading the prose, and the fields where the answer was no all remain
+structural: `phase`, `spans`, `lines`, which phrases ran before a failure,
+`truncated`, and the `loaded`/`failed` arrays. What is gone is structure that
+restated readable text.
