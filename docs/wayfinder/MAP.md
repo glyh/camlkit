@@ -37,6 +37,11 @@ must evaluate it first. Tests are Alcotest.
   2026-07-28 but answer both handshakes; the stateless core blesses session
   ids as tool arguments; `isError` only for infrastructure failure; declare
   an `outputSchema`.
+- [Trust boundary](tickets/012-trust-boundary.md) — trusted local developer
+  tool, deliberately not sandboxed; stdio implies a local parent and that
+  assumption is load-bearing.
+- [Testing strategy](tickets/013-testing-strategy.md) — one tier, integration
+  tests spawn a real utop in the default `dune test`.
 
 ## Fog
 

@@ -18,10 +18,20 @@ let encode_input ?(flags = []) phrase =
    so eval output arrives *after* the following prompt: with no reliable in-band
    end marker. We append a phrase that prints a unique marker; everything before
    it on stdout belongs to the user's phrase.
+   The marker is random, not sequential: it is ordinary text with no protocol
+   privilege, so a phrase that printed a predictable marker would truncate its
+   own output silently.
    ponytail: costs one extra round trip per eval; only worth replacing if utop
    ever grows a real end-of-output signal. *)
-let sentinel_phrase id = Printf.sprintf "let () = Stdlib.print_endline \"@@utop-mcp:%d@@\";;" id
-let sentinel_marker id = Printf.sprintf "@@utop-mcp:%d@@" id
+let rng = lazy (Random.State.make_self_init ())
+
+let fresh_token () =
+  let r = Lazy.force rng in
+  Printf.sprintf "%08x%08x" (Random.State.bits r) (Random.State.bits r)
+
+let sentinel_marker token = "@@utop-mcp:" ^ token ^ "@@"
+let sentinel_phrase token =
+  Printf.sprintf "let () = Stdlib.print_endline %S;;" (sentinel_marker token)
 
 (* utop announces its terminator as phrase-terminator:;; and will answer
    continue: for anything not ending in it. *)

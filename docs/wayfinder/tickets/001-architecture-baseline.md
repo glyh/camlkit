@@ -64,3 +64,28 @@ rebuild state, which has its own side effects and can diverge.
 and over full serialization. Structured cancellation is what the deadline
 design needs anyway, and this is the OCaml 5 story. The cost is a large
 dependency for a server this size.
+
+## Amendment: linking reconsidered and re-rejected
+
+Revisited on the argument that driving the protocol means fighting utop's
+quirks. Re-rejected on evidence gathered from the installed library:
+
+- **utop is bytecode only.** Its META carries `archive(native) = ""` and
+  the library is built `(modes byte)`. Linking forces a bytecode server.
+- **It pulls in Lwt and a terminal UI.** Transitive dependencies include
+  `lwt`, `lwt_react`, `lambda-term`, `zed`, `mew_vi`, `uucp`, `uuseg`,
+  all inside the Eio process.
+- **The eval loop is not exported.** `uTop_main.mli` exposes only `main`,
+  `Term` and `interact`. `process_input`, `parse_and_check`, `rewrite`
+  and `bind_expressions` are internal, so evaluation would be rebuilt on
+  `UTop.check_phrase` and `Toploop.execute_phrase`.
+- **compiler-libs shifts between releases.** utop preprocesses its own
+  sources with `cppo -V OCAML:%{ocaml_version}`, which is direct evidence
+  of the maintenance a reimplemented eval loop would inherit.
+- **One toplevel per process.** The OCaml toplevel holds global compiler
+  state, so linking yields a single session per process, contradicting
+  the named multiple sessions this baseline chose.
+
+The quirks that motivated the reconsideration are already solved and
+verified: sentinel framing, SIGINT recovery, poison detection. The trade
+was three solved problems for four unsolved ones.

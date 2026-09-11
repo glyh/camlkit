@@ -64,6 +64,13 @@ carries only crashes and runtime warnings. Those arrive as lines with no
 `command:` prefix and would corrupt the parser. An early prototype merged
 them and passed only because utop happened to stay silent.
 
+**Concurrent evals on one session are rejected, not queued.** A toplevel
+is strictly sequential. A second eval arriving while one is running
+returns a busy error, because an agent firing concurrent evals at a single
+session has made a mistake and should see it. Queueing hides the bug, and
+the waiting call then spends its deadline sitting in a queue, which
+surfaces as an indistinguishable timeout.
+
 **The server's own stdout is the MCP channel.** Nothing in this process
 may print to it. All logging goes to stderr.
 

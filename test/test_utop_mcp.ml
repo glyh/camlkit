@@ -30,8 +30,10 @@ let test_terminate () =
 
 let test_sentinel () =
   Alcotest.(check string) "phrase prints exactly the declared marker"
-    (Printf.sprintf "let () = Stdlib.print_endline \"%s\";;" (Proto.sentinel_marker 7))
-    (Proto.sentinel_phrase 7)
+    (Printf.sprintf "let () = Stdlib.print_endline %S;;" (Proto.sentinel_marker "abc"))
+    (Proto.sentinel_phrase "abc");
+  Alcotest.(check bool) "tokens are not reused" false
+    (Proto.fresh_token () = Proto.fresh_token ())
 
 let test_spawn_argv () =
   Alcotest.(check (list string)) "hermetic, via opam exec, implicit bindings"
