@@ -8,6 +8,25 @@
 
 open Wire
 
+(* If the server is killed outright, nothing it owns runs, and a worker that
+   is mid-phrase is not reading its pipe either, so it neither sees EOF nor
+   gets told to stop. It would spin forever.
+
+   So watch for the parent going away. The alarm is armed only while a request
+   is being handled, which is the only time this can happen and also avoids a
+   signal interrupting the blocking read between requests. The handler runs
+   during evaluation for the same reason the interrupt does: OCaml delivers
+   signals at safepoints. *)
+let watch_parent () =
+  let parent = Unix.getppid () in
+  Sys.set_signal Sys.sigalrm
+    (Sys.Signal_handle
+       (fun _ ->
+          if Unix.getppid () <> parent then exit 0 else ignore (Unix.alarm 2)))
+
+let watching () = ignore (Unix.alarm 2)
+let not_watching () = ignore (Unix.alarm 0)
+
 let usage () =
   prerr_endline "utop-mcp-worker: expects the capture file path as its only argument";
   exit 2
@@ -24,10 +43,12 @@ let () =
   Unix.dup2 devnull Unix.stdin;
   let cap = Capture.create capture_path in
   Eval.init ();
+  watch_parent ();
   let rec loop () =
     match Frame_io.read ic with
     | None -> ()
     | Some { Frame.meta; _ } ->
+      watching ();
       let response =
         match Msg.request_of_json meta with
         | Msg.Eval src -> Eval.eval cap src
@@ -59,6 +80,7 @@ let () =
         | other -> other
       in
       Frame_io.write oc { Frame.meta = Msg.json_of_response response; payload };
+      not_watching ();
       loop ()
   in
   loop ()

@@ -46,7 +46,15 @@ through a worker.
 
 Shelled out rather than linked. `merlin-lib` exists, but its internal
 libraries are far less stable than the documented CLI, and that coupling is
-what has bitten repeatedly here. Server mode, for the 2 ms against 30.
+what has bitten repeatedly here.
+
+**Single mode, not server.** Server mode is faster - 17 ms per query against
+42, measured on a real project with the server warmed - but it leaves an
+`ocamlmerlin-server` behind per project, plus a `dune ocaml-merlin` helper,
+whose lifetime we neither own nor can reliably end. Single mode leaves
+nothing, verified by counting processes before and after. Twenty-five
+milliseconds is not worth a process we cannot clean up, for a caller making a
+handful of queries rather than one per keystroke.
 
 `ocamlmerlin` is looked for beside our own executable before PATH, the same
 as dune, because we install into a switch where it lives and a client may

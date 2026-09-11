@@ -135,3 +135,26 @@ them had accumulated in /tmp from a session's worth of ad-hoc scripts.
 
 Reading partial output still works, because the server holds its own
 descriptor and does not need the name.
+
+## Amendment: a worker outlives a killed server no longer
+
+Measured across three ways of stopping the server:
+
+| how it stops | the worker |
+| --- | --- |
+| stdin closed | survives while in-flight work finishes, then both exit at the deadline |
+| SIGTERM | killed, because `at_exit` runs |
+| SIGKILL, worker mid-phrase | **was orphaned** |
+
+The last one is the hole: nothing the server owns runs, and a worker
+mid-phrase is not reading its pipe either, so it neither sees EOF nor gets
+told to stop. It span forever.
+
+The worker now watches for its parent going away, on an alarm armed only
+while a request is being handled. That is the only window in which this can
+happen, and arming it no wider avoids a signal interrupting the blocking read
+between requests. The handler runs during evaluation for the same reason the
+interrupt does: OCaml delivers signals at safepoints.
+
+The stdin-closed row is not a leak. Confirmed by watching: the server waits,
+the deadline fires at thirty seconds, and both processes exit.

@@ -535,6 +535,32 @@ let test_source_query_on_a_missing_file () =
       ~args:(`Assoc [ "file", `String "/nope/nowhere.ml" ]) in
   Alcotest.(check bool) "reported as a failure, not a crash" true (is_error r)
 
+(* A server that is killed outright runs no cleanup, and a worker mid-phrase
+   is not reading its pipe either, so it neither sees EOF nor gets told to
+   stop. It watches for its parent going away instead. *)
+let test_a_killed_server_takes_its_workers_with_it () =
+  let c = start () in
+  send_raw c
+    (`Assoc [ "jsonrpc", `String "2.0"; "id", `Int 1;
+              "method", `String "tools/call";
+              "params", `Assoc [ "name", `String "eval";
+                                 "arguments",
+                                 `Assoc [ "session", `String "s";
+                                          "code", `String
+                                            "let rec s n = s (n+1) in s 0;;" ] ] ]);
+  Unix.sleepf 1.5;
+  let count () =
+    let ic = Unix.open_process_in "pgrep -x main.bc.exe | wc -l" in
+    let n = int_of_string (String.trim (input_line ic)) in
+    ignore (Unix.close_process_in ic); n
+  in
+  Alcotest.(check bool) "a worker is running" true (count () > 0);
+  (* SIGKILL: nothing the server owns gets to run *)
+  (try Unix.kill c.pid Sys.sigkill with Unix.Unix_error _ -> ());
+  (try ignore (Unix.waitpid [] c.pid) with Unix.Unix_error _ -> ());
+  Unix.sleepf 4.0;
+  Alcotest.(check int) "and it does not outlive the server" 0 (count ())
+
 let () =
   Alcotest.run "utop-mcp-server"
     [ ("mcp",
@@ -579,6 +605,9 @@ let () =
            test_enclosings_are_not_repeated;
          Alcotest.test_case "search_type fills its limit" `Slow
            test_search_type_fills_its_limit ]);
+      ("lifetime",
+       [ Alcotest.test_case "a killed server takes its workers with it" `Slow
+           test_a_killed_server_takes_its_workers_with_it ]);
       ("cancellation",
        [ Alcotest.test_case "stops work and stays quiet" `Slow
            test_cancellation_stops_work_and_stays_quiet;

@@ -7,8 +7,13 @@
    internal libraries are far less stable than the CLI and that coupling is
    what has bitten repeatedly elsewhere in this project.
 
-   Server mode rather than single: identical arguments, about 2 ms per query
-   against 30, because the process stays warm. *)
+   Single mode rather than server. Server mode keeps a warm process and is
+   faster - measured on a real project at 17 ms per query against 42 - but it
+   leaves an ocamlmerlin-server behind per project, plus a `dune ocaml-merlin`
+   helper, whose lifetime we neither own nor can reliably end. Single mode
+   leaves nothing. Twenty-five milliseconds is not worth a process we cannot
+   clean up, for a caller making a handful of queries rather than one per
+   keystroke. *)
 
 let binary = lazy (Wire.Exe.find "ocamlmerlin")
 
@@ -52,7 +57,7 @@ let query ~command ~args ~file =
   | Error e -> Error e
   | Ok source ->
     let argv =
-      [ Filename.quote (Lazy.force binary); "server"; command ]
+      [ Filename.quote (Lazy.force binary); "single"; command ]
       @ List.map Filename.quote args
       @ [ "-filename"; Filename.quote file; "2>/dev/null" ]
     in
