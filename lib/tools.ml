@@ -158,7 +158,8 @@ let type_at_tool =
     "description", `String
       "The type of the expression at a position, and of each enclosing \
        expression, innermost first. Answers from source: no build, no load, \
-       no session.";
+       no session. Enclosings are strictly nested, and exact duplicates from \
+       merlin are removed.";
     "inputSchema", obj ~required:[ "file"; "line"; "col" ]
       [ file_arg; line_arg; col_arg ];
     "outputSchema", obj

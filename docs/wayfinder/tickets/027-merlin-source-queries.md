@@ -93,3 +93,25 @@ out the hard way: `Core.term -> string` finds things that bare `term` does
 not, even in a file whose first line opens `Core`, because merlin matches
 against its own environment rather than the buffer's. Not ours to fix, but
 the tool description now says so.
+
+## Amendment: duplicate entries from merlin, papered over
+
+Reported from a session, and both confirmed to be upstream rather than ours.
+
+`type-enclosing` returns the innermost enclosing twice when one source range
+maps to two typedtree nodes, which is common for an identifier in an
+application position. Reproduced directly against merlin at
+`lib/session.ml` 41:24: the first two entries are byte-identical, same range
+and same type. `search-by-type` returns a value twice when two paths to it
+collapse to one location.
+
+Exact duplicates are dropped at this layer, marked `HACK:` in
+`bin/main.ml` with the condition for removing it. The reasoning for why that
+is safe rather than lossy came from the report and is worth keeping: a repeat
+is indistinguishable from the first, because enclosings are strictly nested
+so two identical ranges cannot both be meaningful, and two hits at one file
+position are the same hit. An exact duplicate carries no information, so
+removing it loses none; it only costs the reader context and confidence.
+
+A regression covers it, and would still pass once merlin stops emitting them,
+which is the signal that the hack can go.

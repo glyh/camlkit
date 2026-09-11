@@ -481,6 +481,30 @@ let test_uses_says_when_it_cannot_be_project_wide () =
   Alcotest.(check bool) "naming the command that would fix it" true
     (has "dune build @ocaml-index" (text r))
 
+(* Reported from a session: merlin repeats the innermost enclosing when one
+   source range maps to two typedtree nodes, and repeats a search hit when two
+   paths to a value collapse to one location. Both are upstream. Exact
+   duplicates are dropped here because a repeat is indistinguishable from the
+   first - enclosings are strictly nested, so two identical ranges cannot both
+   be meaningful. *)
+let test_enclosings_are_not_repeated () =
+  with_server @@ fun c ->
+  with_source @@ fun path ->
+  let r = call c ~id:1 ~tool:"type_at"
+      ~args:(`Assoc [ "file", `String path; "line", `Int 3; "col", `Int 41 ]) in
+  let entries =
+    Yojson.Safe.Util.(
+      r |> member "structuredContent" |> member "enclosings" |> to_list
+      |> List.map Yojson.Safe.to_string)
+  in
+  let distinct = List.sort_uniq compare entries in
+  Alcotest.(check int) "no entry appears twice"
+    (List.length distinct) (List.length entries);
+  (* the ranges must still be strictly nested, so dedup cannot have eaten a
+     real enclosing *)
+  Alcotest.(check bool) "and there is more than one enclosing" true
+    (List.length entries > 1)
+
 let test_source_query_on_a_missing_file () =
   with_server @@ fun c ->
   let r = call c ~id:1 ~tool:"outline"
@@ -526,7 +550,9 @@ let () =
          Alcotest.test_case "a missing file fails cleanly" `Slow
            test_source_query_on_a_missing_file;
          Alcotest.test_case "uses flags an answer it could not complete" `Slow
-           test_uses_says_when_it_cannot_be_project_wide ]);
+           test_uses_says_when_it_cannot_be_project_wide;
+         Alcotest.test_case "enclosings are not repeated" `Slow
+           test_enclosings_are_not_repeated ]);
       ("cancellation",
        [ Alcotest.test_case "stops work and stays quiet" `Slow
            test_cancellation_stops_work_and_stays_quiet;

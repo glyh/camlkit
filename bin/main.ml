@@ -115,6 +115,34 @@ let source_query id name args =
         ~args:(pos @ [ "-query"; query ] @ limit) ~file
     | other -> Error ("no such source query: " ^ other)
   in
+  (* HACK: papering over duplicate entries from merlin. The bug is upstream,
+     not here; merlin returns these repeats itself.
+
+     type-enclosing returns the innermost enclosing twice when one source
+     range maps to two typedtree nodes, which is common for an identifier in
+     an application position. Reproduced at lib/session.ml 41:24, where the
+     first two entries are byte-identical. search-by-type returns a value
+     twice when two paths to it collapse to one location.
+
+     Dropping entries identical to an earlier one is safe for both, because a
+     repeat is indistinguishable from the first: enclosings are strictly
+     nested, so two identical ranges cannot both be meaningful, and two hits
+     at one file position are the same hit. An exact duplicate carries no
+     information, so removing it loses none.
+
+     Remove this once merlin stops emitting them. Nothing else depends on it,
+     and the test "enclosings are not repeated" would then pass without it. *)
+  let dedup = function
+    | `List items ->
+      let seen = Hashtbl.create 16 in
+      `List (List.filter
+               (fun item ->
+                  let key = Yojson.Safe.to_string item in
+                  if Hashtbl.mem seen key then false
+                  else (Hashtbl.add seen key (); true))
+               items)
+    | other -> other
+  in
   match run () with
   | Error e -> reply id (Render.infrastructure_failure e)
   | Ok value ->
@@ -136,6 +164,7 @@ let source_query id name args =
           v )
       | v -> (None, v)
     in
+    let value = dedup value in
     let summary =
       match value with
       | `List [] -> "no results"
