@@ -1,8 +1,8 @@
 (lang dune 3.20)
-(name utop-mcp)
+(name camlkit)
 (generate_opam_files true)
 (source
- (github glyh/utop-mcp))
+ (github glyh/camlkit))
 
 (authors "Yihang Liu")
 
@@ -11,10 +11,10 @@
 (license MIT)
 
 (package
- (name utop-mcp)
- (synopsis "MCP server exposing an OCaml utop toplevel")
+ (name camlkit)
+ (synopsis "MCP server giving an agent OCaml toplevels, source queries and builds")
  (description
-  "Gives an MCP client one or more live OCaml toplevels. A worker process\nlinks the utop library and owns the toplevel; the server supervises one\nworker per session and speaks MCP over stdio.")
+  "Gives an MCP client one or more live OCaml toplevels, merlin-backed\nsource queries and a dune build. A worker process owns the toplevel over\ncompiler-libs; the server supervises one worker per session and speaks MCP\nover stdio.")
  (depends
   (ocaml (>= 5.3.0))
   (jsonrpc (>= 1.20))

@@ -8,7 +8,7 @@ let worker_path = "../worker/main.bc.exe"
 type client = { ic : in_channel; oc : out_channel; pid : int }
 
 let start () =
-  Unix.putenv "UTOP_MCP_WORKER" worker_path;
+  Unix.putenv "CAMLKIT_WORKER" worker_path;
   (* a findlib package carrying an automatic toplevel printer *)
   Unix.putenv "OCAMLPATH" (Filename.concat (Sys.getcwd ()) "fixtures");
   (* cloexec: OCaml defaults it to false, so without this the server, and then
@@ -452,7 +452,7 @@ let test_cancelling_a_finished_request_is_ignored () =
    build lock while `dune runtest` holds it. A standalone file needs no
    configuration beyond the stdlib. *)
 let with_source f =
-  let dir = Filename.temp_dir "utop-mcp-src" "" in
+  let dir = Filename.temp_dir "camlkit-src" "" in
   let path = Filename.concat dir "sample.ml" in
   let oc = open_out path in
   output_string oc
@@ -608,7 +608,7 @@ let test_a_killed_server_takes_its_workers_with_it () =
    build never touches this repository and dune is not invoked inside the
    build lock that dune runtest holds. *)
 let with_project f =
-  let dir = Filename.temp_dir "utop-mcp-proj" "" in
+  let dir = Filename.temp_dir "camlkit-proj" "" in
   let write name contents =
     let oc = open_out (Filename.concat dir name) in
     output_string oc contents; close_out oc
@@ -679,7 +679,7 @@ let test_build_on_something_that_is_not_a_project () =
   Alcotest.(check bool) "that says why" true (has "dune-project" (text r))
 
 let () =
-  Alcotest.run "utop-mcp-server"
+  Alcotest.run "camlkit-server"
     [ ("mcp",
        [ Alcotest.test_case "both handshakes" `Slow test_handshake;
          Alcotest.test_case "initialize agrees on the client version" `Slow

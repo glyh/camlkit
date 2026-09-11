@@ -1,6 +1,7 @@
-# utop-mcp
+# camlkit
 
-An MCP server that gives an agent live OCaml toplevels.
+An MCP server that gives an agent live OCaml toplevels, source queries and
+a build.
 
 A worker process owns the toplevel, over the compiler's own
 `compiler-libs.toplevel`; the server supervises one worker per session and
@@ -38,7 +39,7 @@ installed libraries, any switch will do.
 Into your current switch:
 
 ```sh
-opam pin add utop-mcp https://github.com/glyh/utop-mcp.git
+opam pin add camlkit https://github.com/glyh/camlkit.git
 ```
 
 Into a project that has its own local switch, which is the case that matters
@@ -46,13 +47,13 @@ if you want to reach that project's own code:
 
 ```sh
 opam pin add --switch /path/to/project \
-  utop-mcp https://github.com/glyh/utop-mcp.git
+  camlkit https://github.com/glyh/camlkit.git
 ```
 
-This installs two binaries into that switch's `bin`. `utop-mcp` is the
-server; `utop-mcp-worker` is the toplevel it spawns, one per session. The
+This installs two binaries into that switch's `bin`. `camlkit` is the
+server; `camlkit-worker` is the toplevel it spawns, one per session. The
 server finds the worker beside its own executable, so they must stay
-installed together. `UTOP_MCP_WORKER` overrides that if you need a specific
+installed together. `CAMLKIT_WORKER` overrides that if you need a specific
 build.
 
 Requires OCaml 5.3.0 or newer. Everything else comes in as a dependency.
@@ -71,28 +72,28 @@ To build against a different switch without disturbing your default build:
 ```sh
 PROJ=/path/to/project
 opam install --switch $PROJ jsonrpc ocamlfind yojson merlin alcotest lwt
-opam exec --switch $PROJ -- dune build --build-dir=/tmp/utop-mcp-build
+opam exec --switch $PROJ -- dune build --build-dir=/tmp/camlkit-build
 opam exec --switch $PROJ -- \
-  dune install --build-dir=/tmp/utop-mcp-build --prefix=$PROJ/_opam
+  dune install --build-dir=/tmp/camlkit-build --prefix=$PROJ/_opam
 ```
 
 ## Registering it with Claude Code
 
 Run this from inside the project directory. **Use an absolute path**: the
 client spawns the command with the environment it inherited, and a bare
-`utop-mcp` only resolves when the opam bin directory is on `PATH`, which it
+`camlkit` only resolves when the opam bin directory is on `PATH`, which it
 often is not.
 
 ```sh
 cd /path/to/project
 
 # current switch
-claude mcp add utop "$(opam var bin)/utop-mcp"
+claude mcp add camlkit "$(opam var bin)/camlkit"
 
 # a specific switch, wherever opam actually put it
-claude mcp add utop "$(opam var bin --switch /path/to/project)/utop-mcp"
+claude mcp add camlkit "$(opam var bin --switch /path/to/project)/camlkit"
 
-claude mcp list        # expect: utop: ... - ✔ Connected
+claude mcp list        # expect: camlkit: ... - ✔ Connected
 ```
 
 Ask opam where the binary is rather than assuming a layout: a global switch
@@ -109,7 +110,7 @@ For any other MCP client that reads a JSON config:
 ```json
 {
   "mcpServers": {
-    "utop": { "command": "/absolute/path/to/utop-mcp" }
+    "camlkit": { "command": "/absolute/path/to/camlkit" }
   }
 }
 ```
@@ -173,7 +174,7 @@ client. To exercise it deliberately, drive the server directly:
 
 ```sh
 python3 scripts/cancel-check.py \
-  "$(opam var bin)/utop-mcp" "$(opam var bin)/utop-mcp-worker"
+  "$(opam var bin)/camlkit" "$(opam var bin)/camlkit-worker"
 ```
 
 It starts an infinite loop, cancels it, and checks two things: that no reply
@@ -194,7 +195,7 @@ Verified on OCaml 5.3.0 and 5.4.0.
 A one-line check without a client, which works from the build tree too:
 
 ```sh
-echo '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"eval","arguments":{"session":"a","code":"1 + 41;;"}}}' | utop-mcp
+echo '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"eval","arguments":{"session":"a","code":"1 + 41;;"}}}' | camlkit
 ```
 
 ## Status

@@ -27,7 +27,7 @@ skill before touching the suite):
 ```sh
 dune exec test/test_server.exe -- test load          # one suite
 dune exec test/test_server.exe -- test load 0        # one case
-dune exec test/test_utop_mcp.exe -- list
+dune exec test/test_camlkit.exe -- list
 ```
 
 Both suites are `\`Slow`, so plain `dune test` runs them. Running an executable
@@ -38,13 +38,13 @@ worker and the real server binary and depend on `test/fixtures/mylib`.
 Drive the server by hand, one JSON-RPC object per line on stdin:
 
 ```sh
-echo '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"eval","arguments":{"session":"a","code":"1 + 41;;"}}}' | dune exec utop-mcp
+echo '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"eval","arguments":{"session":"a","code":"1 + 41;;"}}}' | dune exec camlkit
 ```
 
 Cancellation is unreachable from the tool surface, so it has its own driver:
 
 ```sh
-python3 scripts/cancel-check.py "$(opam var bin)/utop-mcp" "$(opam var bin)/utop-mcp-worker"
+python3 scripts/cancel-check.py "$(opam var bin)/camlkit" "$(opam var bin)/camlkit-worker"
 ```
 
 ## Architecture
@@ -72,7 +72,7 @@ The worker is bytecode (`modes byte_complete`, `-linkall`) and the server is
 native. Bytecode is version-locked to the compiler, so a worker only loads
 artifacts from its own switch. The server finds the worker beside its own
 executable, falling back to the dune build-tree path;
-`UTOP_MCP_WORKER` overrides both.
+`CAMLKIT_WORKER` overrides both.
 
 ## Conventions
 
@@ -118,8 +118,9 @@ why, and what was measured rather than assumed. Superseded decisions keep
 their reasoning instead of being deleted. Add a ticket when making a decision
 of that kind, and update MAP.md's list.
 
-Note that utop itself was removed as a dependency (ticket 022); the name
-stays. Parts of README.md still say the worker links utop.
+Note that utop was removed as a dependency (ticket 022) and the project was
+renamed from utop-mcp to camlkit afterwards. The tickets keep the old name and
+their utop history, which is the record rather than drift.
 
 ## Security posture
 

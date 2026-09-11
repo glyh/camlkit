@@ -1,5 +1,5 @@
 open Wire
-open Utop_mcp
+open Camlkit
 
 (* --- framing: pure, so no channels, pipes or temp files ---------------- *)
 
@@ -151,7 +151,7 @@ let test_dead_is_terminal () =
 (* --- against a real worker ---------------------------------------------- *)
 
 let with_worker f =
-  Unix.putenv "UTOP_MCP_WORKER" "../worker/main.bc.exe";
+  Unix.putenv "CAMLKIT_WORKER" "../worker/main.bc.exe";
   let s = Session.spawn "test" in
   Fun.protect ~finally:(fun () -> Session.dispose s) (fun () -> f s)
 
@@ -278,7 +278,7 @@ let test_require () =
    Linking removed the flag, so it now rests on never calling the init-file
    path at all, which is worth pinning down. *)
 let test_hermetic () =
-  let dir = Filename.temp_dir "utop-mcp-cfg" "" in
+  let dir = Filename.temp_dir "camlkit-cfg" "" in
   Unix.mkdir (Filename.concat dir "utop") 0o700;
   let oc = open_out (Filename.concat dir "utop/init.ml") in
   output_string oc "let injected_by_user_init = 1\n"; close_out oc;
@@ -568,7 +568,7 @@ let test_partial_output_recovered_on_interrupt () =
   Alcotest.(check bool) "session survives" true (phrases r <> [])
 
 let () =
-  Alcotest.run "utop-mcp"
+  Alcotest.run "camlkit"
     [ ("frame",
        [ Alcotest.test_case "roundtrip" `Quick test_frame_roundtrip;
          Alcotest.test_case "empty payload" `Quick test_frame_empty_payload;

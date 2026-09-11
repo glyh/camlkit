@@ -1,4 +1,4 @@
-; utop has no native archive (archive(native) = ""), so the worker is bytecode.
+; The toplevel this links loads bytecode archives, so the worker is bytecode.
 ; It is installed as its own binary because the server spawns it by name; see
 ; lib/session.ml for how it is found.
 ;
@@ -8,7 +8,7 @@
 ; compilation unit Stdlib__Dynarray" even though the switch has it.
 (executable
  (name main)
- (public_name utop-mcp-worker)
+ (public_name camlkit-worker)
  (modes byte_complete)
  (link_flags (-linkall))
  (libraries compiler-libs.toplevel findlib.top wire unix str))

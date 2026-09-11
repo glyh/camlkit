@@ -16,7 +16,7 @@
 let protocol_version = "2026-07-28"
 
 let server_info =
-  `Assoc [ "name", `String "utop-mcp"; "version", `String "0.1.0" ]
+  `Assoc [ "name", `String "camlkit"; "version", `String "0.1.0" ]
 
 let capabilities = `Assoc [ "tools", `Assoc [] ]
 

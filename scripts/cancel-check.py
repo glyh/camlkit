@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Exercise notifications/cancelled against utop-mcp. Usage:
-     python3 cancel-check.py /path/to/utop-mcp /path/to/utop-mcp-worker"""
+"""Exercise notifications/cancelled against camlkit. Usage:
+     python3 cancel-check.py /path/to/camlkit /path/to/camlkit-worker"""
 import json, subprocess, sys, time, os
 
 server, worker = sys.argv[1], sys.argv[2]
-env = dict(os.environ, UTOP_MCP_WORKER=worker)
+env = dict(os.environ, CAMLKIT_WORKER=worker)
 p = subprocess.Popen([server], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                      stderr=subprocess.PIPE, text=True, bufsize=1, env=env)
 say = lambda o: (p.stdin.write(json.dumps(o) + "\n"), p.stdin.flush())

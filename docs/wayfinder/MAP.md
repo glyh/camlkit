@@ -1,12 +1,16 @@
-# Map: MCP interface for UTOP
+# Map: camlkit
 
 ## Notes
 
 **Domain.** An MCP server, written in OCaml, that gives an MCP client (an
-agent) one or more live OCaml toplevels. A worker binary owns the eval loop
-over `compiler-libs.toplevel`; the server supervises one worker per session.
-OCaml 5.3.0 or newer. utop was the original substrate and has been removed;
-see [Removing the utop dependency](tickets/022-drop-utop.md).
+agent) one or more live OCaml toplevels, merlin-backed source queries and a
+dune build. A worker binary owns the eval loop over `compiler-libs.toplevel`;
+the server supervises one worker per session. OCaml 5.3.0 or newer.
+
+**Named camlkit.** utop was the original substrate and has been removed, see
+[Removing the utop dependency](tickets/022-drop-utop.md), and the surface grew
+past a toplevel besides. The project was utop-mcp until then, which the
+tickets below still say; that is the record, not drift.
 
 **Purpose.** Both an agent scratchpad REPL and a codebase exploration
 tool, built eval-first. Completion and library loading follow once eval
@@ -29,10 +33,10 @@ The toplevel itself is the exception and cannot be purified: `Toploop` and
 by nature. Keep the pure parts of it, such as directive rejection and
 response construction, separable anyway.
 
-**Verified on OCaml 5.3.0 and 5.4.0**, against utop 2.17.0 and 2.16.0
-respectively. Every compiler-libs signature the worker touches is identical
-across those releases; the one that does differ, `Longident.Ldot`, is
-reached through `UTop_compat.ldot`.
+**Verified on OCaml 5.3.0 and 5.4.0.** Every compiler-libs signature the
+worker touches is identical across those releases. The one that does differ,
+`Longident.Ldot`, is reached through `Longident.unflatten` instead, which is
+not version-dependent.
 
 **Keep what an endpoint serves as structural as possible.** A tool result
 carries typed fields in `structuredContent`, not prose the caller has to
@@ -46,10 +50,8 @@ merely restates readable text is not worth its bytes. The eval rendering is a
 utop transcript and stays one; see
 [What an eval returns to the agent](tickets/004-eval-result-contract.md).
 
-**Standing preferences.** Build against opam's utop, never the reference
-checkout at `/home/lyh/pullground/mina/utop`, which is behind opam. The
-worker is bytecode because utop has no native archive; the server is
-native.
+**Standing preferences.** The worker is bytecode because the toplevel it
+links loads bytecode archives; the server is native.
 `opam env` is not loaded in the user's fish shell, so every build command
 must evaluate it first. Tests are Alcotest.
 
@@ -136,8 +138,14 @@ must evaluate it first. Tests are Alcotest.
 - [Trust boundary](tickets/012-trust-boundary.md) — trusted local developer
   tool, deliberately not sandboxed; stdio implies a local parent and that
   assumption is load-bearing.
+- [C stubs are unreachable in a bare environment](tickets/028-c-stubs-in-a-bare-environment.md)
+  — **open defect.** `require` of any package carrying C stubs kills the worker
+  unless `CAML_LD_LIBRARY_PATH` is set, because `ld.conf` names
+  `lib/ocaml/stublibs` and opam installs stubs to `lib/stublibs`. Separately, a
+  dynlink failure raises `Compenv.Exit_with_status`, which `require_packages`
+  does not catch, so it ends the process instead of filling in `failed`.
 - [Testing strategy](tickets/013-testing-strategy.md) — one tier, integration
-  tests spawn a real utop in the default `dune test`.
+  tests spawn a real worker and the real server in the default `dune test`.
 
 **Not forking utop.** Reconsidered once and re-declined on measurement: 76
 lines reimplemented here against 4,426 lines and 28 cppo version branches

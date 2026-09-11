@@ -1,4 +1,4 @@
 (executable
  (name main)
- (public_name utop-mcp)
- (libraries utop_mcp unix jsonrpc yojson wire))
+ (public_name camlkit)
+ (libraries camlkit unix jsonrpc yojson wire))

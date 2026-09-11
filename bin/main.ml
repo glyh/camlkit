@@ -6,7 +6,7 @@
    Nothing here may print to stdout: that descriptor is the MCP channel.
    Diagnostics go to stderr. *)
 
-open Utop_mcp
+open Camlkit
 open Wire
 
 let eval_timeout = 30.0
@@ -39,7 +39,7 @@ let cancelled : (string, unit) Hashtbl.t = Hashtbl.create 8
    the restart says so, since the new toplevel is empty. *)
 let restarted : (string, string) Hashtbl.t = Hashtbl.create 8
 
-let log fmt = Printf.ksprintf (fun s -> prerr_endline ("utop-mcp: " ^ s)) fmt
+let log fmt = Printf.ksprintf (fun s -> prerr_endline ("camlkit: " ^ s)) fmt
 
 let reply id (r : Render.t) =
   Mcp.respond stdout

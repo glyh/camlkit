@@ -28,7 +28,7 @@ let watching () = ignore (Unix.alarm 2)
 let not_watching () = ignore (Unix.alarm 0)
 
 let usage () =
-  prerr_endline "utop-mcp-worker: expects the capture file path as its only argument";
+  prerr_endline "camlkit-worker: expects the capture file path as its only argument";
   exit 2
 
 let () =
