@@ -2,10 +2,10 @@
 
 An MCP server that gives an agent live OCaml toplevels.
 
-A worker process links the `utop` library and owns the toplevel; the server
-supervises one worker per session and speaks MCP over stdio. State persists
-between calls within a session, so an agent can build up an environment and
-explore it.
+A worker process owns the toplevel, over the compiler's own
+`compiler-libs.toplevel`; the server supervises one worker per session and
+speaks MCP over stdio. State persists between calls within a session, so an
+agent can build up an environment and explore it.
 
 ## Security
 
@@ -70,7 +70,7 @@ To build against a different switch without disturbing your default build:
 
 ```sh
 PROJ=/path/to/project
-opam install --switch $PROJ utop yojson jsonrpc alcotest
+opam install --switch $PROJ jsonrpc ocamlfind yojson merlin alcotest lwt
 opam exec --switch $PROJ -- dune build --build-dir=/tmp/utop-mcp-build
 opam exec --switch $PROJ -- \
   dune install --build-dir=/tmp/utop-mcp-build --prefix=$PROJ/_opam
@@ -121,11 +121,14 @@ and no opam variables set.
 
 ## Using it
 
-Ten tools, in two groups.
+Eleven tools, in three groups.
 
 A bare `Lwt` or `Async` expression is run rather than handed back as a
-promise, as in utop. `eval` takes an `autorun` list to change that per
-session; an empty list keeps the promise.
+promise, the way utop does it. `eval` takes an `autorun` list to change that
+per session: omit it to leave the setting alone, pass `[]` to keep the
+promise. Every result reports the rules in force, and a phrase that was
+rewritten names the rule that ran it, so neither the setting nor the rewrite
+has to be inferred.
 
 **About values, in a session.** `eval` runs OCaml phrases, `describe` shows a
 signature, `require` loads findlib packages, `load` brings in a dune
@@ -183,8 +186,8 @@ newline-delimited JSON-RPC on stdin, one JSON object per line.
 
 ## Notes on the build
 
-The worker is bytecode, because utop ships no native archive; the server is
-native.
+The worker is bytecode, because the toplevel it links loads bytecode
+archives and so has to be one itself; the server is native.
 
 Verified on OCaml 5.3.0 and 5.4.0.
 
@@ -196,9 +199,9 @@ echo '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"eval","arg
 
 ## Status
 
-Working end to end. `eval`, `describe`, `require` and `reset` are served
-over MCP stdio against real toplevels, one worker per session. 37 tests, of
-which 13 drive the server binary the way a client does.
+Working end to end. All eleven tools are served over MCP stdio, against
+real toplevels, one worker per session. 65 tests, of which 34 drive the
+server binary the way a client does.
 
 Sessions are created on first use under whatever name the caller picks. If
 a session dies, the name stays usable and the first result afterwards says
@@ -216,8 +219,8 @@ Layout follows functional core, imperative shell:
 | Path | What it is |
 | --- | --- |
 | `wire/` | shared by both processes: frame codec, message types |
-| `worker/` | owns the toplevel: capture, two-pass evaluation, request loop |
-| `lib/` | session supervision, tool declarations, MCP dispatch |
+| `worker/` | owns the toplevel: capture, two-pass evaluation, printers, loading, request loop |
+| `lib/` | session supervision, tool declarations, rendering, dune builds, merlin queries |
 | `bin/` | the server's select loop |
 
 ## Behaviour worth knowing
@@ -234,6 +237,8 @@ showing a signature are separate tools.
 the toplevel usable with its bindings intact; only an unanswered interrupt
 escalates to a kill, which loses the session.
 
-**Sessions are hermetic.** Your `~/.config/utop/init.ml` is not loaded, so
-results do not vary between machines. The cost is that toplevel printers
-installed there are absent, and your own types print as `<abstr>`.
+**Sessions are hermetic.** No init file is evaluated, neither
+`~/.ocamlinit` nor utop's, so results do not vary between machines. Printers
+a library declares with `[@@ocaml.toplevel_printer]` are still installed; the
+cost is only the `#install_printer` calls you would have written in such a
+file by hand.

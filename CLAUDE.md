@@ -1,0 +1,129 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+## What this is
+
+An MCP server, written in OCaml, that gives an MCP client live OCaml
+toplevels. A bytecode worker process owns the toplevel over
+`compiler-libs.toplevel`; the native server supervises one worker per named
+session and speaks MCP over stdio. Ten tools: `eval`, `describe`, `require`,
+`load`, `reset` (session state), `build` (dune), and `locate`, `type_at`,
+`outline`, `uses`, `search_type` (merlin, no session needed).
+
+## Commands
+
+`opam env` is **not** loaded in the user's fish shell, so evaluate it first:
+
+```sh
+eval (opam env)     # fish; bash: eval $(opam env)
+dune build
+dune test
+```
+
+Run one suite or one case (Alcotest filtering; consult the `ocaml-alcotest`
+skill before touching the suite):
+
+```sh
+dune exec test/test_server.exe -- test load          # one suite
+dune exec test/test_server.exe -- test load 0        # one case
+dune exec test/test_utop_mcp.exe -- list
+```
+
+Both suites are `\`Slow`, so plain `dune test` runs them. Running an executable
+directly needs `opam env` evaluated first, or the Lwt test kills its worker
+loading `lwt.unix` and reports a dead session instead. Tests spawn the real
+worker and the real server binary and depend on `test/fixtures/mylib`.
+
+Drive the server by hand, one JSON-RPC object per line on stdin:
+
+```sh
+echo '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"eval","arguments":{"session":"a","code":"1 + 41;;"}}}' | dune exec utop-mcp
+```
+
+Cancellation is unreachable from the tool surface, so it has its own driver:
+
+```sh
+python3 scripts/cancel-check.py "$(opam var bin)/utop-mcp" "$(opam var bin)/utop-mcp-worker"
+```
+
+## Architecture
+
+Two processes, one shared codec library.
+
+| Path | Role |
+| --- | --- |
+| `wire/` | frame codec (`frame.ml`), channel I/O (`frame_io.ml`), IPC message types (`msg.ml`) |
+| `worker/` | the toplevel: capture, two-pass evaluation, printers, loader, request loop |
+| `lib/` | session supervision, tool declarations, rendering, dune build, merlin |
+| `bin/main.ml` | the server's `Unix.select` loop and tool dispatch |
+
+Neither process runs Eio, Lwt or threads. The server is a single `select`
+loop waking on stdin, any worker's answer, or the earliest deadline. The
+worker is sequential so that `Lwt_main.run` still works inside evaluated
+code. **Nothing in the server may print to stdout** — that descriptor is the
+MCP channel; diagnostics go to stderr.
+
+A frame is two length-prefixed segments: JSON metadata, then raw bytes.
+Captured program output rides in the raw segment and is addressed by
+per-phrase offsets, so it is never JSON-escaped.
+
+The worker is bytecode (`modes byte_complete`, `-linkall`) and the server is
+native. Bytecode is version-locked to the compiler, so a worker only loads
+artifacts from its own switch. The server finds the worker beside its own
+executable, falling back to the dune build-tree path;
+`UTOP_MCP_WORKER` overrides both.
+
+## Conventions
+
+**Functional core, imperative shell.** Decision logic is pure and separate
+from the I/O acting on it: `Frame` is the codec and `Frame_io` does the
+channel work; `Supervision` is the escalation state machine and `Session`
+owns the process obeying it. Time and process state arrive as arguments. The
+test is whether the interesting logic can be tested without a pipe, a clock
+or a subprocess. `worker/eval.ml` is the unavoidable exception, since
+`Toploop` and `Typemod` work through global compiler state.
+
+**Results are structural.** A tool result carries typed fields in
+`structuredContent`, not prose the caller has to parse back. Counts are
+numbers, errors carry spans and line ranges as data, a failure names the
+failing thing in a field. Human-readable text ships alongside, never instead.
+Structure that merely restates the text is not worth its bytes.
+
+**Evaluation is all or nothing.** Several phrases per request, and nothing
+executes unless every phrase parses and typechecks. That is why `eval`
+rejects directives (`#require` and friends are not typeable) and why loading
+a library and showing a signature are separate tools.
+
+**A runaway phrase is interrupted before it is killed.** `Sys.Break` is
+swallowed by `execute_phrase`, so interrupts are detected by a flag set in
+the signal handler; toplevel state survives. Only an unanswered interrupt
+escalates to a kill.
+
+**Sessions are hermetic.** `~/.config/utop/init.ml` is not loaded.
+
+Prefer stability over linking: merlin is shelled out to in single mode and
+dune is shelled out to rather than driven over its RPC. Both choices have
+long comments at the top of `lib/merlin.ml` and `lib/build.ml`; read them
+before reversing either.
+
+`ponytail` governs scope: the laziest thing that works, no speculative
+abstraction.
+
+## Design record
+
+`docs/wayfinder/MAP.md` is the index; each decision is a ticket under
+`docs/wayfinder/tickets/` recording what was chosen, what was rejected and
+why, and what was measured rather than assumed. Superseded decisions keep
+their reasoning instead of being deleted. Add a ticket when making a decision
+of that kind, and update MAP.md's list.
+
+Note that utop itself was removed as a dependency (ticket 022); the name
+stays. Parts of README.md still say the worker links utop.
+
+## Security posture
+
+This executes arbitrary OCaml with the user's privileges and is deliberately
+not sandboxed (ticket 012). It is a trusted local developer tool, and stdio
+is assumed to imply a local parent the user launched. Do not add a non-stdio
+transport.
