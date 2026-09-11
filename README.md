@@ -28,49 +28,86 @@ execution.** Do not do that.
 
 ## Installing
 
+**Install it into the same opam switch as the project you want to explore.**
+The worker is bytecode, and bytecode is version-locked: a worker built with
+OCaml 5.4 cannot load artifacts compiled by 5.3. If you only want to poke at
+installed libraries, any switch will do.
+
+For your default switch:
+
 ```sh
-eval $(opam env)
+eval $(opam env)          # fish: eval (opam env)
 dune build
-dune install          # or: opam install .
+dune install              # or: opam install .
 ```
 
-This installs two binaries. `utop-mcp` is the server; `utop-mcp-worker` is
-the toplevel it spawns, one per session. The server finds the worker beside
-its own executable, so they must stay installed together. Override with
-`UTOP_MCP_WORKER` if you need to point at a specific build.
+For a project with its own local switch, which is the case that matters if
+you want to reach that project's code:
 
-## Using it
+```sh
+PROJ=/path/to/project
 
-It speaks MCP over stdio, so point any MCP client at the `utop-mcp`
-command. For a client that reads a JSON config:
+# 1. the toolchain, in the project's switch
+opam install --switch $PROJ utop yojson jsonrpc alcotest
+
+# 2. build and install utop-mcp there, in a separate build dir so it does
+#    not fight your default-switch build
+cd /path/to/utop-mcp
+opam exec --switch $PROJ -- dune build --build-dir=/tmp/utop-mcp-build
+opam exec --switch $PROJ -- \
+  dune install --build-dir=/tmp/utop-mcp-build --prefix=$PROJ/_opam
+```
+
+Either way this installs two binaries. `utop-mcp` is the server;
+`utop-mcp-worker` is the toplevel it spawns, one per session. The server
+finds the worker beside its own executable, so they must stay installed
+together. `UTOP_MCP_WORKER` overrides that if you need a specific build.
+
+## Registering it with Claude Code
+
+Run this from inside the project directory. **Use an absolute path**: the
+client spawns the command with the environment it inherited, and a bare
+`utop-mcp` only resolves when the opam bin directory is on `PATH`, which it
+often is not.
+
+```sh
+cd /path/to/project
+claude mcp add utop "$(opam var bin)/utop-mcp"          # default switch
+claude mcp add utop "$PROJ/_opam/bin/utop-mcp"          # project switch
+
+claude mcp list        # expect: utop: ... - ✔ Connected
+```
+
+`claude mcp add` defaults to `--scope local`, which registers the server for
+that project only and keeps it private to you. Prefer that over
+`--scope project`, which writes a committed `.mcp.json` recording an
+absolute path specific to your machine.
+
+For any other MCP client that reads a JSON config:
 
 ```json
 {
   "mcpServers": {
-    "utop": { "command": "utop-mcp" }
+    "utop": { "command": "/absolute/path/to/utop-mcp" }
   }
 }
 ```
 
-For Claude Code: `claude mcp add utop utop-mcp`.
+Nothing else needs opam at runtime. The server locates the worker by its own
+path rather than through `PATH`, and findlib's configuration is compiled in,
+so `require` works from a bare environment. Verified with `PATH=/usr/bin:/bin`
+and no opam variables set.
 
-**Give the absolute path if your shell does not have `opam env` loaded.**
-The client spawns the command with the environment it inherited, so a bare
-`utop-mcp` only resolves when the opam bin directory is on `PATH`:
+## Using it
 
-```sh
-claude mcp add utop "$(opam var bin)/utop-mcp"
-```
+Four tools. `eval` runs OCaml phrases in a named session, `describe` shows a
+signature, `require` loads findlib packages, and `reset` empties a session.
+Sessions are created on first use under whatever name you pick, and state
+persists between calls.
 
-Nothing else needs opam at runtime. The server locates the worker beside
-its own executable rather than through `PATH`, and findlib's configuration
-is compiled in, so `require` works from a bare environment. Verified with
-`PATH=/usr/bin:/bin` and no opam variables set.
-
-Four tools become available. `eval` runs OCaml phrases in a named session,
-`describe` shows a signature, `require` loads findlib packages, and `reset`
-empties a session. Sessions are created on first use under whatever name
-the caller picks.
+Reaching a dune project's *own* libraries still takes manual work, because
+they are usually private libraries rather than findlib packages. See the
+open ticket `docs/wayfinder/tickets/021-dune-aware-load.md`.
 
 ## Building
 
@@ -97,8 +134,8 @@ echo '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"eval","arg
 ## Status
 
 Working end to end. `eval`, `describe`, `require` and `reset` are served
-over MCP stdio against real toplevels, one worker per session. 30 tests,
-including nine that drive the server binary as a client would.
+over MCP stdio against real toplevels, one worker per session. 37 tests, of
+which 13 drive the server binary the way a client does.
 
 Sessions are created on first use under whatever name the caller picks. If
 a session dies, the name stays usable and the first result afterwards says
