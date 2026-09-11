@@ -135,6 +135,11 @@ must evaluate it first. Tests are Alcotest.
   as a list of rule names, and self-gating so it is inert without the library.
   Every eval reports the list in force, and a rewritten phrase names the rule
   that ran it, since neither was observable without a probe.
+- [Toplevel directives are not part of the tool surface](tickets/029-directives-are-not-the-surface.md)
+  — none of them get exposed: `#require` reports failure as prose where the
+  tool reports fields, `load` is not expressible as directives at all, and a
+  buffer containing one cannot be typed before it runs. Wording only; `eval`
+  already rejected them. `#trace` is the one real loss and stays in the fog.
 - [Trust boundary](tickets/012-trust-boundary.md) — trusted local developer
   tool, deliberately not sandboxed; stdio implies a local parent and that
   assumption is load-bearing.
@@ -211,10 +216,11 @@ it is also where `dune top` came from.
   WebSocket and SSE as missing. Out of scope here for the reason in the trust
   boundary ticket: stdio implies a local parent, and that assumption is what
   makes running unsandboxed acceptable.
-- **Toplevel directives.** How `#use`, `#load` and `#directory` interact
-  with a server-managed session. Possibly a security boundary, possibly a
-  feature. The init file and autoload questions are settled by hermetic
-  spawn; these remain.
+- **Tracing a function.** `#trace` is the one directive whose absence costs a
+  capability rather than a redundancy, see
+  [Toplevel directives are not part of the tool surface](tickets/029-directives-are-not-the-surface.md).
+  Whether an agent wants a call trace at all is the open part; the machinery
+  for it already exists.
 - **Resource limits.** A phrase can allocate until the machine dies. A
   deadline bounds time but nothing bounds memory.
 - **History.** utop's protocol exposes history navigation and

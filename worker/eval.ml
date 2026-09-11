@@ -210,9 +210,15 @@ let eval cap ?autorun src =
   | Ok phrases ->
     match reject_directives phrases with
     | Some d ->
+      (* Not "use the tool for it": most directives have no tool and are not
+         going to get one; see tickets/029. Naming the two that do is the
+         useful half of the message. *)
       Msg.Rejected
         (Printf.sprintf
-           "eval does not accept directives; #%s belongs to a dedicated tool" d)
+           "eval does not accept directives, and #%s is one. Loading a \
+            library is the require and load tools, and showing a signature \
+            is describe; the rest of the directives are not part of the \
+            tool surface." d)
     | None ->
       (* Rewrite before typing, so the pre-check sees exactly what will run.
          The counter only advances once the whole request typechecks, so a

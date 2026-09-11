@@ -43,7 +43,9 @@ let eval_tool =
        Topdirs.dir_directory, cannot be used by a later phrase in the same \
        call, because that later phrase is typechecked before anything runs. \
        Put the path change in its own call. Directives such as #require are \
-       not accepted here; use the require and describe tools.";
+       not accepted here, and none of them are part of the tool surface: \
+       loading a library is the require and load tools, and showing a \
+       signature is describe.";
     "inputSchema", obj ~required:[ "session"; "code" ]
       [ session_arg;
         ("code", `Assoc [ "type", `String "string";
