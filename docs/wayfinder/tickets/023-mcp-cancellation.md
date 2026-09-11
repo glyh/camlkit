@@ -45,9 +45,14 @@ a request that already finished finds nothing pending and is ignored, as is
 one for an id that never existed. Both are tested, because the spec calls out
 that they will happen and must not disturb anything.
 
-Ids are compared tolerantly across their JSON spellings, so an integer id
-cancelled by its decimal string still matches. Dropping a cancellation over
-that would be an interop bug nobody would find quickly.
+**Ids are matched exactly, with no coercion, and a spelling mismatch is
+logged rather than obliged.** JSON-RPC 2.0 says an id "MUST contain a String,
+Number, or NULL value if included", and the MCP cancellation page's own
+example uses `"requestId": "123"`, so both forms are conforming and neither
+is refused. What is refused is a cancellation whose id matches only after
+coercing an integer to its decimal spelling: a client knows what it issued,
+so that is a client bug, and obliging it silently would hide it. Unknown and
+already-finished ids stay silent, since the spec says to expect those.
 
 Nothing needed thread-safe cancellation tokens, which
 [ocaml-mcp](https://github.com/tmattio/ocaml-mcp) lists as the reason it has

@@ -14,6 +14,12 @@ type t = { fd : Unix.file_descr }
 
 let create path =
   let fd = Unix.openfile path [ Unix.O_RDWR; Unix.O_CREAT; Unix.O_TRUNC ] 0o600 in
+  (* Unlink the name once both ends hold a descriptor: the server opened it
+     before spawning us. The file then lives only as long as those
+     descriptors, so it is reclaimed however either process dies, including a
+     SIGKILL that runs no cleanup. Before this, a killed server left its
+     capture files behind for good. *)
+  (try Unix.unlink path with Unix.Unix_error _ -> ());
   Unix.dup2 fd Unix.stdout;
   Unix.dup2 fd Unix.stderr;
   { fd }

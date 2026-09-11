@@ -121,3 +121,17 @@ works natively, and nothing needs `lwt_eio` to bridge.
 
 Note that the opam-exec spawn decision above is also obsolete. The worker
 links utop at build time, so there is no runtime binary lookup.
+
+## Amendment: the capture file is unlinked once both ends hold it
+
+The server names the capture file and opens it before spawning; the worker
+opens it too and then unlinks the name. The file lives only as long as those
+two descriptors, so it is reclaimed however either process dies, including a
+SIGKILL that runs no cleanup.
+
+Before this, a server killed rather than asked to stop left its capture files
+behind permanently. That was found the way such things usually are: 161 of
+them had accumulated in /tmp from a session's worth of ad-hoc scripts.
+
+Reading partial output still works, because the server holds its own
+descriptor and does not need the name.

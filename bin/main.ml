@@ -189,12 +189,19 @@ let handle_call id params =
         | Error e -> reply id (Render.infrastructure_failure e)
         | Ok () -> Hashtbl.replace pending session_name (id, note)
 
-(* A client may send the id in either JSON form; compare tolerantly rather
-   than drop a cancellation over an int against its own decimal spelling. *)
+(* Ids are matched exactly, with no coercion between an integer and its
+   decimal spelling: a client knows what it issued. JSON-RPC permits either
+   form and the spec's own example uses a string, so both are accepted - what
+   is refused is a cancellation whose id only matches after coercion. That is
+   a client bug, and silently obliging it would hide it. *)
 let id_matches (stored : Jsonrpc.Id.t) json =
   match stored, json with
   | `Int a, `Int b -> a = b
   | `String a, `String b -> a = b
+  | _ -> false
+
+let id_matches_loosely (stored : Jsonrpc.Id.t) json =
+  match stored, json with
   | `Int a, `String b -> string_of_int a = b
   | `String a, `Int b -> a = string_of_int b
   | _ -> false
@@ -207,16 +214,22 @@ let handle_cancelled params =
   let requested = Yojson.Safe.Util.member "requestId" params in
   let reason = match Yojson.Safe.Util.member "reason" params with
     | `String r -> " (" ^ r ^ ")" | _ -> "" in
-  let target =
+  let find p =
     Hashtbl.fold
-      (fun name (id, _) acc ->
-         if acc = None && id_matches id requested then Some name else acc)
+      (fun name (id, _) acc -> if acc = None && p id requested then Some name else acc)
       pending None
   in
-  match target with
-  (* Unknown or already finished. The spec expects this race and says to
-     ignore it. *)
-  | None -> ()
+  match find id_matches with
+  | None ->
+    (* Say so when the only reason it did not match is the spelling. Unknown
+       and already-finished ids are a race the spec expects, and are ignored
+       in silence; a type mismatch is a client bug and is not. *)
+    (match find id_matches_loosely with
+     | Some name ->
+       log "ignoring a cancellation for %s: session %S is waiting on the same \
+            id in the other JSON form, which is not the id it was issued"
+         (Yojson.Safe.to_string requested) name
+     | None -> ())
   | Some name ->
     match Hashtbl.find_opt sessions name with
     | None -> Hashtbl.remove pending name

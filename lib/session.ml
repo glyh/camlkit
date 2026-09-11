@@ -8,7 +8,10 @@ type t = {
   pid : int;
   ic : in_channel;
   oc : out_channel;
-  capture_path : string;   (* named by us, so partial output is readable *)
+  (* Our own descriptor on the capture file. The worker unlinks the name once
+     it has opened it too, so the file is reclaimed however either process
+     dies; reading through this descriptor still works with no name. *)
+  capture : Unix.file_descr;
   mutable state : Supervision.state;
 }
 
@@ -54,15 +57,18 @@ let spawn name =
   let to_worker_r, to_worker_w = Unix.pipe ~cloexec:true () in
   let from_worker_r, from_worker_w = Unix.pipe ~cloexec:true () in
   (* We choose the capture path rather than being told it, so the server can
-     read partial output even from a worker that never answers. *)
+     read partial output even from a worker that never answers. We open it
+     before spawning, because the worker unlinks the name as soon as it has
+     opened it and nothing could find it afterwards. *)
   let capture_path = Filename.temp_file "utop-mcp-" ".out" in
+  let capture = Unix.openfile capture_path [ Unix.O_RDONLY ] 0o600 in
   let pid =
     Unix.create_process exe [| exe; capture_path |]
       to_worker_r from_worker_w Unix.stderr
   in
   Unix.close to_worker_r;
   Unix.close from_worker_w;
-  { name; pid; capture_path;
+  { name; pid; capture;
     ic = Unix.in_channel_of_descr from_worker_r;
     oc = Unix.out_channel_of_descr to_worker_w;
     state = Supervision.Idle }
@@ -74,14 +80,20 @@ let deadline t = Supervision.deadline t.state
 
 (* Whatever the current evaluation has printed so far. Readable at any time,
    including from a worker that is wedged, and after one has been killed,
-   which is the reason the capture lives in a file the server named. *)
+   which is the reason the capture lives in a file the server opened. *)
 let partial_output t =
-  match open_in_bin t.capture_path with
-  | ic ->
-    let n = in_channel_length ic in
-    let s = really_input_string ic n in
-    close_in ic; s
-  | exception Sys_error _ -> ""
+  match Unix.lseek t.capture 0 Unix.SEEK_SET with
+  | exception Unix.Unix_error _ -> ""
+  | _ ->
+    let buf = Buffer.create 4096 in
+    let chunk = Bytes.create 65536 in
+    let rec go () =
+      match Unix.read t.capture chunk 0 (Bytes.length chunk) with
+      | 0 -> Buffer.contents buf
+      | n -> Buffer.add_subbytes buf chunk 0 n; go ()
+      | exception Unix.Unix_error _ -> Buffer.contents buf
+    in
+    go ()
 
 let send t request ~timeout =
   match Supervision.may_send t.state with
@@ -105,7 +117,6 @@ let on_deadline t ~grace =
 
 let kill t why = apply t (Supervision.Vanished why)
 
-(* The capture file outlives the worker by design, so removing it is ours. *)
 let dispose t =
   kill t "session disposed";
-  try Sys.remove t.capture_path with Sys_error _ -> ()
+  try Unix.close t.capture with Unix.Unix_error _ -> ()
