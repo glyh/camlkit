@@ -7,7 +7,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 An MCP server, written in OCaml, that gives an MCP client live OCaml
 toplevels. A bytecode worker process owns the toplevel over
 `compiler-libs.toplevel`; the native server supervises one worker per named
-session and speaks MCP over stdio. Ten tools: `eval`, `describe`, `require`,
+session and speaks MCP over stdio. Eleven tools: `eval`, `describe`, `require`,
 `load`, `reset` (session state), `build` (dune), and `locate`, `type_at`,
 `outline`, `uses`, `search_type` (merlin, no session needed).
 
