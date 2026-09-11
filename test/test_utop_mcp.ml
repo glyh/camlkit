@@ -67,7 +67,9 @@ let test_response_roundtrip () =
          (Msg.json_of_response (Msg.response_of_json (Msg.json_of_response r))))
   in
   check (Msg.Completed [ { rendering = "val x : int = 42"; warnings = "";
-                           out_start = 0; out_len = 0; truncated = false } ]);
+                           out_start = 0; out_len = 0; truncated = false;
+                           outcome = Msg.Value { value_type = "int";
+                                                 value = "42" } } ]);
   check (Msg.Failed { phase = Msg.Typecheck; phrase_index = 1;
                       message = "Error: ..."; spans = [ (4, 8) ];
                       lines = [ (1, 1) ]; done_ = [] });
@@ -80,7 +82,7 @@ let test_response_roundtrip () =
 let test_clamp () =
   let p start len =
     Msg.{ rendering = ""; warnings = ""; out_start = start; out_len = len;
-          truncated = false } in
+          truncated = false; outcome = No_outcome } in
   let ps, any = Msg.clamp ~limit:100 [ p 0 50; p 50 50 ] in
   Alcotest.(check bool) "nothing under the limit is touched" false any;
   Alcotest.(check bool) "spans unchanged" true
@@ -243,14 +245,22 @@ let test_implicit_bindings () =
 let test_require () =
   with_worker @@ fun s ->
   let r, _ = ask s (Msg.Require [ "str" ]) in
-  ignore (phrases r);
+  (match r with
+   | Msg.Loaded { loaded; failed } ->
+     Alcotest.(check (list string)) "names what it loaded" [ "str" ] loaded;
+     Alcotest.(check int) "and nothing failed" 0 (List.length failed)
+   | _ -> Alcotest.fail "expected a load result");
   let r, _ = ask s (Msg.Eval "Str.regexp;;") in
   Alcotest.(check bool) "a required package becomes usable" true (phrases r <> []);
   let r, _ = ask s (Msg.Require [ "no-such-package-xyz" ]) in
   match r with
-  | Msg.Failed f ->
-    Alcotest.(check bool) "a missing package fails rather than reporting success"
-      true (has_substring "no such package" f.Msg.message)
+  | Msg.Loaded { loaded; failed } ->
+    Alcotest.(check (list string)) "nothing is claimed as loaded" [] loaded;
+    Alcotest.(check bool) "and the failure names the package" true
+      (List.exists
+         (fun (pkg, err) ->
+            pkg = "no-such-package-xyz" && has_substring "no such package" err)
+         failed)
   | _ -> Alcotest.fail "a missing package was reported as success"
 
 (* The hermetic guarantee used to come from -init /dev/null on the utop binary.
@@ -294,6 +304,34 @@ let test_error_locations () =
   Alcotest.(check (list (pair int int))) "a later error still locates correctly"
     [ (0, 17) ] g.Msg.spans;
   Alcotest.(check (list (pair int int))) "later line ranges too" [ (1, 1) ] g.Msg.lines
+
+(* The rendering "val _0 : int = 42" packs a name, a type and a value into one
+   string; the type is what a caller most often wants, so it is also a field. *)
+let test_outcome_is_structured () =
+  with_worker @@ fun s ->
+  let outcome_of code =
+    let r, _ = ask s (Msg.Eval code) in (List.hd (phrases r)).Msg.outcome in
+  (match outcome_of "1 + 41;;" with
+   | Msg.Bindings [ b ] ->
+     Alcotest.(check string) "the implicit binding is named" "_0" b.Msg.bound;
+     Alcotest.(check string) "its type is a field" "int" b.Msg.bound_type;
+     Alcotest.(check (option string)) "and so is its value"
+       (Some "42") b.Msg.bound_value
+   | _ -> Alcotest.fail "expected a binding");
+  (match outcome_of "let g a b = a +. b;;" with
+   | Msg.Bindings [ b ] ->
+     Alcotest.(check string) "a function's type, unparsed"
+       "float -> float -> float" b.Msg.bound_type
+   | _ -> Alcotest.fail "expected a binding");
+  (match outcome_of "type colour = Red | Blue;;" with
+   | Msg.Bindings [ b ] ->
+     Alcotest.(check string) "a type declaration is named" "colour" b.Msg.bound;
+     Alcotest.(check bool) "and carries its declaration" true
+       (has_substring "Red" b.Msg.bound_type)
+   | _ -> Alcotest.fail "expected a binding");
+  (match outcome_of "let () = print_string \"quiet\";;" with
+   | Msg.No_outcome -> ()
+   | _ -> Alcotest.fail "a phrase producing nothing should say so")
 
 (* Reported from a session driving a real project: loading its code died with
    "Reference to undefined compilation unit Stdlib__Dynarray" even though the
@@ -439,6 +477,7 @@ let () =
          Alcotest.test_case "require" `Slow test_require;
          Alcotest.test_case "hermetic" `Slow test_hermetic;
          Alcotest.test_case "error locations" `Slow test_error_locations;
+         Alcotest.test_case "outcome is structured" `Slow test_outcome_is_structured;
          Alcotest.test_case "stdlib is fully linked" `Slow
            test_stdlib_is_fully_linked;
          Alcotest.test_case "output survives a later failure" `Slow

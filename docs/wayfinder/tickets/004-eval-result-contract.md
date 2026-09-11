@@ -54,3 +54,34 @@ worker that could not be started. Verified end to end.
 
 **The text half reads as a transcript** in terminal order: warnings, then
 what the phrase printed, then what the toplevel made of it.
+
+## Amendment: the rendering was the biggest violation of the structural rule
+
+`rendering` packs a binding name, a type and a value into one string, so
+asking what type a phrase produced meant parsing `val _0 : int = 42`. The
+type is the thing a caller most often wants.
+
+Each phrase now carries an `outcome` alongside the rendering:
+
+- `{kind: value, type, value}` for a bare expression
+- `{kind: bindings, items: [{name, type, value?}]}` for a `let`, `type`,
+  `module` and so on
+- `{kind: exception, exception}` and `{kind: nothing}`
+
+`Toploop.print_out_phrase` is a ref holding a printer over
+`Outcometree.out_phrase`, which still has the pieces separate. We wrap it
+rather than replace it, because utop installs its own from a module
+initializer and its text is what we display. The `Outcometree` constructors
+we destructure are identical on 5.3 and 5.4, checked in both switches. The
+printers are `Format_doc` printers, bridged with `Format_doc.compat`, which
+exists on both.
+
+`require` was the other violation: it returned an empty phrase result, so
+success had to be inferred from the absence of an error. It now reports the
+packages it loaded, reusing the same shape as `load`.
+
+Left as prose deliberately: `describe`, whose payload is OCaml signature
+text, where structuring would mean reimplementing the printer; and a
+failure `message`, which is a compiler diagnostic already accompanied by
+structured `phase`, `spans` and `lines`. `warnings` remains a single string
+and is the one soft spot left.

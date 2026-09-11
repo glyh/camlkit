@@ -30,6 +30,7 @@ let init () =
      implicit bindings are called, so a bare expression rendered as nothing at
      all. This is what -show-reserved does in the utop binary. *)
   UTop.set_hide_reserved false;
+  Outcome.install ();
   Printers.prime ();
   install_handler ()
 
@@ -158,7 +159,7 @@ let execute_all cap phrases =
       let record = Msg.{ rendering = Buffer.contents buf;
                          warnings = Buffer.contents wbuf;
                          out_start = !pos; out_len = stop - !pos;
-                         truncated = false } in
+                         truncated = false; outcome = Outcome.take () } in
       pos := stop;
       acc := record :: !acc;
       if !interrupted then
@@ -211,7 +212,8 @@ let require_packages packages =
 
 let ok_result cap rendering =
   Msg.Completed [ { rendering; warnings = ""; out_start = 0;
-                    out_len = Capture.mark cap; truncated = false } ]
+                    out_len = Capture.mark cap; truncated = false;
+                    outcome = Msg.No_outcome } ]
 
 let fail_result message =
   Msg.Failed { phase = Msg.Execute; phrase_index = 0; message;
@@ -248,13 +250,12 @@ let directive cap src =
    so the answer arrives in the captured output with an empty rendering. *)
 let describe cap path = directive cap (Printf.sprintf "#show %s;;" path)
 
+(* Reports which packages are now loaded rather than an empty phrase result:
+   a caller should not have to infer success from the absence of an error. *)
 let require cap packages =
   Capture.reset cap;
   match require_packages packages with
-  | Ok () ->
-    Msg.Completed [ { rendering = ""; warnings = "";
-                      out_start = 0; out_len = Capture.mark cap;
-                      truncated = false } ]
+  | Ok () -> Msg.Loaded { loaded = packages; failed = [] }
   | Error message ->
-    Msg.Failed { phase = Msg.Execute; phrase_index = 0; message;
-                 spans = []; lines = []; done_ = [] }
+    Msg.Loaded { loaded = [];
+                 failed = List.map (fun p -> (p, message)) packages }

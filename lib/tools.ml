@@ -13,12 +13,27 @@ let obj ?(required = []) props =
            "properties", `Assoc props;
            "required", `List (List.map (fun r -> `String r) required) ]
 
+let outcome_schema =
+  `Assoc [ "type", `String "object";
+           "description", `String "What the phrase produced, as data. kind is \
+             one of nothing, value, bindings, exception.";
+           "properties", `Assoc [
+             "kind", `Assoc [ "type", `String "string" ];
+             "type", `Assoc [ "type", `String "string";
+               "description", `String "For kind=value, the type of the result." ];
+             "value", `Assoc [ "type", `String "string" ];
+             "exception", `Assoc [ "type", `String "string" ];
+             "items", `Assoc [ "type", `String "array";
+               "description", `String "For kind=bindings, one entry per name \
+                 bound, each with name, type and optionally value." ] ] ]
+
 let phrase_schema =
   `Assoc [ "type", `String "object";
            "properties", `Assoc [
+             "outcome", outcome_schema;
              "rendering", `Assoc [ "type", `String "string";
-               "description", `String "The toplevel's own output, e.g. \
-                 \"val x : int = 42\"." ];
+               "description", `String "The same thing as text, as the toplevel \
+                 prints it. Prefer outcome." ];
              "warnings", `Assoc [ "type", `String "string" ];
              "output", `Assoc [ "type", `String "string";
                "description", `String "What the phrase printed." ] ] ]
@@ -69,7 +84,13 @@ let require_tool =
       [ session_arg;
         ("packages", `Assoc [ "type", `String "array";
                               "items", `Assoc [ "type", `String "string" ] ]) ];
-    "outputSchema", obj [ ("phrases", phrase_array) ] ]
+    "outputSchema", obj
+      [ ("status", `Assoc [ "type", `String "string" ]);
+        ("loaded", `Assoc [ "type", `String "array";
+                            "items", `Assoc [ "type", `String "string" ] ]);
+        ("failed", `Assoc [ "type", `String "array";
+                            "items", obj [ ("library", `Assoc [ "type", `String "string" ]);
+                                           ("error", `Assoc [ "type", `String "string" ]) ] ]) ] ]
 
 let load_tool =
   `Assoc [
