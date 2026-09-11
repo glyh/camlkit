@@ -11,4 +11,4 @@
  (public_name utop-mcp-worker)
  (modes byte_complete)
  (link_flags (-linkall))
- (libraries utop wire unix str))
+ (libraries compiler-libs.toplevel findlib.top wire unix str))

@@ -51,8 +51,7 @@ let decompose = function
          items)
   | Outcometree.Ophr_exception (e, _) ->
     Msg.Raised
-      (try String.trim (UTop.get_message Errors.report_error e)
-       with _ -> Printexc.to_string e)
+      (try Toplevel.message_of_exn e with _ -> Printexc.to_string e)
 
 let install () =
   let previous = !Toploop.print_out_phrase in

@@ -20,13 +20,16 @@ let is_auto_printer_attribute (attr : Parsetree.attribute) =
   | "toplevel_printer" | "ocaml.toplevel_printer" -> true
   | _ -> false
 
-(* Longident.Ldot changed shape in OCaml 5.4, which is why utop preprocesses
-   its own sources with cppo. UTop_compat.ldot papers over it for us. *)
+(* Longident.Ldot changed shape in OCaml 5.4, so build paths through
+   Longident.unflatten instead, whose signature is identical across versions. *)
 let cons_path path id =
   let comp = Ident.name id in
   match path with
   | None -> Longident.Lident comp
-  | Some path -> UTop_compat.ldot path comp
+  | Some path ->
+    (match Longident.unflatten (Longident.flatten path @ [ comp ]) with
+     | Some l -> l
+     | None -> Longident.Lident comp)
 
 let rec walk_sig pp ~path signature =
   List.iter (walk_sig_item pp (Some path)) signature
@@ -48,7 +51,16 @@ and walk_mty pp path = function
    runs, exactly as utop does it. *)
 let pending = ref []
 
-let () = UTop_compat.add_cmi_hook (fun cmi -> pending := cmi :: !pending)
+(* utop's add_cmi_hook, which is a wrapper over the persistent-signature
+   loader. Its own version branch is at 5.2, below the floor here. *)
+let () =
+  let default = !Persistent_env.Persistent_signature.load in
+  let load ~allow_hidden ~unit_name =
+    let res = default ~allow_hidden ~unit_name in
+    (match res with None -> () | Some x -> pending := x.Persistent_env.Persistent_signature.cmi :: !pending);
+    res
+  in
+  Persistent_env.Persistent_signature.load := load
 
 let scan_cmis pp =
   let cmis = !pending in

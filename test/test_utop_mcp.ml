@@ -281,10 +281,9 @@ let test_hermetic () =
        | Msg.Failed _ -> ()
        | _ -> Alcotest.fail "the user's init.ml leaked into a session")
 
-(* get_ocaml_error_message recovers locations by scanning its own rendering,
-   and Location keeps cross-request state that shifts that text. Both halves
-   regressed once, so both are pinned: the first error, and a later one in the
-   same session. *)
+(* Locations come straight off Location.error_of_exn now, rather than by
+   scanning a rendering, but Location still keeps cross-request state that can
+   shift things, so both the first error and a later one are pinned. *)
 let test_error_locations () =
   with_worker @@ fun s ->
   let fail_of r = match r with
@@ -332,6 +331,24 @@ let test_outcome_is_structured () =
   (match outcome_of "let () = print_string \"quiet\";;" with
    | Msg.No_outcome -> ()
    | _ -> Alcotest.fail "a phrase producing nothing should say so")
+
+(* Incomplete input used to kill the worker outright: utop raised Need_more to
+   ask a line editor for more, and nothing here can prompt, so it escaped. It
+   is a syntax error like any other. *)
+let test_incomplete_input_is_an_error_not_a_crash () =
+  with_worker @@ fun s ->
+  List.iter
+    (fun src ->
+       let r, _ = ask s (Msg.Eval src) in
+       match r with
+       | Msg.Failed f ->
+         Alcotest.(check string) "rejected while parsing" "parse"
+           (Msg.string_of_phase f.Msg.phase)
+       | _ -> Alcotest.failf "expected a parse failure for %S" src)
+    [ "let x = "; "let x = (1 +"; "match x with" ];
+  (* and the session is still alive *)
+  let r, _ = ask s (Msg.Eval "1 + 1;;") in
+  Alcotest.(check bool) "the session survives" true (phrases r <> [])
 
 (* Reported from a session driving a real project: loading its code died with
    "Reference to undefined compilation unit Stdlib__Dynarray" even though the
@@ -478,6 +495,8 @@ let () =
          Alcotest.test_case "hermetic" `Slow test_hermetic;
          Alcotest.test_case "error locations" `Slow test_error_locations;
          Alcotest.test_case "outcome is structured" `Slow test_outcome_is_structured;
+         Alcotest.test_case "incomplete input is an error not a crash" `Slow
+           test_incomplete_input_is_an_error_not_a_crash;
          Alcotest.test_case "stdlib is fully linked" `Slow
            test_stdlib_is_fully_linked;
          Alcotest.test_case "output survives a later failure" `Slow

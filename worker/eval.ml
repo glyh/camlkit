@@ -22,14 +22,14 @@ let init () =
   Sys.interactive := false;
   Clflags.real_paths := false;          (* -short-paths *)
   Toploop.initialize_toplevel_env ();
+  (* utop used to do this for us. Without it Topfind has no configuration and
+     every require fails; the byte predicate matters because this worker is
+     bytecode and would otherwise be offered native archives. *)
+  Findlib.init ();
+  Topfind.add_predicates [ "byte" ];
+  Topfind.don't_load_deeply [ "compiler-libs.toplevel" ];
   (* utop sets this in common_init; it names the buffer in compiler messages. *)
-  Location.input_name := UTop.input_name;
-  (* UTop_main installs print_out_signature and print_out_phrase hooks from a
-     module initializer, and -linkall means they now run. They hide
-     identifiers beginning with an underscore, which is exactly what our
-     implicit bindings are called, so a bare expression rendered as nothing at
-     all. This is what -show-reserved does in the utop binary. *)
-  UTop.set_hide_reserved false;
+  Location.input_name := Toplevel.input_name;
   Outcome.install ();
   Printers.prime ();
   install_handler ()
@@ -64,36 +64,13 @@ let bind_expressions start phrases =
   let rewritten = List.map rewrite phrases in
   (rewritten, !n)
 
-let message_of_exn exn = Location.reset (); UTop.get_message Errors.report_error exn
-
-(* One call, not two. get_ocaml_error_message recovers the location by
-   Scanf-ing its own rendering of the error, and OCaml's reporter inserts a
-   separating newline before every report after the first. So rendering the
-   message beforehand shifts the text and the scan silently falls back to
-   (0, 0). Taking the message from here as well avoids that, and it arrives
-   with the location prefix already stripped.
-
-   Both location forms are reported: byte offsets into the submitted source
-   for exact slicing, line ranges for anything that reads like a compiler
-   message. *)
-let describe_exn exn =
-  (* Location keeps a counter of lines already reported and emits a separator
-     before every later report, which shifts the text the scan depends on.
-     That state outlives a request, so reset it per error, not per session. *)
-  Location.reset ();
-  match UTop.get_ocaml_error_message exn with
-  | (start, stop), message, lines ->
-    (message, [ (start, stop) ],
-     match lines with
-     | Some { UTop.start; stop } -> [ (start, stop) ]
-     | None -> [])
-  | exception _ -> (Printexc.to_string exn, [], [])
+let message_of_exn = Toplevel.message_of_exn
 
 let parse src =
-  match !UTop.parse_use_file src false with
-  | UTop.Value phrases -> Ok phrases
-  | UTop.Error (spans, message) ->
-    Error Msg.{ phase = Parse; phrase_index = -1; message; spans; lines = [];
+  match Toplevel.parse src with
+  | Ok phrases -> Ok phrases
+  | Error (message, spans, lines) ->
+    Error Msg.{ phase = Parse; phrase_index = -1; message; spans; lines;
                 done_ = [] }
 
 (* Directives are not typeable, so skipping them in the typing pass falsely
@@ -124,7 +101,7 @@ let typecheck_all phrases =
       (match Typemod.type_toplevel_phrase !Toploop.toplevel_env str with
        | (_, _, _, _, env) -> Toploop.toplevel_env := env; go (i + 1) rest
        | exception exn ->
-         let message, spans, lines = describe_exn exn in
+         let message, spans, lines = Toplevel.describe_exn exn in
          restore ();
          Error Msg.{ phase = Typecheck; phrase_index = i; message; spans; lines;
                      done_ = [] })

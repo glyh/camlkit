@@ -3,9 +3,10 @@
 ## Notes
 
 **Domain.** An MCP server, written in OCaml, that gives an MCP client (an
-agent) one or more live OCaml toplevels. A worker binary links the utop
-library and owns the eval loop; the server supervises one worker per
-session. OCaml 5.3.0 or newer. No fork of utop, no patch to it.
+agent) one or more live OCaml toplevels. A worker binary owns the eval loop
+over `compiler-libs.toplevel`; the server supervises one worker per session.
+OCaml 5.3.0 or newer. utop was the original substrate and has been removed;
+see [Removing the utop dependency](tickets/022-drop-utop.md).
 
 **Purpose.** Both an agent scratchpad REPL and a codebase exploration
 tool, built eval-first. Completion and library loading follow once eval
@@ -105,6 +106,9 @@ must evaluate it first. Tests are Alcotest.
 - [Loading a dune project's own libraries](tickets/021-dune-aware-load.md) —
   the `load` tool: discover archives, add the hidden `.objs/byte` directories,
   retry until dependency order settles, and `reset` before reloading a rebuild.
+- [Removing the utop dependency](tickets/022-drop-utop.md) — 22 packages down
+  to 2; the remaining helpers were reimplemented over compiler-libs, which also
+  fixed incomplete input killing the worker.
 - [Trust boundary](tickets/012-trust-boundary.md) — trusted local developer
   tool, deliberately not sandboxed; stdio implies a local parent and that
   assumption is load-bearing.

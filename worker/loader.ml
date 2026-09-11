@@ -135,8 +135,7 @@ let attempt ?(add_dirs = true) archive =
     (* Printexc gives "Symtable.Error(_)", which says nothing. The compiler's
        own reporter turns it into "Reference to undefined global ...". *)
     with e ->
-      Some (try String.trim (UTop.get_message Errors.report_error e)
-            with _ -> Printexc.to_string e) in
+      Some (try Toplevel.message_of_exn e with _ -> Printexc.to_string e) in
   Format.pp_print_flush ppf ();
   let said = String.trim (Buffer.contents buf) in
   (* dir_load usually reports by printing rather than raising, so an empty
