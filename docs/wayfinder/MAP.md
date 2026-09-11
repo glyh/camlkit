@@ -124,6 +124,15 @@ inherited. The full list of what `UTop_main` does and we do not is in
 [Should Lwt and Async expressions auto-run](tickets/019-lwt-async-auto-run.md);
 one item remains and it is a choice, not a gap.
 
+**Prior art.** [ocaml-mcp](https://github.com/tmattio/ocaml-mcp), by tmattio,
+ISC, last commit August 2025. It is both an MCP SDK for OCaml and a
+development server built on merlin, Dune RPC and ocamlformat. Its overlap
+with this is narrow: its `ocaml/eval` spawns a fresh `ocaml -noprompt` per
+call and discards it, so there is no session and the project reloads every
+time. Its breadth is where it is ahead, and its README and TODO were
+surveyed; what came out of that is in the tickets and the fog below. Reading
+it is also where `dune top` came from.
+
 ## Fog
 
 - **Project launch context.** No longer fog: the mechanism is confirmed and
@@ -133,9 +142,44 @@ one item remains and it is a choice, not a gap.
   installs in `init.ml`, so their own types print as `<abstr>`. Tracked as
   [Let a session opt out of hermetic spawn](tickets/010-hermetic-opt-out.md);
   noted here only because it is a visible behavioural difference.
-- **Jump to source, and documentation.** Type lookup is settled by the
-  describe tool; these two are not. Merlin may fit better than anything in
-  utop, at the cost of a second subsystem.
+- **Documentation lookup.** Reading odoc or docstrings for a value. merlin
+  has a `document` command; whether that is worth a tool is unclear. Jump to
+  source is no longer fog, see
+  [Merlin-backed source queries](tickets/027-merlin-source-queries.md).
+
+- **A project as a tree of modules rather than files.** From ocaml-mcp's
+  TODO, and the most interesting idea in it: an agent working on an OCaml
+  project arguably wants to address modules, not paths. What that would mean
+  for a tool surface here is not yet sharp.
+
+- **Package search and an opam index.** ocaml-mcp plans to process
+  opam-repository into a cached index keyed by commit, to resolve package
+  versions and later to support semantic search over source. Large, and only
+  worth anything if exploration turns out to be limited by not knowing what
+  exists rather than by not being able to load it.
+
+- **Formatting.** ocamlformat as a tool, as ocaml-mcp exposes. Probably
+  belongs to whatever writes files, which is not this.
+
+- **File tools with OCaml awareness.** ocaml-mcp wraps read, write and edit
+  with merlin diagnostics and formatting, plus a rule forbidding an edit to a
+  file that was not read. Deliberately out of scope here: an agent already
+  has file tools, and duplicating them earns nothing. Recorded so the
+  decision is visible rather than absent.
+
+- **Sandboxing, revisited.** ocaml-mcp's TODO proposes bubblewrap around its
+  eval, build and file tools. [Trust boundary](tickets/012-trust-boundary.md)
+  declined to sandbox, deliberately, because confining the worker breaks
+  library loading and project exploration. Worth reopening only if this ever
+  runs anywhere but beside the person who launched it.
+
+- **Logging.** No structured logging here beyond stderr, and MCP has a
+  `logging/setLevel`. ocaml-mcp lists improving logging as a TODO too.
+
+- **Transports beyond stdio.** ocaml-mcp offers socket and HTTP, and lists
+  WebSocket and SSE as missing. Out of scope here for the reason in the trust
+  boundary ticket: stdio implies a local parent, and that assumption is what
+  makes running unsandboxed acceptable.
 - **Toplevel directives.** How `#use`, `#load` and `#directory` interact
   with a server-managed session. Possibly a security boundary, possibly a
   feature. The init file and autoload questions are settled by hermetic
