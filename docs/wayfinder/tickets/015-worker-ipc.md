@@ -84,10 +84,50 @@ in the last phrase is known before the first runs. The agent then fixes
 and resubmits against unchanged state instead of reconstructing which
 phrases took effect.
 
-**Type errors are necessarily asymmetric, and this is documented rather
-than papered over.** Whether a later phrase typechecks depends on what
-earlier phrases did to the environment, so typing is checked as execution
-reaches each phrase. Partial execution is therefore possible on a type
-error but not on a syntax error. Say so in the tool description. Rejected
-making it uniform by rolling back, which the toplevel cannot do and whose
-side effects have already happened, so it would be a lie.
+**Type errors also execute nothing. The contract is uniform.** An earlier
+draft accepted an asymmetry here, on the reasoning that whether a later
+phrase typechecks depends on what earlier phrases did to the environment.
+That reasoning was wrong: typing depends on earlier phrases being *typed*,
+not on their being *run*.
+
+The mechanism is a two-pass evaluation, verified in
+[assets/precheck-prototype.ml](../assets/precheck-prototype.ml):
+
+1. Snapshot `Toploop.toplevel_env`.
+2. For each phrase, `Typemod.type_toplevel_phrase` types it and returns a
+   new environment, which we install before typing the next. Nothing is
+   evaluated.
+3. On any failure, restore the snapshot and execute nothing.
+4. If all phrases type, restore the snapshot and execute them normally.
+
+Verified: `let a = 5;; a + 1;;` passes, since pass one advances the
+environment so the second phrase sees `a`. `let b = 5;; b + true;;` fails
+at the second phrase and leaves `b` unbound, so the first genuinely did
+not run.
+
+Note this is not what `UTop.check_phrase` does. That wraps items in
+`let _ () = let module _ = struct ... end in ()` and then *restores* the
+environment, so checks do not compose across phrases. It also returns
+`None` for directives without checking them.
+
+**`eval` accepts only phrases, never directives.** Directives are not
+typeable, so skipping them in pass one falsely rejects valid code:
+`#require "yojson";; Yojson.Safe.from_string "[]";;` failed pre-check with
+`Unbound module Yojson`, because the library was never loaded. A
+stdlib-adjacent case like `str` passed only by accident of OCaml 5's
+auto-include, which does not apply to findlib packages.
+
+Rather than special-casing directives inside `eval`, they get their own
+tools. `#show` is already the describe tool, and library loading already
+has its own ticket. This removes the last unskippable case, so the
+guarantee holds unconditionally with no fallback mode.
+
+A request containing a directive is **rejected before anything executes**,
+with an error naming the tool to use instead. Parsing already distinguishes
+`Ptop_dir`, so this is free. Rejected executing directives in place, which
+would make the promise that nothing runs conditional in a way the caller
+cannot see, and rejected stripping them, which executes something other
+than what was submitted.
+
+Which directives earn a tool belongs to
+[Session lifecycle and the tool surface](006-tool-surface.md).

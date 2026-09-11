@@ -1,7 +1,7 @@
 ---
 status: open
 type: prototype
-blocked-by: [003]
+blocked-by: [006]
 assignee:
 ---
 
@@ -9,11 +9,16 @@ assignee:
 
 ## Question
 
-The protocol has a dedicated `require:<package>` command that calls
-findlib, answering `no-such-package:<pkg>` on failure. Determine whether
-that is preferable to evaluating a `#require` directive as an ordinary
-phrase, how either path interacts with sentinel framing given that
-loading a package prints to stdout, and how a load failure surfaces.
+Settled in outline: loading is its own tool, because `eval` rejects
+directives outright. See
+[Protocol between server and worker](015-worker-ipc.md).
 
-This is the codebase exploration half of the purpose, so it matters
-beyond convenience.
+What remains is the tool's own behaviour. Whether it wraps `UTop.require`
+or evaluates a `#require` directive internally, what a load failure looks
+like given findlib raises `Fl_package_base.No_such_package`, whether
+loading several packages in one call is worth it, and what the tool
+returns on success, since loading a package prints to stdout and may emit
+deprecation alerts like the auto-include one seen during prototyping.
+
+This is the codebase exploration half of the purpose, so it matters beyond
+convenience.

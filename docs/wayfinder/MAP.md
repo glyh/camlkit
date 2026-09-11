@@ -48,7 +48,9 @@ must evaluate it first. Tests are Alcotest.
   segment, which measured faster than every library tested.
 - [Protocol between server and worker](tickets/015-worker-ipc.md) — two-segment
   frames, per-phrase records with offsets, warnings split out via
-  `Location.formatter_for_warnings`, whole-buffer parse before any execution.
+  `Location.formatter_for_warnings`, and a two-pass evaluation so neither a
+  syntax error nor a type error runs anything; `eval` rejects directives,
+  which get their own tools.
 - [Exploring the environment: describe, not complete](tickets/005-completion-path.md)
   — completion returns names without types and suits a human typing; `#show`
   already returns full signatures, so the agent-facing tool is describe.
