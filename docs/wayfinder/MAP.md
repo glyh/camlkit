@@ -43,6 +43,9 @@ must evaluate it first. Tests are Alcotest.
   — the eval loop is ~30 lines and owning it removes the sentinel, the output
   race and stdin theft outright; supersedes the subprocess baseline. Neither
   server nor worker runs Eio or Lwt: the server is a `Unix.select` loop.
+- [Serialization format for worker IPC](tickets/017-serialization-benchmark.md)
+  — no serialization dependency; frame is JSON metadata plus a raw byte
+  segment, which measured faster than every library tested.
 - [Trust boundary](tickets/012-trust-boundary.md) — trusted local developer
   tool, deliberately not sandboxed; stdio implies a local parent and that
   assumption is load-bearing.
@@ -50,8 +53,6 @@ must evaluate it first. Tests are Alcotest.
   tests spawn a real utop in the default `dune test`.
 
 ## Fog
-
-<!-- note: worker IPC serialization is under benchmark, see the ticket -->
 
 - **Project launch context.** Deferred deliberately. Whether a session can
   be started inside a dune project so its libraries are preloaded. The
