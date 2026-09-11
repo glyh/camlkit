@@ -118,11 +118,7 @@ let test_dead_is_terminal () =
 let with_worker f =
   Unix.putenv "UTOP_MCP_WORKER" "../worker/main.bc.exe";
   let s = Session.spawn "test" in
-  Fun.protect ~finally:(fun () -> Session.kill s "test over")
-    (fun () ->
-       (match Session.read_greeting s with
-        | Ok () -> () | Error e -> Alcotest.fail e);
-       f s)
+  Fun.protect ~finally:(fun () -> Session.dispose s) (fun () -> f s)
 
 let ask s request =
   match Session.send s request ~timeout:30.0 with
@@ -131,6 +127,10 @@ let ask s request =
     (match Session.receive s with
      | Error e -> Alcotest.fail e
      | Ok (response, output) -> (response, output))
+
+let has_substring needle hay =
+  let re = Str.regexp_string needle in
+  try ignore (Str.search_forward re hay 0); true with Not_found -> false
 
 let phrases = function
   | Msg.Completed ps -> ps
@@ -186,13 +186,91 @@ let test_describe () =
   let p = List.hd (phrases r) in
   Alcotest.(check string) "rendering is empty for a directive" "" p.Msg.rendering;
   let sign = String.sub output p.Msg.out_start p.Msg.out_len in
-  let has needle =
-    let re = Str.regexp_string needle in
-    try ignore (Str.search_forward re sign 0); true with Not_found -> false
-  in
-  Alcotest.(check bool) "signature names the module" true (has "module Option");
+  Alcotest.(check bool) "signature names the module" true
+    (has_substring "module Option" sign);
   Alcotest.(check bool) "and carries types" true
-    (has "val value : \'a t -> default:\'a -> \'a")
+    (has_substring "val value : \'a t -> default:\'a -> \'a" sign)
+
+(* UTop.set_create_implicits only sets a flag read by UTop_main.bind_expressions,
+   which is not exported, so the rewrite is ours and needs its own cover. *)
+let test_implicit_bindings () =
+  with_worker @@ fun s ->
+  let render r = (List.hd (phrases r)).Msg.rendering in
+  let r, _ = ask s (Msg.Eval "1 + 41;;") in
+  Alcotest.(check bool) "a bare expression is bound, not just printed" true
+    (has_substring "val _0 : int = 42" (render r));
+  let r, _ = ask s (Msg.Eval "\"hello\";;") in
+  Alcotest.(check bool) "numbering advances across calls, not just within one"
+    true (has_substring "val _1" (render r));
+  let r, _ = ask s (Msg.Eval "true;; 3.5;;") in
+  (match phrases r with
+   | [ a; b ] ->
+     Alcotest.(check bool) "and within a call" true
+       (has_substring "val _2" a.Msg.rendering && has_substring "val _3" b.Msg.rendering)
+   | _ -> Alcotest.fail "expected two phrase records");
+  let r, _ = ask s (Msg.Eval "_0 + 1;;") in
+  Alcotest.(check bool) "earlier results stay referenceable" true
+    (has_substring "= 43" (render r))
+
+(* #require and UTop.require both swallow findlib errors into printed text, so
+   a missing package used to come back as success. *)
+let test_require () =
+  with_worker @@ fun s ->
+  let r, _ = ask s (Msg.Require [ "str" ]) in
+  ignore (phrases r);
+  let r, _ = ask s (Msg.Eval "Str.regexp;;") in
+  Alcotest.(check bool) "a required package becomes usable" true (phrases r <> []);
+  let r, _ = ask s (Msg.Require [ "no-such-package-xyz" ]) in
+  match r with
+  | Msg.Failed f ->
+    Alcotest.(check bool) "a missing package fails rather than reporting success"
+      true (has_substring "no such package" f.Msg.message)
+  | _ -> Alcotest.fail "a missing package was reported as success"
+
+(* The hermetic guarantee used to come from -init /dev/null on the utop binary.
+   Linking removed the flag, so it now rests on never calling the init-file
+   path at all, which is worth pinning down. *)
+let test_hermetic () =
+  let dir = Filename.temp_dir "utop-mcp-cfg" "" in
+  Unix.mkdir (Filename.concat dir "utop") 0o700;
+  let oc = open_out (Filename.concat dir "utop/init.ml") in
+  output_string oc "let injected_by_user_init = 1\n"; close_out oc;
+  Unix.putenv "XDG_CONFIG_HOME" dir;
+  Fun.protect
+    ~finally:(fun () -> Unix.putenv "XDG_CONFIG_HOME" "")
+    (fun () ->
+       with_worker @@ fun s ->
+       let r, _ = ask s (Msg.Eval "injected_by_user_init;;") in
+       match r with
+       | Msg.Failed _ -> ()
+       | _ -> Alcotest.fail "the user's init.ml leaked into a session")
+
+(* The capture file exists so output can be recovered from a phrase that had
+   to be interrupted. Worth proving, since OCaml buffers stdout and a hung
+   phrase never reaches a flush of its own. *)
+let test_partial_output_recovered_on_interrupt () =
+  with_worker @@ fun s ->
+  (match Session.send s
+           (Msg.Eval "let () = print_string \"printed-before-hanging\";\n\
+                      let rec spin n = spin (n + 1) in spin 0;;")
+           ~timeout:0.5 with
+   | Error e -> Alcotest.fail e | Ok () -> ());
+  Unix.sleepf 1.0;
+  let mid = Session.partial_output s in
+  Session.on_deadline s ~grace:2.0;          (* first expiry: interrupt *)
+  (match Session.receive s with
+   | Error e -> Alcotest.failf "worker did not survive the interrupt: %s" e
+   | Ok (r, output) ->
+     (match r with
+      | Msg.Interrupted _ -> ()
+      | _ -> Alcotest.fail "expected an interrupted response");
+     Alcotest.(check bool) "output printed before the hang is recovered" true
+       (has_substring "printed-before-hanging" output);
+     Alcotest.(check bool) "mid-flight read saw nothing, because it was buffered"
+       false (has_substring "printed-before-hanging" mid));
+  (* and the session is still usable *)
+  let r, _ = ask s (Msg.Eval "1 + 1;;") in
+  Alcotest.(check bool) "session survives" true (phrases r <> [])
 
 let () =
   Alcotest.run "utop-mcp"
@@ -218,4 +296,9 @@ let () =
          Alcotest.test_case "type error executes nothing" `Slow
            test_type_error_executes_nothing;
          Alcotest.test_case "directives rejected" `Slow test_directives_rejected;
-         Alcotest.test_case "describe" `Slow test_describe ]) ]
+         Alcotest.test_case "describe" `Slow test_describe;
+         Alcotest.test_case "implicit bindings" `Slow test_implicit_bindings;
+         Alcotest.test_case "require" `Slow test_require;
+         Alcotest.test_case "hermetic" `Slow test_hermetic;
+         Alcotest.test_case "partial output recovered on interrupt" `Slow
+           test_partial_output_recovered_on_interrupt ]) ]

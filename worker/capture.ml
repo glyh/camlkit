@@ -1,19 +1,22 @@
-(* The toplevel's stdout and stderr are redirected onto a file we own.
+(* The toplevel's stdout and stderr are redirected onto a file the server
+   named, so the server can read partial output at any time and recover
+   whatever a phrase printed before it had to be killed.
+
    A file rather than a pipe: a phrase that outruns a draining reader would
    fill a pipe buffer and block the toplevel mid-evaluation. A file has no
    buffer to fill, and reading by offset is exact.
-   Truncated at the start of each eval so it does not grow across a session. *)
 
-type t = { fd : Unix.file_descr; path : string }
+   Truncated at the start of each eval, so it holds exactly the current
+   evaluation and does not grow across a session. The server owns the file's
+   lifetime, since it outlives us by design. *)
 
-let create () =
-  let path = Filename.temp_file "utop-mcp-" ".out" in
-  let fd = Unix.openfile path [ Unix.O_RDWR ] 0o600 in
-  (* Unlinked immediately: the fd keeps it alive, and it cannot outlive us. *)
-  Unix.unlink path;
+type t = { fd : Unix.file_descr }
+
+let create path =
+  let fd = Unix.openfile path [ Unix.O_RDWR; Unix.O_CREAT; Unix.O_TRUNC ] 0o600 in
   Unix.dup2 fd Unix.stdout;
   Unix.dup2 fd Unix.stderr;
-  { fd; path }
+  { fd }
 
 let reset t =
   flush Stdlib.stdout; flush Stdlib.stderr;

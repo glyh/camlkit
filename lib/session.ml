@@ -8,6 +8,7 @@ type t = {
   pid : int;
   ic : in_channel;
   oc : out_channel;
+  capture_path : string;   (* named by us, so partial output is readable *)
   mutable state : Supervision.state;
 }
 
@@ -35,10 +36,16 @@ let spawn name =
   let exe = worker_path () in
   let to_worker_r, to_worker_w = Unix.pipe ~cloexec:false () in
   let from_worker_r, from_worker_w = Unix.pipe ~cloexec:false () in
-  let pid = Unix.create_process exe [| exe |] to_worker_r from_worker_w Unix.stderr in
+  (* We choose the capture path rather than being told it, so the server can
+     read partial output even from a worker that never answers. *)
+  let capture_path = Filename.temp_file "utop-mcp-" ".out" in
+  let pid =
+    Unix.create_process exe [| exe; capture_path |]
+      to_worker_r from_worker_w Unix.stderr
+  in
   Unix.close to_worker_r;
   Unix.close from_worker_w;
-  { name; pid;
+  { name; pid; capture_path;
     ic = Unix.in_channel_of_descr from_worker_r;
     oc = Unix.out_channel_of_descr to_worker_w;
     state = Supervision.Idle }
@@ -48,14 +55,16 @@ let state t = t.state
 let is_busy t = Supervision.is_busy t.state
 let deadline t = Supervision.deadline t.state
 
-(* The worker greets us once its toplevel is ready. Read this through the
-   server's select loop rather than blocking here. *)
-let read_greeting t =
-  match Frame_io.read t.ic with
-  | Some _ -> Ok ()
-  | None | (exception Frame_io.Truncated) ->
-    apply t (Supervision.Vanished "worker exited before greeting");
-    Error "the worker failed to start"
+(* Whatever the current evaluation has printed so far. Readable at any time,
+   including from a worker that is wedged, and after one has been killed,
+   which is the reason the capture lives in a file the server named. *)
+let partial_output t =
+  match open_in_bin t.capture_path with
+  | ic ->
+    let n = in_channel_length ic in
+    let s = really_input_string ic n in
+    close_in ic; s
+  | exception Sys_error _ -> ""
 
 let send t request ~timeout =
   match Supervision.may_send t.state with
@@ -78,3 +87,8 @@ let on_deadline t ~grace =
   apply t (Supervision.Expired { now = Unix.gettimeofday (); grace })
 
 let kill t why = apply t (Supervision.Vanished why)
+
+(* The capture file outlives the worker by design, so removing it is ours. *)
+let dispose t =
+  kill t "session disposed";
+  try Sys.remove t.capture_path with Sys_error _ -> ()

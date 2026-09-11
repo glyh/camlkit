@@ -7,6 +7,14 @@ assignee: lyh
 
 # How a session is spawned and supervised
 
+> **Partly superseded.** Everything about spawning the utop binary and its
+> command-line flags is obsolete: the server spawns its own worker, which
+> links utop. See
+> [Worker linked to utop replaces the subprocess protocol](014-worker-architecture.md)
+> and the amendment at the end of this ticket. The supervision decisions -
+> deadline escalation, refusing concurrent evals, keeping the server's stdout
+> clear - all still stand.
+
 ## Question
 
 Where does the utop binary come from, what flags does a session start
@@ -77,6 +85,22 @@ may print to it. All logging goes to stderr.
 **Cap captured output per eval and truncate with an explicit marker.** A
 phrase can print without bound and an MCP result is a single payload with
 no streaming.
+
+## Amendment: what replaced the spawn flags
+
+The flags settled above have no binary to be passed to. Their intent is
+carried in the worker instead, and each was verified there rather than
+assumed:
+
+- `-short-paths` is `Clflags.real_paths := false`. Confirmed working.
+- `-init /dev/null` and `-no-autoload` are unnecessary: the worker never
+  calls utop's init-file path, so a session is hermetic by construction.
+  Confirmed by pointing `XDG_CONFIG_HOME` at a config directory holding an
+  `init.ml` and observing that its binding is unbound in a session.
+- `-implicit-bindings` **did not survive the move and was silently a no-op.**
+  `UTop.set_create_implicits` only sets a flag read by
+  `UTop_main.bind_expressions`, which is not exported. The rewrite of
+  `<expr>;;` into `let _N = <expr>;;` is now ours, in `worker/eval.ml`.
 
 ## Amendment: no Eio, no Lwt
 

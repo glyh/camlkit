@@ -37,17 +37,18 @@ must evaluate it first. Tests are Alcotest.
 
 ## Decisions so far
 
-- [Architecture baseline](tickets/001-architecture-baseline.md) — subprocess
-  speaking utop's `-emacs` protocol; named multiple sessions; Eio for
-  concurrency and cancellation; poisoned sessions are killed, not repaired;
-  output framed by a fully-qualified sentinel phrase.
+- [Architecture baseline](tickets/001-architecture-baseline.md) — **largely
+  superseded.** Kept for the protocol analysis and for why the `-emacs` route
+  was tried first. What survives: named multiple sessions. What does not: the
+  subprocess, the sentinel, Eio.
 - [JSON-RPC codec: library or hand-rolled](tickets/008-jsonrpc-codec.md) — use
   the `jsonrpc` package from ocaml-lsp; it is a pure message codec with no
   transport, so it carries no LSP framing and no rival runtime.
 - [How a session is spawned and supervised](tickets/009-session-spawn-and-supervision.md)
-  — spawn `opam exec -- utop -emacs` hermetically with `-init /dev/null
-  -no-autoload -implicit-bindings`; on deadline escalate SIGINT, grace, kill;
-  child stderr to the log, never into the protocol stream.
+  — **spawn decisions superseded**, supervision decisions stand: on deadline
+  escalate SIGINT, grace, then kill; concurrent evals on one session are
+  refused, not queued. There is no utop binary to spawn or pass flags to; the
+  server spawns its own worker.
 - [MCP semantics to target](tickets/002-mcp-wire-contract.md) — target
   2026-07-28 but answer both handshakes; the stateless core blesses session
   ids as tool arguments; `isError` only for infrastructure failure; declare
@@ -78,12 +79,13 @@ must evaluate it first. Tests are Alcotest.
 
 ## Fog
 
-- **Project launch context.** Deferred deliberately. Whether a session can
-  be started inside a dune project so its libraries are preloaded. The
-  mechanism is known to work: utop's README documents
-  `opam exec -- dune utop . -- -emacs`. What is undecided is whether a
-  session names a project directory, and how that interacts with hermetic
-  spawn flags.
+- **Project launch context.** Deferred deliberately, and the shape of the
+  question changed with the worker. `dune utop` is no longer available to us,
+  because we do not spawn the utop binary at all. So getting a project's own
+  libraries into a session means something else: findlib names through the
+  require tool, or adding the project's build directories to the search path,
+  or running the worker under `dune exec`. Undecided which, and whether a
+  session names a project directory at all.
 - **Toplevel printers.** Hermetic spawn suppresses the ones a user
   installs in `init.ml`, so their own types print as `<abstr>`. Tracked as
   [Let a session opt out of hermetic spawn](tickets/010-hermetic-opt-out.md);

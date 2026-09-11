@@ -22,8 +22,37 @@ let init () =
   Sys.interactive := false;
   Clflags.real_paths := false;          (* -short-paths *)
   Toploop.initialize_toplevel_env ();
-  UTop.set_create_implicits true;       (* <expr>;; binds _0, _1, ... *)
   install_handler ()
+
+(* Give every bare expression a name, so <expr>;; becomes let _N = <expr>;;
+   and an agent can refer back to an earlier result.
+
+   UTop.set_create_implicits only sets a flag that UTop_main.bind_expressions
+   reads, and that function is not exported, so setting it here did nothing at
+   all. The rewrite is small enough to own. *)
+let implicit_counter = ref 0
+
+let bind_expressions start phrases =
+  let n = ref start in
+  let rewrite_item item =
+    let open Parsetree in
+    match item with
+    | { pstr_desc = Pstr_eval (expr, attrs); pstr_loc = loc } ->
+      let name = Printf.sprintf "_%d" !n in
+      incr n;
+      Ast_helper.Str.value ~loc Nonrecursive
+        [ Ast_helper.Vb.mk ~loc ~attrs
+            (Ast_helper.Pat.var ~loc { Asttypes.txt = name; loc }) expr ]
+    | other -> other
+  in
+  let rewrite = function
+    | Parsetree.Ptop_def items -> Parsetree.Ptop_def (List.map rewrite_item items)
+    | Parsetree.Ptop_dir _ as d -> d
+  in
+  (* Bound, not inlined into the tuple: OCaml evaluates tuple components
+     right to left, so [!n] would be read before the map ran. *)
+  let rewritten = List.map rewrite phrases in
+  (rewritten, !n)
 
 let message_of_exn exn = UTop.get_message Errors.report_error exn
 
@@ -118,9 +147,13 @@ let eval cap src =
         (Printf.sprintf
            "eval does not accept directives; #%s belongs to a dedicated tool" d)
     | None ->
+      (* Rewrite before typing, so the pre-check sees exactly what will run.
+         The counter only advances once the whole request typechecks, so a
+         rejected request leaves no gap in the numbering. *)
+      let phrases, next = bind_expressions !implicit_counter phrases in
       match typecheck_all phrases with
       | Error f -> Msg.Failed f
-      | Ok () -> execute_all cap phrases
+      | Ok () -> implicit_counter := next; execute_all cap phrases
 
 (* Directive-backed operations. These bypass the typing pass by design:
    directives are not typeable, which is why they are not allowed in eval. *)
@@ -134,6 +167,26 @@ let directive cap src =
    so the answer arrives in the captured output with an empty rendering. *)
 let describe cap path = directive cap (Printf.sprintf "#show %s;;" path)
 
+(* Not the #require directive, and not UTop.require: both swallow findlib
+   errors into printed text, so a missing package reported as success. Worse,
+   UTop.require reports through Lwt_main.run, which would start an Lwt loop
+   inside a worker that deliberately has none. *)
 let require cap packages =
-  directive cap
-    (String.concat "" (List.map (Printf.sprintf "#require %S;;") packages))
+  Capture.reset cap;
+  match
+    (try
+       Topfind.load (Findlib.package_deep_ancestors !Topfind.predicates packages);
+       Ok ()
+     with
+     | Fl_package_base.No_such_package (pkg, reason) ->
+       Error (Printf.sprintf "no such package: %s%s" pkg
+                (if reason = "" then "" else " - " ^ reason))
+     | Fl_package_base.Package_loop pkg ->
+       Error ("package requires itself: " ^ pkg)
+     | Failure m -> Error m)
+  with
+  | Ok () ->
+    Msg.Completed [ { rendering = ""; warnings = "";
+                      out_start = 0; out_len = Capture.mark cap } ]
+  | Error message ->
+    Msg.Failed { phase = Msg.Execute; phrase_index = 0; message; spans = [] }
