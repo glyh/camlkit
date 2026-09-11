@@ -1,4 +1,9 @@
-(* Two-pass evaluation: type every phrase against an advancing environment
+(* This module is imperative shell by necessity: Toploop and Typemod work
+   through global compiler state, so there is no pure core to extract from
+   evaluation itself. The parts that are pure - directive rejection, response
+   construction - are kept separable regardless.
+
+   Two-pass evaluation: type every phrase against an advancing environment
    without running anything, then execute only if all of them typed. So
    neither a syntax error nor a type error leaves partial state behind.
    Note this cannot reuse UTop.check_phrase, which wraps items in a dummy

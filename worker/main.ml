@@ -15,10 +15,10 @@ let () =
   Unix.dup2 devnull Unix.stdin;
   let cap = Capture.create () in
   Eval.init ();
-  Frame.write oc { Frame.meta = `Assoc [ "hello", `String "utop-mcp-worker" ];
+  Frame_io.write oc { Frame.meta = `Assoc [ "hello", `String "utop-mcp-worker" ];
                    payload = "" };
   let rec loop () =
-    match Frame.read ic with
+    match Frame_io.read ic with
     | None -> ()
     | Some { Frame.meta; _ } ->
       let response =
@@ -27,7 +27,7 @@ let () =
         | Msg.Describe path -> Eval.describe cap path
         | Msg.Require packages -> Eval.require cap packages
       in
-      Frame.write oc
+      Frame_io.write oc
         { Frame.meta = Msg.json_of_response response; payload = Capture.contents cap };
       loop ()
   in

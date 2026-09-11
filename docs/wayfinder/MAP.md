@@ -15,6 +15,19 @@ is solid.
 touching the test suite. `ponytail` governs scope: the laziest thing that
 works, and no speculative abstraction.
 
+**Functional core, imperative shell.** Decision logic is pure and lives
+apart from the I/O that acts on it. `Frame` is the codec and `Frame_io`
+does the channel work; `Supervision` is the escalation state machine and
+`Session` owns the process that obeys it. Time and process state arrive as
+arguments rather than being read inside the core. The test for this is
+whether the interesting logic can be tested without a pipe, a clock or a
+subprocess.
+
+The toplevel itself is the exception and cannot be purified: `Toploop` and
+`Typemod` work through global compiler state, so `worker/eval.ml` is shell
+by nature. Keep the pure parts of it, such as directive rejection and
+response construction, separable anyway.
+
 **Standing preferences.** Build against opam's utop, never the reference
 checkout at `/home/lyh/pullground/mina/utop`, which is behind opam. The
 worker is bytecode because utop has no native archive; the server is

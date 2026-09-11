@@ -1,40 +1,50 @@
 open Wire
 open Utop_mcp
 
-(* --- framing ------------------------------------------------------------ *)
+(* --- framing: pure, so no channels, pipes or temp files ---------------- *)
 
-let roundtrip_frame (f : Frame.t) =
-  let path = Filename.temp_file "frame" ".bin" in
-  let oc = open_out_bin path in
-  Frame.write oc f; close_out oc;
-  let ic = open_in_bin path in
-  let got = Frame.read ic in
-  close_in ic; Sys.remove path;
-  got
+let roundtrip (f : Frame.t) =
+  match Frame.parse (Frame.encode f) with
+  | Frame.Complete (g, n) -> (g, n)
+  | Frame.Need n -> Alcotest.failf "encode produced a short frame, wants %d more" n
+  | Frame.Malformed m -> Alcotest.fail m
 
 let test_frame_roundtrip () =
   let f = Frame.{ meta = `Assoc [ "kind", `String "eval" ];
                   payload = "line one\nline two\n\000binary\xff" } in
-  match roundtrip_frame f with
-  | None -> Alcotest.fail "frame did not survive a round trip"
-  | Some g ->
-    Alcotest.(check string) "payload is byte-identical, newlines and all"
-      f.Frame.payload g.Frame.payload;
-    Alcotest.(check string) "metadata survives"
-      (Yojson.Safe.to_string f.Frame.meta) (Yojson.Safe.to_string g.Frame.meta)
+  let g, n = roundtrip f in
+  Alcotest.(check string) "payload is byte-identical, newlines and all"
+    f.Frame.payload g.Frame.payload;
+  Alcotest.(check string) "metadata survives"
+    (Yojson.Safe.to_string f.Frame.meta) (Yojson.Safe.to_string g.Frame.meta);
+  Alcotest.(check int) "consumes exactly the frame"
+    (String.length (Frame.encode f)) n
 
 let test_frame_empty_payload () =
-  let f = Frame.{ meta = `Assoc []; payload = "" } in
-  match roundtrip_frame f with
-  | Some g -> Alcotest.(check string) "empty payload" "" g.Frame.payload
-  | None -> Alcotest.fail "empty frame did not survive"
+  let g, _ = roundtrip Frame.{ meta = `Assoc []; payload = "" } in
+  Alcotest.(check string) "empty payload" "" g.Frame.payload
 
-let test_frame_eof () =
-  let path = Filename.temp_file "frame" ".bin" in
-  let ic = open_in_bin path in
-  let got = Frame.read ic in
-  close_in ic; Sys.remove path;
-  Alcotest.(check bool) "clean EOF reads as None" true (got = None)
+(* A reader is fed a stream, not a frame, so partial input must ask for more
+   rather than fail. *)
+let test_frame_partial () =
+  let whole = Frame.encode Frame.{ meta = `Assoc [ "k", `String "v" ];
+                                   payload = "abcdef" } in
+  let asks_for_more k =
+    match Frame.parse (String.sub whole 0 k) with
+    | Frame.Need n -> Alcotest.(check bool) "wants a positive amount" true (n > 0)
+    | Frame.Complete _ -> Alcotest.failf "claimed complete after only %d bytes" k
+    | Frame.Malformed m -> Alcotest.fail m
+  in
+  List.iter asks_for_more [ 0; 1; 3; 4; 6; String.length whole - 1 ]
+
+let test_frame_trailing_bytes () =
+  let f = Frame.{ meta = `Assoc []; payload = "x" } in
+  let stream = Frame.encode f ^ "leftovers" in
+  match Frame.parse stream with
+  | Frame.Complete (_, n) ->
+    Alcotest.(check int) "stops at the frame boundary"
+      (String.length (Frame.encode f)) n
+  | _ -> Alcotest.fail "a complete frame followed by more bytes should parse"
 
 (* --- message encoding --------------------------------------------------- *)
 
@@ -62,12 +72,57 @@ let test_response_roundtrip () =
                       message = "Error: ..."; spans = [ (4, 8) ] });
   check (Msg.Rejected "directives not accepted")
 
+(* --- supervision: pure, so no processes and no waiting ----------------- *)
+
+let test_escalation () =
+  let open Supervision in
+  let s = Idle in
+  let s, a = step s (Sent { now = 0.0; timeout = 10.0 }) in
+  Alcotest.(check bool) "sending arms a deadline" true (deadline s = Some 10.0);
+  Alcotest.(check bool) "and does nothing yet" true (a = Nothing);
+  let s, a = step s (Expired { now = 10.0; grace = 2.0 }) in
+  Alcotest.(check bool) "first expiry interrupts rather than killing" true
+    (a = Interrupt);
+  Alcotest.(check bool) "and grants a grace period" true (deadline s = Some 12.0);
+  let _, a = step s (Expired { now = 12.0; grace = 2.0 }) in
+  Alcotest.(check bool) "second expiry kills" true
+    (match a with Reap _ -> true | _ -> false)
+
+let test_interrupt_answered_keeps_session () =
+  let open Supervision in
+  let s, _ = step Idle (Sent { now = 0.0; timeout = 5.0 }) in
+  let s, _ = step s (Expired { now = 5.0; grace = 2.0 }) in
+  let s, a = step s Replied in
+  Alcotest.(check bool) "answering the interrupt returns to idle" true (s = Idle);
+  Alcotest.(check bool) "and kills nothing" true (a = Nothing);
+  Alcotest.(check bool) "so the session is usable again" true
+    (may_send s = Ok ())
+
+let test_concurrent_send_refused () =
+  let open Supervision in
+  let s, _ = step Idle (Sent { now = 0.0; timeout = 5.0 }) in
+  Alcotest.(check bool) "a busy session refuses a second evaluation" true
+    (Result.is_error (may_send s));
+  let s, _ = step s (Vanished "crash") in
+  Alcotest.(check bool) "a dead session refuses too" true
+    (Result.is_error (may_send s))
+
+let test_dead_is_terminal () =
+  let open Supervision in
+  let s, _ = step Idle (Vanished "segfault") in
+  let s', a = step s (Sent { now = 0.0; timeout = 5.0 }) in
+  Alcotest.(check bool) "death absorbs later events" true (s' = s && a = Nothing)
+
 (* --- against a real worker ---------------------------------------------- *)
 
 let with_worker f =
   Unix.putenv "UTOP_MCP_WORKER" "../worker/main.bc.exe";
   let s = Session.spawn "test" in
-  Fun.protect ~finally:(fun () -> Session.kill s "test over") (fun () -> f s)
+  Fun.protect ~finally:(fun () -> Session.kill s "test over")
+    (fun () ->
+       (match Session.read_greeting s with
+        | Ok () -> () | Error e -> Alcotest.fail e);
+       f s)
 
 let ask s request =
   match Session.send s request ~timeout:30.0 with
@@ -144,10 +199,18 @@ let () =
     [ ("frame",
        [ Alcotest.test_case "roundtrip" `Quick test_frame_roundtrip;
          Alcotest.test_case "empty payload" `Quick test_frame_empty_payload;
-         Alcotest.test_case "clean eof" `Quick test_frame_eof ]);
+         Alcotest.test_case "partial input" `Quick test_frame_partial;
+         Alcotest.test_case "trailing bytes" `Quick test_frame_trailing_bytes ]);
       ("msg",
        [ Alcotest.test_case "request" `Quick test_request_roundtrip;
          Alcotest.test_case "response" `Quick test_response_roundtrip ]);
+      ("supervision",
+       [ Alcotest.test_case "escalation" `Quick test_escalation;
+         Alcotest.test_case "interrupt answered" `Quick
+           test_interrupt_answered_keeps_session;
+         Alcotest.test_case "concurrent send refused" `Quick
+           test_concurrent_send_refused;
+         Alcotest.test_case "dead is terminal" `Quick test_dead_is_terminal ]);
       ("worker",
        [ Alcotest.test_case "eval and state" `Slow test_eval_and_state;
          Alcotest.test_case "output vs rendering" `Slow
