@@ -7,5 +7,6 @@
  (depends
   (ocaml (>= 5.0))
   (eio_main (>= 1.0))
+  (jsonrpc (>= 1.20))
   (yojson (>= 2.0))
   (alcotest (and (>= 1.7) :with-test))))

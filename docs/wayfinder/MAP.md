@@ -26,6 +26,9 @@ must evaluate it first. Tests are Alcotest.
   speaking utop's `-emacs` protocol; named multiple sessions; Eio for
   concurrency and cancellation; poisoned sessions are killed, not repaired;
   output framed by a fully-qualified sentinel phrase.
+- [JSON-RPC codec: library or hand-rolled](tickets/008-jsonrpc-codec.md) — use
+  the `jsonrpc` package from ocaml-lsp; it is a pure message codec with no
+  transport, so it carries no LSP framing and no rival runtime.
 
 ## Fog
 
