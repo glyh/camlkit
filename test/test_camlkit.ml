@@ -443,9 +443,10 @@ let test_lwt_expressions_run () =
   (* an unknown rule is refused rather than ignored, and leaves the previous
      setting standing rather than clearing it *)
   (match ask s (ev ~autorun:[ "nonsense" ] "1;;") with
-   | Msg.Failed f, _ ->
+   | Msg.Rejected why, _ ->
      Alcotest.(check bool) "and says what it knows" true
-       (has_substring "no such autorun rule" f.Msg.message)
+       (has_substring "no such autorun rule" why
+        && has_substring "still set to: lwt" why)
    | _ -> Alcotest.fail "an unknown autorun rule should be refused");
   (match ask s (ev "Lwt.return 42;;") with
    | Msg.Completed { autorun; _ }, _ ->

@@ -187,9 +187,15 @@ let eval cap ?autorun src =
     | None -> Ok ()
     | Some names -> Autorun.set names
   with
+  (* A bad rule name is a rejected argument, not a failed phrase: nothing
+     parsed, nothing ran, and Failed would name a phrase that is not at
+     fault. The message carries the rules still in force, since set is all or
+     nothing and a refusal leaves the session as it was. *)
   | Error message ->
-    Msg.Failed { phase = Msg.Execute; phrase_index = 0; message;
-                 spans = []; lines = []; done_ = [] }
+    Msg.Rejected
+      (Printf.sprintf "%s. The session is still set to: %s" message
+         (match Autorun.current () with
+          | [] -> "no rules" | rs -> String.concat ", " rs))
   | Ok () ->
   match parse src with
   | Error f -> Msg.Failed f
