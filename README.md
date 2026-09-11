@@ -85,6 +85,15 @@ dune test
 Requires OCaml 5.3.0 or newer and `utop`. The worker is bytecode, because
 utop ships no native archive; the server is native.
 
+Verified on OCaml 5.3.0 with utop 2.17.0 and on 5.4.0 with utop 2.16.0, so
+it is not pinned to either.
+
+A one-line check without a client, which works from the build tree too:
+
+```sh
+echo '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"eval","arguments":{"session":"a","code":"1 + 41;;"}}}' | utop-mcp
+```
+
 ## Status
 
 Working end to end. `eval`, `describe`, `require` and `reset` are served

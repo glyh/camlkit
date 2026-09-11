@@ -212,6 +212,24 @@ let test_in_session_printer () =
   Alcotest.(check bool) "the abstract type is not opaque" false
     (has "<abstr>" (text r))
 
+(* Closing stdin says goodbye, but a request already at a worker still deserves
+   its answer. Without this, piping a single call in gives silence. *)
+let test_answers_before_exiting_on_eof () =
+  let c = start () in
+  let request =
+    `Assoc [ "jsonrpc", `String "2.0"; "id", `Int 1; "method", `String "tools/call";
+             "params", `Assoc [ "name", `String "eval";
+                                "arguments", `Assoc [ "session", `String "s";
+                                                      "code", `String "1 + 41;;" ] ] ] in
+  output_string c.oc (Yojson.Safe.to_string request); output_char c.oc '\n';
+  flush c.oc;
+  close_out_noerr c.oc;                    (* goodbye, before the answer exists *)
+  let reply = Yojson.Safe.from_string (input_line c.ic) in
+  Alcotest.(check bool) "the in-flight request is still answered" true
+    (has "42" (text (result reply)));
+  (try Unix.kill c.pid Sys.sigkill with Unix.Unix_error _ -> ());
+  (try ignore (Unix.waitpid [] c.pid) with Unix.Unix_error _ -> ())
+
 let () =
   Alcotest.run "utop-mcp-server"
     [ ("mcp",
@@ -226,7 +244,9 @@ let () =
          Alcotest.test_case "sessions are independent" `Slow
            test_sessions_are_independent;
          Alcotest.test_case "a stuck session does not block the server" `Slow
-           test_a_stuck_session_does_not_block_the_server ]);
+           test_a_stuck_session_does_not_block_the_server;
+         Alcotest.test_case "answers before exiting on eof" `Slow
+           test_answers_before_exiting_on_eof ]);
       ("printers",
        [ Alcotest.test_case "automatic toplevel printers" `Slow
            test_automatic_toplevel_printers;

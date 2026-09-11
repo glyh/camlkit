@@ -180,6 +180,11 @@ let reap_dead () =
    exits. A worker mid-phrase is not reading anything, so it needs the signal. *)
 let stop_all () = Hashtbl.iter (fun _ s -> Session.kill s "server exiting") sessions
 
+(* Once stdin closes the client has said goodbye, but a request already at a
+   worker still deserves its answer: otherwise piping a single call in gives
+   silence. Stop reading, keep serving, exit when nothing is outstanding. *)
+let stdin_open = ref true
+
 let () =
   at_exit stop_all;
   List.iter (fun signal ->
@@ -201,7 +206,10 @@ let () =
       | None -> -1.0
       | Some d -> Float.max 0.0 (d -. Unix.gettimeofday ())
     in
-    let watch = Unix.stdin :: List.map (fun (_, s) -> Session.fd s) busy in
+    if (not !stdin_open) && Hashtbl.length pending = 0 then exit 0;
+    let watch =
+      (if !stdin_open then [ Unix.stdin ] else [])
+      @ List.map (fun (_, s) -> Session.fd s) busy in
     match Unix.select watch [] [] timeout with
     | exception Unix.Unix_error (Unix.EINTR, _, _) -> loop ()
     | ready, _, _ ->
@@ -218,7 +226,7 @@ let () =
         List.iter (fun fd ->
             if fd = Unix.stdin then begin
               match Unix.read Unix.stdin chunk 0 (Bytes.length chunk) with
-              | 0 -> exit 0                        (* the client hung up *)
+              | 0 -> stdin_open := false           (* the client hung up *)
               | n ->
                 let lines, rest =
                   Line_reader.split (!leftover ^ Bytes.sub_string chunk 0 n) in

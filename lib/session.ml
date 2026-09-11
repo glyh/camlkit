@@ -12,12 +12,22 @@ type t = {
   mutable state : Supervision.state;
 }
 
-(* The worker is installed beside the server. The override exists because a
-   development tree is laid out differently from an install. *)
+(* Installed, the worker sits beside the server as utop-mcp-worker, which is
+   why worker/dune gives it that public_name. In a dune build tree the layout
+   differs, so we also look where dune puts it; otherwise `dune exec utop-mcp`
+   fails in a way that looks like a missing install.
+   UTOP_MCP_WORKER overrides both. *)
 let worker_path () =
   match Sys.getenv_opt "UTOP_MCP_WORKER" with
   | Some p -> p
-  | None -> Filename.concat (Filename.dirname Sys.executable_name) "utop-mcp-worker"
+  | None ->
+    let dir = Filename.dirname Sys.executable_name in
+    let installed = Filename.concat dir "utop-mcp-worker" in
+    let in_build_tree =
+      Filename.concat (Filename.dirname dir) "worker/main.bc.exe" in
+    if Sys.file_exists installed then installed
+    else if Sys.file_exists in_build_tree then in_build_tree
+    else installed
 
 let perform t = function
   | Supervision.Nothing -> ()

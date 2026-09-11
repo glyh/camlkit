@@ -28,6 +28,11 @@ The toplevel itself is the exception and cannot be purified: `Toploop` and
 by nature. Keep the pure parts of it, such as directive rejection and
 response construction, separable anyway.
 
+**Verified on OCaml 5.3.0 and 5.4.0**, against utop 2.17.0 and 2.16.0
+respectively. Every compiler-libs signature the worker touches is identical
+across those releases; the one that does differ, `Longident.Ldot`, is
+reached through `UTop_compat.ldot`.
+
 **Standing preferences.** Build against opam's utop, never the reference
 checkout at `/home/lyh/pullground/mina/utop`, which is behind opam. The
 worker is bytecode because utop has no native archive; the server is
