@@ -9,12 +9,12 @@ assignee:
 
 ## Question
 
-utop exposes `complete:` and `complete-company:`, answering with
-`completion-start:` / `completion:` / `completion-stop:`, or with
-`completion-word:` for a unique extension. Establish what the client must
-send as input context, what the returned candidates actually contain, and
-whether they carry type information or only names.
+Partly answered by the worker prototype. `UTop_complete.complete` is
+called directly and returns a start offset plus a list of pairs; `List.ma`
+yielded `map map2 mapi` at offset 5.
 
-Read how `src/top/utop.el` in the reference checkout drives it, then
-confirm against opam utop. Determines whether completion is a useful MCP
-tool on its own or only meaningful with the type lookup that sits in fog.
+What remains: what the second element of each pair actually carries, since
+it may be type information rather than a plain suffix; what input context
+the caller must supply for completion inside a partial phrase; and
+whether completion is a useful MCP tool on its own or only meaningful
+alongside the type lookup still in fog.

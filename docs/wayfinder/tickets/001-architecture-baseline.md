@@ -89,3 +89,13 @@ quirks. Re-rejected on evidence gathered from the installed library:
 The quirks that motivated the reconsideration are already solved and
 verified: sentinel framing, SIGINT recovery, poison detection. The trade
 was three solved problems for four unsolved ones.
+
+## Superseded
+
+The subprocess decision is superseded by
+[Worker linked to utop replaces the subprocess protocol](014-worker-architecture.md).
+The evidence in the amendment above was accurate but incomplete: the eval
+loop turned out to be about thirty lines, and owning it removes the
+sentinel, the output race and stdin theft outright rather than working
+around each. What remains valid here is the protocol analysis, kept as the
+record of why the `-emacs` route was tried first.

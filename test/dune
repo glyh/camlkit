@@ -1,3 +1,0 @@
-(test
- (name test_utop_mcp)
- (libraries utop_mcp alcotest))

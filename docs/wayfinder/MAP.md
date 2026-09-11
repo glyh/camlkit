@@ -2,10 +2,10 @@
 
 ## Notes
 
-**Domain.** An MCP server, written in OCaml 5, that gives an MCP client
-(an agent) one or more live OCaml toplevels. It drives stock `utop` from
-opam as a child process, speaking the line protocol utop already exposes
-for Emacs via its `-emacs` flag. No fork of utop, no patch to it.
+**Domain.** An MCP server, written in OCaml, that gives an MCP client (an
+agent) one or more live OCaml toplevels. A worker binary links the utop
+library and owns the eval loop; the server supervises one worker per
+session. OCaml 5.3.0 or newer. No fork of utop, no patch to it.
 
 **Purpose.** Both an agent scratchpad REPL and a codebase exploration
 tool, built eval-first. Completion and library loading follow once eval
@@ -16,7 +16,9 @@ touching the test suite. `ponytail` governs scope: the laziest thing that
 works, and no speculative abstraction.
 
 **Standing preferences.** Build against opam's utop, never the reference
-checkout at `/home/lyh/pullground/mina/utop`, which is behind opam.
+checkout at `/home/lyh/pullground/mina/utop`, which is behind opam. The
+worker is bytecode because utop has no native archive; the server is
+native.
 `opam env` is not loaded in the user's fish shell, so every build command
 must evaluate it first. Tests are Alcotest.
 
@@ -37,6 +39,9 @@ must evaluate it first. Tests are Alcotest.
   2026-07-28 but answer both handshakes; the stateless core blesses session
   ids as tool arguments; `isError` only for infrastructure failure; declare
   an `outputSchema`.
+- [Worker linked to utop replaces the subprocess protocol](tickets/014-worker-architecture.md)
+  — the eval loop is ~30 lines and owning it removes the sentinel, the output
+  race and stdin theft outright; supersedes the subprocess baseline.
 - [Trust boundary](tickets/012-trust-boundary.md) — trusted local developer
   tool, deliberately not sandboxed; stdio implies a local parent and that
   assumption is load-bearing.
