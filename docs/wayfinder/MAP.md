@@ -33,6 +33,10 @@ must evaluate it first. Tests are Alcotest.
   — spawn `opam exec -- utop -emacs` hermetically with `-init /dev/null
   -no-autoload -implicit-bindings`; on deadline escalate SIGINT, grace, kill;
   child stderr to the log, never into the protocol stream.
+- [MCP semantics to target](tickets/002-mcp-wire-contract.md) — target
+  2026-07-28 but answer both handshakes; the stateless core blesses session
+  ids as tool arguments; `isError` only for infrastructure failure; declare
+  an `outputSchema`.
 
 ## Fog
 
