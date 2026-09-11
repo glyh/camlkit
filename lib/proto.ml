@@ -1,0 +1,30 @@
+(* utop's -emacs line protocol: every line is "command:argument". *)
+
+type line = { cmd : string; arg : string }
+
+let parse s =
+  match String.index_opt s ':' with
+  | None -> None
+  | Some i ->
+    Some { cmd = String.sub s 0 i;
+           arg = String.sub s (i + 1) (String.length s - i - 1) }
+
+(* A phrase is sent as input:<flags> then one data: line per input line, then end:. *)
+let encode_input ?(flags = []) phrase =
+  let data = String.split_on_char '\n' phrase |> List.map (fun l -> "data:" ^ l) in
+  (Printf.sprintf "input:%s" (String.concat "," flags) :: data) @ [ "end:" ]
+
+(* utop's stdout reader thread is scheduled independently of the command thread,
+   so eval output arrives *after* the following prompt: with no reliable in-band
+   end marker. We append a phrase that prints a unique marker; everything before
+   it on stdout belongs to the user's phrase.
+   ponytail: costs one extra round trip per eval; only worth replacing if utop
+   ever grows a real end-of-output signal. *)
+let sentinel_phrase id = Printf.sprintf "let () = Stdlib.print_endline \"@@utop-mcp:%d@@\";;" id
+let sentinel_marker id = Printf.sprintf "@@utop-mcp:%d@@" id
+
+(* utop announces its terminator as phrase-terminator:;; and will answer
+   continue: for anything not ending in it. *)
+let terminate ~terminator phrase =
+  let t = String.trim phrase in
+  if Filename.check_suffix t terminator then t else t ^ terminator

@@ -1,0 +1,4 @@
+(executable
+ (name main)
+ (public_name utop-mcp)
+ (libraries utop_mcp eio_main))

@@ -1,0 +1,3 @@
+(library
+ (name utop_mcp)
+ (libraries eio eio.unix yojson))
