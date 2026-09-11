@@ -7,9 +7,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 An MCP server, written in OCaml, that gives an MCP client live OCaml
 toplevels. A bytecode worker process owns the toplevel over
 `compiler-libs.toplevel`; the native server supervises one worker per named
-session and speaks MCP over stdio. Eleven tools: `eval`, `describe`, `require`,
-`load`, `reset` (session state), `build` (dune), and `locate`, `type_at`,
-`outline`, `uses`, `search_type` (merlin, no session needed).
+session and speaks MCP over stdio. Ten tools: `eval`, `describe`, `require`,
+`load`, `reset` (session state), and `locate`, `type_at`, `outline`, `uses`,
+`search_type` (merlin, no session needed). There is no build tool; see ticket
+025.
 
 ## Commands
 
@@ -55,7 +56,7 @@ Two processes, one shared codec library.
 | --- | --- |
 | `wire/` | frame codec (`frame.ml`), channel I/O (`frame_io.ml`), IPC message types (`msg.ml`) |
 | `worker/` | the toplevel: capture, two-pass evaluation, printers, loader, request loop |
-| `lib/` | session supervision, tool declarations, rendering, dune build, merlin |
+| `lib/` | session supervision, tool declarations, rendering, merlin |
 | `bin/main.ml` | the server's `Unix.select` loop and tool dispatch |
 
 Neither process runs Eio, Lwt or threads. The server is a single `select`
@@ -108,10 +109,10 @@ wrong.
 
 **Sessions are hermetic.** `~/.config/utop/init.ml` is not loaded.
 
-Prefer stability over linking: merlin is shelled out to in single mode and
-dune is shelled out to rather than driven over its RPC. Both choices have
-long comments at the top of `lib/merlin.ml` and `lib/build.ml`; read them
-before reversing either.
+Prefer stability over linking: merlin is shelled out to in single mode rather
+than linked, and the reasoning is a long comment at the top of
+`lib/merlin.ml`; read it before reversing it. `load` and the `uses` index call
+shell out to dune for the same reason.
 
 `ponytail` governs scope: the laziest thing that works, no speculative
 abstraction.

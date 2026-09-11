@@ -1,7 +1,6 @@
 # camlkit
 
-An MCP server that gives an agent live OCaml toplevels, source queries and
-a build.
+An MCP server that gives an agent live OCaml toplevels and source queries.
 
 A worker process owns the toplevel, over the compiler's own
 `compiler-libs.toplevel`; the server supervises one worker per session and
@@ -124,7 +123,7 @@ an empty environment and `lwt.unix`.
 
 ## Using it
 
-Eleven tools, in three groups.
+Ten tools, in two groups.
 
 A bare `Lwt` or `Async` expression is run rather than handed back as a
 promise, the way utop does it. `eval` takes an `autorun` list to change that
@@ -138,15 +137,12 @@ signature, `require` loads findlib packages, `load` brings in a dune
 project's own libraries, `reset` empties a session. Sessions are created on
 first use under whatever name you pick, and state persists between calls.
 
-**About the project.** `build` builds it and reports errors and warnings with
-file, line, column and severity.
-
 **About source, with no session.** `locate` finds where a name is defined,
 `type_at` gives the type at a position, `outline` lists what a file defines,
 `uses` finds every occurrence, `search_type` finds values by their type.
 These need nothing built and nothing loaded.
 
-To explore the project you are working in, build it, then:
+There is no build tool: build the project with `dune build` yourself, then:
 
 ```
 load { path: "/path/to/project" }
@@ -202,8 +198,8 @@ echo '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"eval","arg
 
 ## Status
 
-Working end to end. All eleven tools are served over MCP stdio, against
-real toplevels, one worker per session. 65 tests, of which 34 drive the
+Working end to end. All ten tools are served over MCP stdio, against
+real toplevels, one worker per session. 62 tests, of which 30 drive the
 server binary the way a client does.
 
 Sessions are created on first use under whatever name the caller picks. If
@@ -223,7 +219,7 @@ Layout follows functional core, imperative shell:
 | --- | --- |
 | `wire/` | shared by both processes: frame codec, message types |
 | `worker/` | owns the toplevel: capture, two-pass evaluation, printers, loading, request loop |
-| `lib/` | session supervision, tool declarations, rendering, dune builds, merlin queries |
+| `lib/` | session supervision, tool declarations, rendering, merlin queries |
 | `bin/` | the server's select loop |
 
 ## Behaviour worth knowing

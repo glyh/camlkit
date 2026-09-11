@@ -1,11 +1,30 @@
 ---
-status: closed
+status: superseded
 type: grilling
 blocked-by: []
 assignee: lyh
 ---
 
 # Building the project from a tool
+
+**Superseded: the tool was removed.** The reasoning below stands as the record
+of what driving dune costs, and the dune calls that remain, `dune top` for
+`load` and `dune build @ocaml-index` for `uses`, still rest on it.
+
+## Why it was removed
+
+The tool wrapped `dune build` and lifted the location header of each
+diagnostic into fields. A caller that has a shell gets the same answer from
+`dune build`, and reads it in the form its author intended. The wrapper earned
+its bytes only for a client with no shell at all, which is not the client this
+serves.
+
+The merlin tools are a different case and stay: their calling convention is a
+JSON envelope with the source on stdin, and `uses` is silently incomplete
+without dune's index, which is a wrong answer rather than an inconvenient one.
+
+What was removed: `lib/build.ml`, the tool declaration, the dispatch arm in
+`bin/main.ml`, and the four tests. Eleven tools became ten.
 
 ## Question
 

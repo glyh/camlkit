@@ -98,14 +98,14 @@ let test_tools_listed () =
     Yojson.Safe.Util.(member "tools" r |> to_list
                       |> List.map (fun t -> member "name" t |> to_string)) in
   Alcotest.(check (slist string compare)) "the tools"
-    [ "build"; "describe"; "eval"; "load"; "locate"; "outline"; "require";
+    [ "describe"; "eval"; "load"; "locate"; "outline"; "require";
       "reset"; "search_type"; "type_at"; "uses" ] names;
   let schemas =
     Yojson.Safe.Util.(member "tools" r |> to_list
                       |> List.filter (fun t -> member "outputSchema" t <> `Null)
                       |> List.map (fun t -> member "name" t |> to_string)) in
   Alcotest.(check (slist string compare)) "every tool declares an output schema"
-    [ "build"; "describe"; "eval"; "load"; "locate"; "outline"; "require";
+    [ "describe"; "eval"; "load"; "locate"; "outline"; "require";
       "reset"; "search_type"; "type_at"; "uses" ] schemas
 
 let test_eval_through_the_loop () =
@@ -601,83 +601,6 @@ let test_a_killed_server_takes_its_workers_with_it () =
   Unix.sleepf 4.0;
   Alcotest.(check int) "and it does not outlive the server" 0 (count ())
 
-(* Building. Shelled out to dune rather than driven over its RPC; see
-   lib/build.ml for what was tried and why.
-
-   The fixture is a throwaway dune project in a temp directory, so a failing
-   build never touches this repository and dune is not invoked inside the
-   build lock that dune runtest holds. *)
-let with_project f =
-  let dir = Filename.temp_dir "camlkit-proj" "" in
-  let write name contents =
-    let oc = open_out (Filename.concat dir name) in
-    output_string oc contents; close_out oc
-  in
-  write "dune-project" "(lang dune 3.20)\n";
-  write "dune" "(executable (name prog))\n";
-  Fun.protect
-    ~finally:(fun () -> ignore (Sys.command (Printf.sprintf "rm -rf %s" (Filename.quote dir))))
-    (fun () -> f dir write)
-
-let test_build_succeeds () =
-  with_server @@ fun c ->
-  with_project @@ fun dir write ->
-  write "prog.ml" "let () = print_endline \"fine\"\n";
-  let r = call c ~id:1 ~tool:"build" ~args:(`Assoc [ "path", `String dir ]) in
-  Alcotest.(check string) "status" "success" (status r);
-  Alcotest.(check bool) "no diagnostics" true
-    (Yojson.Safe.Util.(r |> member "structuredContent" |> member "diagnostics"
-                       |> to_list) = [])
-
-let test_build_reports_errors_with_positions () =
-  with_server @@ fun c ->
-  with_project @@ fun dir write ->
-  write "prog.ml" "let () = print_endline 42\n";
-  let r = call c ~id:1 ~tool:"build" ~args:(`Assoc [ "path", `String dir ]) in
-  Alcotest.(check string) "status" "failure" (status r);
-  match Yojson.Safe.Util.(r |> member "structuredContent" |> member "diagnostics"
-                          |> to_list) with
-  | [] -> Alcotest.fail "a failing build reported no diagnostics"
-  | d :: _ ->
-    let field k = Yojson.Safe.Util.(d |> member k) in
-    Alcotest.(check string) "severity" "error"
-      Yojson.Safe.Util.(field "severity" |> to_string);
-    Alcotest.(check bool) "names the file" true
-      (has "prog.ml" Yojson.Safe.Util.(field "file" |> to_string));
-    Alcotest.(check int) "and the line" 1 Yojson.Safe.Util.(field "line" |> to_int);
-    let message = Yojson.Safe.Util.(field "message" |> to_string) in
-    Alcotest.(check bool) "the message is the compiler's" true
-      (has "type" message);
-    (* dune echoes the offending source with carets; the caller already has the
-       file and the position is a field, so that is stripped *)
-    Alcotest.(check bool) "without dune's source echo" false (has "^^^" message)
-
-(* A failure with nothing to parse - a bad target, a dune file error - must
-   still say what happened. Reported from a session that saw an empty failure
-   and had nothing to go on. *)
-let test_build_failure_without_diagnostics_still_explains () =
-  with_server @@ fun c ->
-  with_project @@ fun dir write ->
-  write "prog.ml" "let () = print_endline \"fine\"\n";
-  let r = call c ~id:1 ~tool:"build"
-      ~args:(`Assoc [ "path", `String dir;
-                      "targets", `List [ `String "no/such/target" ] ]) in
-  Alcotest.(check string) "it failed" "failure" (status r);
-  let sc = Yojson.Safe.Util.member "structuredContent" r in
-  Alcotest.(check bool) "with no diagnostic to parse" true
-    Yojson.Safe.Util.(member "diagnostics" sc |> to_list = []);
-  let output = Yojson.Safe.Util.(member "output" sc |> to_string) in
-  Alcotest.(check bool) "but dune's own words are a field" true
-    (has "Don't know how to build" output);
-  Alcotest.(check bool) "and in the text too" true
-    (has "Don't know how to build" (text r))
-
-let test_build_on_something_that_is_not_a_project () =
-  with_server @@ fun c ->
-  let r = call c ~id:1 ~tool:"build" ~args:(`Assoc [ "path", `String "/tmp" ]) in
-  Alcotest.(check bool) "an infrastructure failure" true (is_error r);
-  Alcotest.(check bool) "that says why" true (has "dune-project" (text r))
-
 let () =
   Alcotest.run "camlkit-server"
     [ ("mcp",
@@ -724,14 +647,6 @@ let () =
            test_enclosings_are_not_repeated;
          Alcotest.test_case "search_type fills its limit" `Slow
            test_search_type_fills_its_limit ]);
-      ("build",
-       [ Alcotest.test_case "a clean build" `Slow test_build_succeeds;
-         Alcotest.test_case "errors with positions" `Slow
-           test_build_reports_errors_with_positions;
-         Alcotest.test_case "not a dune project" `Slow
-           test_build_on_something_that_is_not_a_project;
-         Alcotest.test_case "a failure with nothing to parse still explains" `Slow
-           test_build_failure_without_diagnostics_still_explains ]);
       ("lifetime",
        [ Alcotest.test_case "a killed server takes its workers with it" `Slow
            test_a_killed_server_takes_its_workers_with_it ]);

@@ -68,50 +68,6 @@ let arg_int args name =
   | `Null -> Error (Printf.sprintf "missing required argument %S" name)
   | _ -> Error (Printf.sprintf "argument %S must be an integer" name)
 
-(* Building. Shelled out rather than driven over dune's RPC; the reasoning,
-   and what was tried, is in lib/build.ml. *)
-let build_query id args =
-  match arg_string args "path" with
-  | Error e -> reply id (Render.infrastructure_failure e)
-  | Ok path ->
-    let targets =
-      match Yojson.Safe.Util.member "targets" args with
-      | `List l -> List.filter_map (function `String s -> Some s | _ -> None) l
-      | _ -> []
-    in
-    (match Build.build path targets with
-     | Error e -> reply id (Render.infrastructure_failure e)
-     | Ok result ->
-       let json_of (d : Build.diagnostic) =
-         `Assoc [ "severity", `String d.Build.severity;
-                  "file", `String d.Build.file;
-                  "line", `Int d.Build.line;
-                  "col", `Int d.Build.col;
-                  "message", `String d.Build.message ]
-       in
-       (* dune's own words are a field, not only display text. They are the
-          whole answer when a failure has no located diagnostic to parse - a
-          bad target, a dune file error, a missing dependency - and a caller
-          reading only the structured half would otherwise see an empty
-          failure and have nothing to go on. *)
-       let output =
-         let o = result.Build.output in
-         if String.length o <= Wire.Msg.output_limit then o
-         else String.sub o 0 Wire.Msg.output_limit
-       in
-       let text =
-         if result.Build.success && output = "" then "build succeeded" else output
-       in
-       reply id
-         { Render.content = text;
-           structured =
-             `Assoc [ "status",
-                      `String (if result.Build.success then "success" else "failure");
-                      "diagnostics",
-                      `List (List.map json_of result.Build.diagnostics);
-                      "output", `String output ];
-           is_error = false })
-
 let is_source_query = function
   | "locate" | "type_at" | "outline" | "uses" | "search_type" -> true
   | _ -> false
@@ -305,8 +261,7 @@ let handle_call id params =
     | `String s -> s | _ -> "" in
   let args = match Yojson.Safe.Util.member "arguments" params with
     | `Assoc _ as a -> a | _ -> `Assoc [] in
-  if name = "build" then build_query id args
-  else if is_source_query name then source_query id name args else
+  if is_source_query name then source_query id name args else
   match arg_string args "session" with
   | Error e -> reply id (Render.infrastructure_failure e)
   | Ok session_name ->
