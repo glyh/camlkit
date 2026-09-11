@@ -20,15 +20,19 @@ type request =
 (* What the toplevel produced, as data rather than as the sentence it prints.
    "val _0 : int = 42" packs a name, a type and a value into one string, and
    the type is the thing a caller most often wants. *)
+(* Name and type only. The value is deliberately absent: it duplicates the
+   rendering exactly, and it is a printed representation rather than data -
+   "<fun>", "<abstr>", or a list the printer elided. Measured at two to four
+   times the rendering's size before it was dropped. *)
 type binding = {
   bound : string;         (* the name, or "" where the item has none *)
+  bound_kind : string;    (* value, type, module, modtype, class, exception *)
   bound_type : string;    (* its type, or the whole declaration for a type *)
-  bound_value : string option;
 }
 
 type outcome =
   | No_outcome                                   (* the phrase printed nothing *)
-  | Value of { value_type : string; value : string }   (* a bare expression *)
+  | Value of { value_type : string }             (* a bare expression *)
   | Bindings of binding list                     (* let, type, module, ... *)
   | Raised of string                             (* an uncaught exception *)
 
@@ -118,16 +122,14 @@ let clamp ~limit phrases =
   let clamped = List.map clamp_one phrases in
   (clamped, !any)
 
-let json_of_binding { bound; bound_type; bound_value } =
-  `Assoc ([ "name", `String bound; "type", `String bound_type ]
-          @ (match bound_value with
-              | None -> [] | Some v -> [ "value", `String v ]))
+let json_of_binding { bound; bound_kind; bound_type } =
+  `Assoc [ "name", `String bound; "kind", `String bound_kind;
+           "type", `String bound_type ]
 
 let json_of_outcome = function
   | No_outcome -> `Assoc [ "kind", `String "nothing" ]
-  | Value { value_type; value } ->
-    `Assoc [ "kind", `String "value"; "type", `String value_type;
-             "value", `String value ]
+  | Value { value_type } -> `Assoc [ "kind", `String "value";
+                                     "type", `String value_type ]
   | Bindings bs ->
     `Assoc [ "kind", `String "bindings";
              "items", `List (List.map json_of_binding bs) ]
@@ -136,15 +138,14 @@ let json_of_outcome = function
 let outcome_of_json j =
   let open Yojson.Safe.Util in
   match member "kind" j |> to_string with
-  | "value" -> Value { value_type = member "type" j |> to_string;
-                       value = member "value" j |> to_string }
+  | "value" -> Value { value_type = member "type" j |> to_string }
   | "bindings" ->
     Bindings (member "items" j |> to_list
               |> List.map (fun b ->
                   { bound = member "name" b |> to_string;
-                    bound_type = member "type" b |> to_string;
-                    bound_value = (match member "value" b with
-                        | `String v -> Some v | _ -> None) }))
+                    bound_kind = (match member "kind" b with
+                        | `String k -> k | _ -> "value");
+                    bound_type = member "type" b |> to_string }))
   | "exception" -> Raised (member "exception" j |> to_string)
   | _ -> No_outcome
 

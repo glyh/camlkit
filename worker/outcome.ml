@@ -28,6 +28,19 @@ let name_of_item = function
   | Outcometree.Osig_class_type (_, n, _, _, _) -> n
   | Outcometree.Osig_typext _ | Outcometree.Osig_ellipsis -> ""
 
+(* For a type or a module the declaration is the type, which is also what the
+   rendering shows. The kind is what makes the structure worth carrying there:
+   it says what sort of thing was bound without parsing the text. *)
+let kind_of_item = function
+  | Outcometree.Osig_value _ -> "value"
+  | Outcometree.Osig_type _ -> "type"
+  | Outcometree.Osig_module _ -> "module"
+  | Outcometree.Osig_modtype _ -> "modtype"
+  | Outcometree.Osig_class _ -> "class"
+  | Outcometree.Osig_class_type _ -> "classtype"
+  | Outcometree.Osig_typext _ -> "extension"
+  | Outcometree.Osig_ellipsis -> "ellipsis"
+
 (* For a value the useful field is its type alone; for anything else the whole
    declaration is what a reader wants. *)
 let type_of_item = function
@@ -36,18 +49,15 @@ let type_of_item = function
   | item -> to_string (doc !Toploop.print_out_sig_item) item
 
 let decompose = function
-  | Outcometree.Ophr_eval (v, t) ->
-    Msg.Value { value_type = to_string (doc !Toploop.print_out_type) t;
-                value = to_string !Toploop.print_out_value v }
+  | Outcometree.Ophr_eval (_, t) ->
+    Msg.Value { value_type = to_string (doc !Toploop.print_out_type) t }
   | Outcometree.Ophr_signature [] -> Msg.No_outcome
   | Outcometree.Ophr_signature items ->
     Msg.Bindings
       (List.map
-         (fun (item, value) ->
-            Msg.{ bound = name_of_item item;
-                  bound_type = type_of_item item;
-                  bound_value =
-                    Option.map (to_string !Toploop.print_out_value) value })
+         (fun (item, _value) ->
+            Msg.{ bound = name_of_item item; bound_kind = kind_of_item item;
+                  bound_type = type_of_item item })
          items)
   | Outcometree.Ophr_exception (e, _) ->
     Msg.Raised

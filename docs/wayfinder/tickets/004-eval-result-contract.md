@@ -85,3 +85,21 @@ text, where structuring would mean reimplementing the printer; and a
 failure `message`, which is a compiler diagnostic already accompanied by
 structured `phase`, `spans` and `lines`. `warnings` remains a single string
 and is the one soft spot left.
+
+## Amendment: the outcome carried the value twice
+
+Measured after the fact: the outcome was consistently two to four times the
+size of the rendering it accompanied, and almost all of the excess was its
+`value` field, which duplicated the rendering exactly. A forty-element list
+appeared in full in both.
+
+The split was in the wrong place. A name and a type are data; a value is a
+*printed representation* chosen by the printer, and often `<fun>`, `<abstr>`
+or an elided list. So `value` is gone from the outcome and lives only in the
+rendering, where the printer put it. That list case went from 232 bytes to 67.
+
+Each item now carries its kind instead - value, type, module, modtype, class,
+extension. For a type or module declaration the "type" is the declaration,
+which is also what the rendering shows, so the kind is what makes the
+structured form worth having there: it says what sort of thing was bound
+without parsing the text.

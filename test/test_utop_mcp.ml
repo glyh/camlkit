@@ -68,8 +68,7 @@ let test_response_roundtrip () =
   in
   check (Msg.Completed [ { rendering = "val x : int = 42"; warnings = "";
                            out_start = 0; out_len = 0; truncated = false;
-                           outcome = Msg.Value { value_type = "int";
-                                                 value = "42" } } ]);
+                           outcome = Msg.Value { value_type = "int" } } ]);
   check (Msg.Failed { phase = Msg.Typecheck; phrase_index = 1;
                       message = "Error: ..."; spans = [ (4, 8) ];
                       lines = [ (1, 1) ]; done_ = [] });
@@ -314,8 +313,7 @@ let test_outcome_is_structured () =
    | Msg.Bindings [ b ] ->
      Alcotest.(check string) "the implicit binding is named" "_0" b.Msg.bound;
      Alcotest.(check string) "its type is a field" "int" b.Msg.bound_type;
-     Alcotest.(check (option string)) "and so is its value"
-       (Some "42") b.Msg.bound_value
+     Alcotest.(check string) "and its kind" "value" b.Msg.bound_kind
    | _ -> Alcotest.fail "expected a binding");
   (match outcome_of "let g a b = a +. b;;" with
    | Msg.Bindings [ b ] ->
@@ -325,6 +323,8 @@ let test_outcome_is_structured () =
   (match outcome_of "type colour = Red | Blue;;" with
    | Msg.Bindings [ b ] ->
      Alcotest.(check string) "a type declaration is named" "colour" b.Msg.bound;
+     Alcotest.(check string) "and says what sort of thing it is" "type"
+       b.Msg.bound_kind;
      Alcotest.(check bool) "and carries its declaration" true
        (has_substring "Red" b.Msg.bound_type)
    | _ -> Alcotest.fail "expected a binding");

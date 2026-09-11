@@ -21,11 +21,12 @@ let outcome_schema =
              "kind", `Assoc [ "type", `String "string" ];
              "type", `Assoc [ "type", `String "string";
                "description", `String "For kind=value, the type of the result." ];
-             "value", `Assoc [ "type", `String "string" ];
              "exception", `Assoc [ "type", `String "string" ];
              "items", `Assoc [ "type", `String "array";
                "description", `String "For kind=bindings, one entry per name \
-                 bound, each with name, type and optionally value." ] ] ]
+                 bound, each with name, kind (value, type, module, ...) and \
+                 type. The values themselves are in rendering, which is where \
+                 the printer put them." ] ] ]
 
 let phrase_schema =
   `Assoc [ "type", `String "object";
