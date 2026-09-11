@@ -26,6 +26,39 @@ parent process that you launched. **Anyone exposing this over a non-stdio
 transport, or to a client they do not control, is handing out remote code
 execution.** Do not do that.
 
+## Installing
+
+```sh
+eval $(opam env)
+dune build
+dune install          # or: opam install .
+```
+
+This installs two binaries. `utop-mcp` is the server; `utop-mcp-worker` is
+the toplevel it spawns, one per session. The server finds the worker beside
+its own executable, so they must stay installed together. Override with
+`UTOP_MCP_WORKER` if you need to point at a specific build.
+
+## Using it
+
+It speaks MCP over stdio, so point any MCP client at the `utop-mcp`
+command. For a client that reads a JSON config:
+
+```json
+{
+  "mcpServers": {
+    "utop": { "command": "utop-mcp" }
+  }
+}
+```
+
+For Claude Code: `claude mcp add utop utop-mcp`.
+
+Four tools become available. `eval` runs OCaml phrases in a named session,
+`describe` shows a signature, `require` loads findlib packages, and `reset`
+empties a session. Sessions are created on first use under whatever name
+the caller picks.
+
 ## Building
 
 `opam env` must be in scope:

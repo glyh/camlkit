@@ -85,6 +85,9 @@ must evaluate it first. Tests are Alcotest.
   types printed as `<abstr>`; reimplemented in `worker/printers.ml`, both the
   required-package half and the in-session half, the latter by folding over the
   environment rather than copying utop's Env-summary walk.
+- [Making it installable](tickets/020-installability.md) — only the server was
+  installed, so an installed copy could never start a session; the worker now
+  has a `public_name` and the installed pair is verified end to end.
 - [Trust boundary](tickets/012-trust-boundary.md) — trusted local developer
   tool, deliberately not sandboxed; stdio implies a local parent and that
   assumption is load-bearing.
@@ -121,5 +124,6 @@ one item remains and it is a choice, not a gap.
   deadline bounds time but nothing bounds memory.
 - **History.** utop's protocol exposes history navigation and
   `save-history`. Unclear whether an agent client wants any of it.
-- **Packaging.** How this gets installed and registered with an MCP client,
-  and whether it is worth publishing to opam.
+- **Publishing.** Installing and client registration are done. What remains
+  is whether this is worth releasing to opam, and what a version-1 promise
+  about the tool surface would be.

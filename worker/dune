@@ -1,5 +1,8 @@
 ; utop has no native archive (archive(native) = ""), so the worker is bytecode.
+; It is installed as its own binary because the server spawns it by name; see
+; lib/session.ml for how it is found.
 (executable
  (name main)
+ (public_name utop-mcp-worker)
  (modes byte_complete)
  (libraries utop wire unix))
