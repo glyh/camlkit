@@ -34,8 +34,15 @@ let apply t event =
 
 let spawn name =
   let exe = worker_path () in
-  let to_worker_r, to_worker_w = Unix.pipe ~cloexec:false () in
-  let from_worker_r, from_worker_w = Unix.pipe ~cloexec:false () in
+  (* cloexec, emphatically. create_process dup2s the three descriptors it is
+     given onto 0, 1 and 2 in the child, and dup2 clears the flag on the copy,
+     so the worker still gets its pipes. Without cloexec it would also inherit
+     the *other* ends: the write end of its own input pipe and the read end of
+     its output pipe. It would then never see EOF when the server died, and
+     neither would anyone reading its output. That leaves workers spinning
+     forever after the server is gone. *)
+  let to_worker_r, to_worker_w = Unix.pipe ~cloexec:true () in
+  let from_worker_r, from_worker_w = Unix.pipe ~cloexec:true () in
   (* We choose the capture path rather than being told it, so the server can
      read partial output even from a worker that never answers. *)
   let capture_path = Filename.temp_file "utop-mcp-" ".out" in

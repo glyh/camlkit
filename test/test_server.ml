@@ -1,0 +1,149 @@
+(* Drives the server binary the way an MCP client does: newline-delimited
+   JSON-RPC on stdin and stdout, with a real worker behind it. This is the
+   only cover the select loop has. *)
+
+let server_path = "../bin/main.exe"
+let worker_path = "../worker/main.bc.exe"
+
+type client = { ic : in_channel; oc : out_channel; pid : int }
+
+let start () =
+  Unix.putenv "UTOP_MCP_WORKER" worker_path;
+  (* cloexec: OCaml defaults it to false, so without this the server, and then
+     its workers, inherit the ends we keep. *)
+  let in_r, in_w = Unix.pipe ~cloexec:true () in
+  let out_r, out_w = Unix.pipe ~cloexec:true () in
+  let devnull = Unix.openfile "/dev/null" [ Unix.O_WRONLY ] 0 in
+  let pid = Unix.create_process server_path [| server_path |] in_r out_w devnull in
+  Unix.close in_r; Unix.close out_w; Unix.close devnull;
+  { ic = Unix.in_channel_of_descr out_r; oc = Unix.out_channel_of_descr in_w; pid }
+
+(* SIGTERM, not SIGKILL: the server cleans up its workers on the way out, and
+   SIGKILL would skip that and strand any worker mid-phrase. *)
+let stop c =
+  close_out_noerr c.oc;
+  (try Unix.kill c.pid Sys.sigterm with Unix.Unix_error _ -> ());
+  let rec wait n =
+    match Unix.waitpid [ Unix.WNOHANG ] c.pid with
+    | 0, _ when n > 0 -> Unix.sleepf 0.05; wait (n - 1)
+    | 0, _ ->
+      (try Unix.kill c.pid Sys.sigkill with Unix.Unix_error _ -> ());
+      (try ignore (Unix.waitpid [] c.pid) with Unix.Unix_error _ -> ())
+    | _ -> ()
+    | exception Unix.Unix_error _ -> ()
+  in
+  wait 40;
+  close_in_noerr c.ic
+
+let rpc c ~id ~meth ~params =
+  let request =
+    `Assoc [ "jsonrpc", `String "2.0"; "id", `Int id;
+             "method", `String meth; "params", params ] in
+  output_string c.oc (Yojson.Safe.to_string request); output_char c.oc '\n';
+  flush c.oc;
+  Yojson.Safe.from_string (input_line c.ic)
+
+let result j = Yojson.Safe.Util.member "result" j
+
+let call c ~id ~tool ~args =
+  result (rpc c ~id ~meth:"tools/call"
+            ~params:(`Assoc [ "name", `String tool; "arguments", args ]))
+
+let text r =
+  match Yojson.Safe.Util.member "content" r with
+  | `List (c :: _) -> Yojson.Safe.Util.(member "text" c |> to_string)
+  | _ -> ""
+
+let is_error r =
+  match Yojson.Safe.Util.member "isError" r with `Bool b -> b | _ -> false
+
+let status r =
+  Yojson.Safe.Util.(member "structuredContent" r |> member "status" |> to_string)
+
+let has needle hay =
+  let re = Str.regexp_string needle in
+  try ignore (Str.search_forward re hay 0); true with Not_found -> false
+
+let with_server f = let c = start () in Fun.protect ~finally:(fun () -> stop c) (fun () -> f c)
+
+let test_handshake () =
+  with_server @@ fun c ->
+  let r = result (rpc c ~id:1 ~meth:"initialize" ~params:(`Assoc [])) in
+  Alcotest.(check bool) "initialize is answered, though the spec retired it" true
+    (Yojson.Safe.Util.(member "serverInfo" r) <> `Null);
+  let r = result (rpc c ~id:2 ~meth:"server/discover" ~params:(`Assoc [])) in
+  Alcotest.(check bool) "and so is server/discover" true
+    (Yojson.Safe.Util.(member "serverInfo" r) <> `Null)
+
+let test_tools_listed () =
+  with_server @@ fun c ->
+  let r = result (rpc c ~id:1 ~meth:"tools/list" ~params:(`Assoc [])) in
+  let names =
+    Yojson.Safe.Util.(member "tools" r |> to_list
+                      |> List.map (fun t -> member "name" t |> to_string)) in
+  Alcotest.(check (slist string compare)) "the three tools"
+    [ "describe"; "eval"; "require" ] names
+
+let test_eval_through_the_loop () =
+  with_server @@ fun c ->
+  let args code = `Assoc [ "session", `String "s"; "code", `String code ] in
+  let r = call c ~id:1 ~tool:"eval" ~args:(args "let x = 6 * 7;;") in
+  Alcotest.(check bool) "a binding renders" true (has "val x : int = 42" (text r));
+  Alcotest.(check bool) "and is not an error" false (is_error r);
+  let r = call c ~id:2 ~tool:"eval" ~args:(args "x + 1;;") in
+  Alcotest.(check bool) "state persists across calls" true (has "43" (text r))
+
+(* A failed phrase is a successful call: isError means the server failed at its
+   own job, not that the code was wrong. *)
+let test_type_error_is_not_is_error () =
+  with_server @@ fun c ->
+  let r = call c ~id:1 ~tool:"eval"
+      ~args:(`Assoc [ "session", `String "s"; "code", `String "1 + true;;" ]) in
+  Alcotest.(check bool) "not flagged as a tool error" false (is_error r);
+  Alcotest.(check string) "but reported as failed" "failed" (status r);
+  Alcotest.(check bool) "and says nothing ran" true (has "Nothing was executed" (text r))
+
+let test_unknown_tool_is_is_error () =
+  with_server @@ fun c ->
+  let r = call c ~id:1 ~tool:"nope" ~args:(`Assoc [ "session", `String "s" ]) in
+  Alcotest.(check bool) "an unusable call is a tool error" true (is_error r)
+
+let test_sessions_are_independent () =
+  with_server @@ fun c ->
+  let args s code = `Assoc [ "session", `String s; "code", `String code ] in
+  ignore (call c ~id:1 ~tool:"eval" ~args:(args "one" "let secret = 1;;"));
+  let r = call c ~id:2 ~tool:"eval" ~args:(args "two" "secret;;") in
+  Alcotest.(check string) "another session cannot see it" "failed" (status r)
+
+(* The loop must keep serving while a session is wedged, which is the whole
+   reason it selects rather than blocking. *)
+let test_a_stuck_session_does_not_block_the_server () =
+  with_server @@ fun c ->
+  let spin = `Assoc [ "session", `String "busy";
+                      "code", `String "let rec s n = s (n + 1) in s 0;;" ] in
+  let request =
+    `Assoc [ "jsonrpc", `String "2.0"; "id", `Int 1; "method", `String "tools/call";
+             "params", `Assoc [ "name", `String "eval"; "arguments", spin ] ] in
+  output_string c.oc (Yojson.Safe.to_string request); output_char c.oc '\n';
+  flush c.oc;
+  (* no reply is coming for a while; another session must still work *)
+  let r = call c ~id:2 ~tool:"eval"
+      ~args:(`Assoc [ "session", `String "free"; "code", `String "1 + 1;;" ]) in
+  Alcotest.(check bool) "a second session is served while the first spins" true
+    (has "2" (text r))
+
+let () =
+  Alcotest.run "utop-mcp-server"
+    [ ("mcp",
+       [ Alcotest.test_case "both handshakes" `Slow test_handshake;
+         Alcotest.test_case "tools listed" `Slow test_tools_listed ]);
+      ("tools",
+       [ Alcotest.test_case "eval through the loop" `Slow test_eval_through_the_loop;
+         Alcotest.test_case "type error is not isError" `Slow
+           test_type_error_is_not_is_error;
+         Alcotest.test_case "unknown tool is isError" `Slow
+           test_unknown_tool_is_is_error;
+         Alcotest.test_case "sessions are independent" `Slow
+           test_sessions_are_independent;
+         Alcotest.test_case "a stuck session does not block the server" `Slow
+           test_a_stuck_session_does_not_block_the_server ]) ]

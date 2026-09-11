@@ -71,6 +71,12 @@ must evaluate it first. Tests are Alcotest.
 - [Interrupting a runaway phrase in the worker](tickets/016-worker-interrupt.md)
   — `Sys.Break` is swallowed by `execute_phrase`, so interrupts are detected
   by a flag set in the signal handler; toplevel state survives intact.
+- [Session driver: the select loop](tickets/003-session-driver.md) — the loop,
+  plus two process-lifetime bugs it exposed: pipes must be `cloexec`, and a
+  worker mid-phrase needs a signal rather than a closed pipe.
+- [What an eval returns to the agent](tickets/004-eval-result-contract.md) —
+  `lib/render.ml`, pure; per-phrase rendering, warnings, output and spans;
+  `isError` only for the server failing at its own job.
 - [Trust boundary](tickets/012-trust-boundary.md) — trusted local developer
   tool, deliberately not sandboxed; stdio implies a local parent and that
   assumption is load-bearing.

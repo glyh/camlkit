@@ -54,17 +54,30 @@ let bind_expressions start phrases =
   let rewritten = List.map rewrite phrases in
   (rewritten, !n)
 
-let message_of_exn exn = UTop.get_message Errors.report_error exn
+let message_of_exn exn = Location.reset (); UTop.get_message Errors.report_error exn
 
-(* Both forms are already there, so both are reported: byte offsets for exact
-   slicing, line ranges for anything that reads like a compiler message. *)
-let locate_exn exn =
+(* One call, not two. get_ocaml_error_message recovers the location by
+   Scanf-ing its own rendering of the error, and OCaml's reporter inserts a
+   separating newline before every report after the first. So rendering the
+   message beforehand shifts the text and the scan silently falls back to
+   (0, 0). Taking the message from here as well avoids that, and it arrives
+   with the location prefix already stripped.
+
+   Both location forms are reported: byte offsets into the submitted source
+   for exact slicing, line ranges for anything that reads like a compiler
+   message. *)
+let describe_exn exn =
+  (* Location keeps a counter of lines already reported and emits a separator
+     before every later report, which shifts the text the scan depends on.
+     That state outlives a request, so reset it per error, not per session. *)
+  Location.reset ();
   match UTop.get_ocaml_error_message exn with
-  | loc, _, lines ->
-    ([ loc ], match lines with
-      | Some { UTop.start; stop } -> [ (start, stop) ]
-      | None -> [])
-  | exception _ -> ([], [])
+  | (start, stop), message, lines ->
+    (message, [ (start, stop) ],
+     match lines with
+     | Some { UTop.start; stop } -> [ (start, stop) ]
+     | None -> [])
+  | exception _ -> (Printexc.to_string exn, [], [])
 
 let parse src =
   match !UTop.parse_use_file src false with
@@ -100,8 +113,7 @@ let typecheck_all phrases =
       (match Typemod.type_toplevel_phrase !Toploop.toplevel_env str with
        | (_, _, _, _, env) -> Toploop.toplevel_env := env; go (i + 1) rest
        | exception exn ->
-         let message = message_of_exn exn in
-         let spans, lines = locate_exn exn in
+         let message, spans, lines = describe_exn exn in
          restore ();
          Error Msg.{ phase = Typecheck; phrase_index = i; message; spans; lines })
   in

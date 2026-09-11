@@ -268,6 +268,30 @@ let test_hermetic () =
        | Msg.Failed _ -> ()
        | _ -> Alcotest.fail "the user's init.ml leaked into a session")
 
+(* get_ocaml_error_message recovers locations by scanning its own rendering,
+   and Location keeps cross-request state that shifts that text. Both halves
+   regressed once, so both are pinned: the first error, and a later one in the
+   same session. *)
+let test_error_locations () =
+  with_worker @@ fun s ->
+  let fail_of r = match r with
+    | Msg.Failed f -> f
+    | _ -> Alcotest.fail "expected a typecheck failure" in
+  let r, _ = ask s (Msg.Eval "let a = 1;; a + true;;") in
+  let f = fail_of r in
+  Alcotest.(check (list (pair int int))) "byte offsets point at the bad token"
+    [ (16, 20) ] f.Msg.spans;
+  Alcotest.(check (list (pair int int))) "and the line range is there"
+    [ (1, 1) ] f.Msg.lines;
+  Alcotest.(check bool) "the message has no location prefix, since it is structured"
+    false (has_substring "characters" f.Msg.message);
+  (* the regression: a second error in the same worker *)
+  let r, _ = ask s (Msg.Eval "nonexistent_value;;") in
+  let g = fail_of r in
+  Alcotest.(check (list (pair int int))) "a later error still locates correctly"
+    [ (0, 17) ] g.Msg.spans;
+  Alcotest.(check (list (pair int int))) "later line ranges too" [ (1, 1) ] g.Msg.lines
+
 (* The capture file exists so output can be recovered from a phrase that had
    to be interrupted. Worth proving, since OCaml buffers stdout and a hung
    phrase never reaches a flush of its own. *)
@@ -324,5 +348,6 @@ let () =
          Alcotest.test_case "implicit bindings" `Slow test_implicit_bindings;
          Alcotest.test_case "require" `Slow test_require;
          Alcotest.test_case "hermetic" `Slow test_hermetic;
+         Alcotest.test_case "error locations" `Slow test_error_locations;
          Alcotest.test_case "partial output recovered on interrupt" `Slow
            test_partial_output_recovered_on_interrupt ]) ]

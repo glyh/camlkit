@@ -1,7 +1,7 @@
-; One tier: integration tests spawn a real worker. utop is a hard dependency
-; anyway, and the behaviours that matter here are timing and signal ones that
-; a recorded transcript cannot express.
-(test
- (name test_utop_mcp)
+; One tier: integration tests spawn a real worker, and the server suite drives
+; the real server binary. utop is a hard dependency anyway, and the behaviours
+; that matter are timing and signal ones a recorded transcript cannot express.
+(tests
+ (names test_utop_mcp test_server)
  (libraries utop_mcp wire alcotest unix yojson str)
- (deps %{exe:../worker/main.bc.exe}))
+ (deps %{exe:../worker/main.bc.exe} %{exe:../bin/main.exe}))

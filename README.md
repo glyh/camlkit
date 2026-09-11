@@ -41,9 +41,12 @@ utop ships no native archive; the server is native.
 
 ## Status
 
-Not finished. The worker, the session supervision and the wire protocol are
-implemented and tested, including against a real toplevel. The MCP dispatch
-loop in `bin/main.ml` is not wired up yet, and the binary says so when run.
+Working end to end. `eval`, `describe` and `require` are served over MCP
+stdio against real toplevels, one worker per session. 28 tests, including
+seven that drive the server binary as a client would.
+
+Not yet decided: session lifecycle beyond create-on-first-use, and whether
+`describe` and `require` should declare output schemas. See the map.
 
 ## Design
 
