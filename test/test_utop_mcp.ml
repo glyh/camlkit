@@ -67,7 +67,8 @@ let test_response_roundtrip () =
          (Msg.json_of_response (Msg.response_of_json (Msg.json_of_response r))))
   in
   check (Msg.Completed [ { rendering = "val x : int = 42"; warnings = "";
-                           out_start = 0; out_len = 0; truncated = false } ]);
+                           out_start = 0; out_len = 0; truncated = false;
+                           bindings = [ { bound = "x"; bound_type = "int" } ] } ]);
   check (Msg.Failed { phase = Msg.Typecheck; phrase_index = 1;
                       message = "Error: ..."; spans = [ (4, 8) ];
                       lines = [ (1, 1) ]; done_ = [] });
@@ -80,7 +81,7 @@ let test_response_roundtrip () =
 let test_clamp () =
   let p start len =
     Msg.{ rendering = ""; warnings = ""; out_start = start; out_len = len;
-          truncated = false } in
+          truncated = false; bindings = [] } in
   let ps, any = Msg.clamp ~limit:100 [ p 0 50; p 50 50 ] in
   Alcotest.(check bool) "nothing under the limit is touched" false any;
   Alcotest.(check bool) "spans unchanged" true
@@ -302,10 +303,38 @@ let test_error_locations () =
     [ (0, 17) ] g.Msg.spans;
   Alcotest.(check (list (pair int int))) "later line ranges too" [ (1, 1) ] g.Msg.lines
 
-(* The rendering is a utop transcript and stays one. A structured decomposition
-   was tried and removed: every kind it could report turned out to be derivable
-   from whether the rendering was empty, and the names and types it carried are
-   what the transcript already says. *)
+(* The transcript is still the display half, and the names and types a phrase
+   bound are carried as data beside it. What was removed and stays removed: a
+   kind that could only say "bindings" or "nothing", and a value that
+   duplicated the rendering. *)
+let test_bindings_carry_names_and_types () =
+  with_worker @@ fun s ->
+  let bindings code =
+    let r, _ = ask s (Msg.Eval code) in (List.hd (phrases r)).Msg.bindings in
+  (match bindings "let n = 41;;" with
+   | [ b ] ->
+     Alcotest.(check string) "name" "n" b.Msg.bound;
+     Alcotest.(check string) "type, unparsed" "int" b.Msg.bound_type
+   | _ -> Alcotest.fail "expected one binding");
+  (match bindings "let g x y = x +. y;;" with
+   | [ b ] ->
+     Alcotest.(check string) "a function's type" "float -> float -> float"
+       b.Msg.bound_type
+   | _ -> Alcotest.fail "expected one binding");
+  (match bindings "let a = 1 and b = \"two\";;" with
+   | [ x; y ] ->
+     Alcotest.(check (list string)) "several at once" [ "a"; "b" ]
+       [ x.Msg.bound; y.Msg.bound ]
+   | _ -> Alcotest.fail "expected two bindings");
+  (match bindings "module M : sig val z : int end = struct let z = 1 end;;" with
+   | [ b ] ->
+     Alcotest.(check string) "a module is named" "M" b.Msg.bound;
+     Alcotest.(check bool) "and its signature is the type" true
+       (has_substring "val z : int" b.Msg.bound_type)
+   | _ -> Alcotest.fail "expected one binding");
+  Alcotest.(check (list string)) "a phrase that binds nothing" []
+    (List.map (fun b -> b.Msg.bound) (bindings "let () = print_string \"q\";;"))
+
 let test_rendering_carries_the_transcript () =
   with_worker @@ fun s ->
   let rendering code =
@@ -483,6 +512,8 @@ let () =
          Alcotest.test_case "error locations" `Slow test_error_locations;
          Alcotest.test_case "rendering carries the transcript" `Slow
            test_rendering_carries_the_transcript;
+         Alcotest.test_case "bindings carry names and types" `Slow
+           test_bindings_carry_names_and_types;
          Alcotest.test_case "incomplete input is an error not a crash" `Slow
            test_incomplete_input_is_an_error_not_a_crash;
          Alcotest.test_case "stdlib is fully linked" `Slow

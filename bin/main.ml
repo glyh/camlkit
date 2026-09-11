@@ -89,13 +89,18 @@ let build_query id args =
                   "col", `Int d.Build.col;
                   "message", `String d.Build.message ]
        in
+       (* dune's own words are a field, not only display text. They are the
+          whole answer when a failure has no located diagnostic to parse - a
+          bad target, a dune file error, a missing dependency - and a caller
+          reading only the structured half would otherwise see an empty
+          failure and have nothing to go on. *)
+       let output =
+         let o = result.Build.output in
+         if String.length o <= Wire.Msg.output_limit then o
+         else String.sub o 0 Wire.Msg.output_limit
+       in
        let text =
-         if result.Build.success then "build succeeded"
-         else if result.Build.diagnostics = [] then
-           (* dune failed without a located diagnostic: a dune file error, a
-              missing dependency. Its own words are all there is. *)
-           result.Build.output
-         else result.Build.output
+         if result.Build.success && output = "" then "build succeeded" else output
        in
        reply id
          { Render.content = text;
@@ -103,7 +108,8 @@ let build_query id args =
              `Assoc [ "status",
                       `String (if result.Build.success then "success" else "failure");
                       "diagnostics",
-                      `List (List.map json_of result.Build.diagnostics) ];
+                      `List (List.map json_of result.Build.diagnostics);
+                      "output", `String output ];
            is_error = false })
 
 let is_source_query = function

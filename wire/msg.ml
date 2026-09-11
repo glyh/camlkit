@@ -17,12 +17,21 @@ type request =
    "val x : int = 42"; program output lives in the raw segment at
    [out_start, out_start + out_len). These are different questions and the
    first worker prototype wrongly concatenated them. *)
+(* What a phrase bound, as data. The toplevel prints this as
+   "val f : int -> int = <fun>"; the type is the part a caller most often
+   wants and should not have to parse back out. *)
+type binding = {
+  bound : string;       (* the name, or "" for a bare expression *)
+  bound_type : string;  (* its type, or the whole declaration for a type or module *)
+}
+
 type phrase = {
   rendering : string;
   warnings : string;
   out_start : int;
   out_len : int;
   truncated : bool;   (* this phrase printed more than the cap allowed *)
+  bindings : binding list;  (* what it bound, with types *)
 }
 
 type phase = Parse | Typecheck | Execute
@@ -102,10 +111,19 @@ let clamp ~limit phrases =
   let clamped = List.map clamp_one phrases in
   (clamped, !any)
 
-let json_of_phrase { rendering; warnings; out_start; out_len; truncated } =
+let json_of_binding { bound; bound_type } =
+  `Assoc [ "name", `String bound; "type", `String bound_type ]
+
+let binding_of_json j =
+  let open Yojson.Safe.Util in
+  { bound = member "name" j |> to_string;
+    bound_type = member "type" j |> to_string }
+
+let json_of_phrase { rendering; warnings; out_start; out_len; truncated; bindings } =
   `Assoc [ "rendering", `String rendering; "warnings", `String warnings;
            "out_start", `Int out_start; "out_len", `Int out_len;
-           "truncated", `Bool truncated ]
+           "truncated", `Bool truncated;
+           "bindings", `List (List.map json_of_binding bindings) ]
 
 let phrase_of_json j =
   let open Yojson.Safe.Util in
@@ -113,7 +131,10 @@ let phrase_of_json j =
     warnings = member "warnings" j |> to_string;
     out_start = member "out_start" j |> to_int;
     out_len = member "out_len" j |> to_int;
-    truncated = member "truncated" j |> to_bool }
+    truncated = member "truncated" j |> to_bool;
+    bindings = (match member "bindings" j with
+        | `List bs -> List.map binding_of_json bs
+        | _ -> []) }
 
 let json_of_response = function
   | Completed ps ->

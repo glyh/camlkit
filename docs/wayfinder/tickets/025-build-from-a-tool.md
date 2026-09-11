@@ -98,3 +98,16 @@ What was removed with the RPC route: `lib/fiber.ml`, `lib/chan.ml`,
 dependencies. The threaded fiber is the piece worth remembering: it is the
 only known way to drive dune's client functor without an event loop, and it
 worked.
+
+## Amendment: dune's own words are a field
+
+Reported from a session: a bad target returned `{"status":"failure",
+"diagnostics":[]}` and nothing else, leaving nothing to act on. dune had said
+`Error: Don't know how to build lib/nonexistent`, and that text was in the
+result's display half but not in its structured half, which is where a caller
+looks. The tool description promised it "alongside the diagnostics", so the
+description was right and the field was missing.
+
+`output` now carries everything dune said, capped like other output. It is
+the whole answer whenever a failure has no located diagnostic to parse: a bad
+target, a dune file error, a missing dependency.

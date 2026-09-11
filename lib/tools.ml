@@ -16,6 +16,10 @@ let obj ?(required = []) props =
 let phrase_schema =
   `Assoc [ "type", `String "object";
            "properties", `Assoc [
+             "bindings", `Assoc [ "type", `String "array";
+               "description", `String "What the phrase bound, one entry per \
+                 name, each with its name and type. A module's type is its \
+                 signature. Empty for a phrase that bound nothing." ];
              "rendering", `Assoc [ "type", `String "string";
                "description", `String "What the toplevel printed about the \
                  phrase, verbatim: bindings with their types and values, as a \
@@ -240,7 +244,13 @@ let build_tool =
                                      ("file", `Assoc [ "type", `String "string" ]);
                                      ("line", `Assoc [ "type", `String "integer" ]);
                                      ("col", `Assoc [ "type", `String "integer" ]);
-                                     ("message", `Assoc [ "type", `String "string" ]) ] ]) ] ]
+                                     ("message", `Assoc [ "type", `String "string" ]) ] ]);
+        ("output", `Assoc [ "type", `String "string";
+                            "description", `String "Everything dune said, \
+                              verbatim. This is the whole answer when a \
+                              failure has no located diagnostic: a bad \
+                              target, a dune file error, a missing \
+                              dependency." ]) ] ]
 
 let all =
   [ eval_tool; describe_tool; require_tool; load_tool; reset_tool; build_tool;

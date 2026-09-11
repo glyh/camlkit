@@ -612,6 +612,26 @@ let test_build_reports_errors_with_positions () =
        file and the position is a field, so that is stripped *)
     Alcotest.(check bool) "without dune's source echo" false (has "^^^" message)
 
+(* A failure with nothing to parse - a bad target, a dune file error - must
+   still say what happened. Reported from a session that saw an empty failure
+   and had nothing to go on. *)
+let test_build_failure_without_diagnostics_still_explains () =
+  with_server @@ fun c ->
+  with_project @@ fun dir write ->
+  write "prog.ml" "let () = print_endline \"fine\"\n";
+  let r = call c ~id:1 ~tool:"build"
+      ~args:(`Assoc [ "path", `String dir;
+                      "targets", `List [ `String "no/such/target" ] ]) in
+  Alcotest.(check string) "it failed" "failure" (status r);
+  let sc = Yojson.Safe.Util.member "structuredContent" r in
+  Alcotest.(check bool) "with no diagnostic to parse" true
+    Yojson.Safe.Util.(member "diagnostics" sc |> to_list = []);
+  let output = Yojson.Safe.Util.(member "output" sc |> to_string) in
+  Alcotest.(check bool) "but dune's own words are a field" true
+    (has "Don't know how to build" output);
+  Alcotest.(check bool) "and in the text too" true
+    (has "Don't know how to build" (text r))
+
 let test_build_on_something_that_is_not_a_project () =
   with_server @@ fun c ->
   let r = call c ~id:1 ~tool:"build" ~args:(`Assoc [ "path", `String "/tmp" ]) in
@@ -667,7 +687,9 @@ let () =
          Alcotest.test_case "errors with positions" `Slow
            test_build_reports_errors_with_positions;
          Alcotest.test_case "not a dune project" `Slow
-           test_build_on_something_that_is_not_a_project ]);
+           test_build_on_something_that_is_not_a_project;
+         Alcotest.test_case "a failure with nothing to parse still explains" `Slow
+           test_build_failure_without_diagnostics_still_explains ]);
       ("lifetime",
        [ Alcotest.test_case "a killed server takes its workers with it" `Slow
            test_a_killed_server_takes_its_workers_with_it ]);

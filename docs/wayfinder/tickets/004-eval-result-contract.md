@@ -138,3 +138,24 @@ reading the prose, and the fields where the answer was no all remain
 structural: `phase`, `spans`, `lines`, which phrases ran before a failure,
 `truncated`, and the `loaded`/`failed` arrays. What is gone is structure that
 restated readable text.
+
+## Amendment: names and types come back
+
+Removing the whole decomposition went too far. The reasoning held for two of
+its four parts and was extended to the other two without evidence.
+
+What was genuinely degenerate stays gone. The `kind` could only ever report
+`bindings` or `nothing`, which is just whether the rendering is empty, and the
+`value` duplicated the rendering exactly - a forty-element list appeared twice
+in full.
+
+What came back is `bindings`: one entry per name bound, with its name and its
+type, a module's type being its signature. Reported from a session using this
+on a real project: reading a type otherwise means parsing the printed line
+again, which is the one thing the transcript does make you do. The cost is
+small and inverts for anything substantial - 27 bytes against a rendering of
+18 for a simple binding, about 40 against 179 for a forty-element list.
+
+The general lesson, worth more than the field: "this restates readable text"
+was true of the value and false of the type, and both were dropped on one
+argument.

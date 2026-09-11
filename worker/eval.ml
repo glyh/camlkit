@@ -30,6 +30,7 @@ let init () =
   Topfind.don't_load_deeply [ "compiler-libs.toplevel" ];
   (* utop sets this in common_init; it names the buffer in compiler messages. *)
   Location.input_name := Toplevel.input_name;
+  Outcome.install ();
   Printers.prime ();
   install_handler ()
 
@@ -135,7 +136,7 @@ let execute_all cap phrases =
       let record = Msg.{ rendering = Buffer.contents buf;
                          warnings = Buffer.contents wbuf;
                          out_start = !pos; out_len = stop - !pos;
-                         truncated = false } in
+                         truncated = false; bindings = Outcome.take () } in
       pos := stop;
       acc := record :: !acc;
       if !interrupted then
@@ -188,7 +189,8 @@ let require_packages packages =
 
 let ok_result cap rendering =
   Msg.Completed [ { rendering; warnings = ""; out_start = 0;
-                    out_len = Capture.mark cap; truncated = false } ]
+                    out_len = Capture.mark cap; truncated = false;
+                    bindings = [] } ]
 
 let fail_result message =
   Msg.Failed { phase = Msg.Execute; phrase_index = 0; message;
