@@ -56,16 +56,21 @@ let bind_expressions start phrases =
 
 let message_of_exn exn = UTop.get_message Errors.report_error exn
 
-let spans_of_exn exn =
+(* Both forms are already there, so both are reported: byte offsets for exact
+   slicing, line ranges for anything that reads like a compiler message. *)
+let locate_exn exn =
   match UTop.get_ocaml_error_message exn with
-  | loc, _, _ -> [ loc ]
-  | exception _ -> []
+  | loc, _, lines ->
+    ([ loc ], match lines with
+      | Some { UTop.start; stop } -> [ (start, stop) ]
+      | None -> [])
+  | exception _ -> ([], [])
 
 let parse src =
   match !UTop.parse_use_file src false with
   | UTop.Value phrases -> Ok phrases
   | UTop.Error (spans, message) ->
-    Error Msg.{ phase = Parse; phrase_index = -1; message; spans }
+    Error Msg.{ phase = Parse; phrase_index = -1; message; spans; lines = [] }
 
 (* Directives are not typeable, so skipping them in the typing pass falsely
    rejects valid code: "#require \"yojson\";; Yojson.Safe.from_string ..."
@@ -95,9 +100,10 @@ let typecheck_all phrases =
       (match Typemod.type_toplevel_phrase !Toploop.toplevel_env str with
        | (_, _, _, _, env) -> Toploop.toplevel_env := env; go (i + 1) rest
        | exception exn ->
-         let message = message_of_exn exn and spans = spans_of_exn exn in
+         let message = message_of_exn exn in
+         let spans, lines = locate_exn exn in
          restore ();
-         Error Msg.{ phase = Typecheck; phrase_index = i; message; spans })
+         Error Msg.{ phase = Typecheck; phrase_index = i; message; spans; lines })
   in
   go 0 phrases
 
@@ -124,7 +130,8 @@ let execute_all cap phrases =
       let stop = Capture.mark cap in
       let record = Msg.{ rendering = Buffer.contents buf;
                          warnings = Buffer.contents wbuf;
-                         out_start = !pos; out_len = stop - !pos } in
+                         out_start = !pos; out_len = stop - !pos;
+                         truncated = false } in
       pos := stop;
       acc := record :: !acc;
       if !interrupted then
@@ -132,7 +139,7 @@ let execute_all cap phrases =
       else if ok then go (i + 1) rest
       else
         Msg.Failed { phase = Execute; phrase_index = i;
-                     message = record.Msg.rendering; spans = [] }
+                     message = record.Msg.rendering; spans = []; lines = [] }
   in
   go 0 phrases
 
@@ -187,6 +194,8 @@ let require cap packages =
   with
   | Ok () ->
     Msg.Completed [ { rendering = ""; warnings = "";
-                      out_start = 0; out_len = Capture.mark cap } ]
+                      out_start = 0; out_len = Capture.mark cap;
+                      truncated = false } ]
   | Error message ->
-    Msg.Failed { phase = Msg.Execute; phrase_index = 0; message; spans = [] }
+    Msg.Failed { phase = Msg.Execute; phrase_index = 0; message;
+                 spans = []; lines = [] }

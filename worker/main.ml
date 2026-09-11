@@ -34,8 +34,21 @@ let () =
         | Msg.Describe path -> Eval.describe cap path
         | Msg.Require packages -> Eval.require cap packages
       in
-      Frame_io.write oc
-        { Frame.meta = Msg.json_of_response response; payload = Capture.contents cap };
+      (* Cap the payload: a phrase can print without bound, and an MCP result
+         is a single payload with no streaming. Spans are clamped to match, so
+         an agent never reads past the end of what it was sent. *)
+      let payload = Capture.contents cap in
+      let payload, response =
+        if String.length payload <= Msg.output_limit then (payload, response)
+        else
+          let cut = String.sub payload 0 Msg.output_limit in
+          let clamp ps = fst (Msg.clamp ~limit:Msg.output_limit ps) in
+          (cut, match response with
+            | Msg.Completed ps -> Msg.Completed (clamp ps)
+            | Msg.Interrupted r -> Msg.Interrupted { r with done_ = clamp r.done_ }
+            | other -> other)
+      in
+      Frame_io.write oc { Frame.meta = Msg.json_of_response response; payload };
       loop ()
   in
   loop ()

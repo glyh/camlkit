@@ -67,10 +67,33 @@ let test_response_roundtrip () =
          (Msg.json_of_response (Msg.response_of_json (Msg.json_of_response r))))
   in
   check (Msg.Completed [ { rendering = "val x : int = 42"; warnings = "";
-                           out_start = 0; out_len = 0 } ]);
+                           out_start = 0; out_len = 0; truncated = false } ]);
   check (Msg.Failed { phase = Msg.Typecheck; phrase_index = 1;
-                      message = "Error: ..."; spans = [ (4, 8) ] });
+                      message = "Error: ..."; spans = [ (4, 8) ];
+                      lines = [ (1, 1) ] });
   check (Msg.Rejected "directives not accepted")
+
+(* Output is capped because an MCP result is one payload with no streaming.
+   Clamping is pure, so this needs no toplevel. *)
+let test_clamp () =
+  let p start len =
+    Msg.{ rendering = ""; warnings = ""; out_start = start; out_len = len;
+          truncated = false } in
+  let ps, any = Msg.clamp ~limit:100 [ p 0 50; p 50 50 ] in
+  Alcotest.(check bool) "nothing under the limit is touched" false any;
+  Alcotest.(check bool) "spans unchanged" true
+    (List.for_all (fun q -> not q.Msg.truncated) ps);
+  let ps, any = Msg.clamp ~limit:100 [ p 0 50; p 50 80; p 130 20 ] in
+  Alcotest.(check bool) "crossing the limit is reported" true any;
+  match ps with
+  | [ a; b; c ] ->
+    Alcotest.(check bool) "the phrase below the limit is intact" false a.Msg.truncated;
+    Alcotest.(check int) "the straddling phrase is cut at the limit" 50 b.Msg.out_len;
+    Alcotest.(check bool) "and marked" true b.Msg.truncated;
+    Alcotest.(check int) "one entirely past the limit reads nothing" 0 c.Msg.out_len;
+    Alcotest.(check bool) "no span reaches past the payload" true
+      (List.for_all (fun q -> q.Msg.out_start + q.Msg.out_len <= 100) ps)
+  | _ -> Alcotest.fail "expected three records"
 
 (* --- supervision: pure, so no processes and no waiting ----------------- *)
 
@@ -282,6 +305,7 @@ let () =
       ("msg",
        [ Alcotest.test_case "request" `Quick test_request_roundtrip;
          Alcotest.test_case "response" `Quick test_response_roundtrip ]);
+      ("output cap", [ Alcotest.test_case "clamp" `Quick test_clamp ]);
       ("supervision",
        [ Alcotest.test_case "escalation" `Quick test_escalation;
          Alcotest.test_case "interrupt answered" `Quick

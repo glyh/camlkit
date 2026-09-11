@@ -16,6 +16,7 @@ type phrase = {
   warnings : string;
   out_start : int;
   out_len : int;
+  truncated : bool;   (* this phrase printed more than the cap allowed *)
 }
 
 type phase = Parse | Typecheck | Execute
@@ -25,6 +26,7 @@ type failure = {
   phrase_index : int;        (* -1 when the whole buffer failed to parse *)
   message : string;
   spans : (int * int) list;  (* byte offsets into the submitted source *)
+  lines : (int * int) list;  (* the same errors as line ranges *)
 }
 
 type response =
@@ -55,27 +57,48 @@ let request_of_json j =
   | "require" -> Require (member "packages" j |> to_list |> List.map to_string)
   | k -> failwith ("unknown request kind: " ^ k)
 
-let json_of_phrase { rendering; warnings; out_start; out_len } =
+(* A phrase can print without bound and an MCP result is a single payload with
+   no streaming, so captured output is capped. Clamping is pure so it can be
+   tested without running a toplevel.
+   ponytail: one fixed limit; make it per-request if anyone needs more. *)
+let output_limit = 4 * 1024 * 1024
+
+let clamp ~limit phrases =
+  let any = ref false in
+  let clamp_one p =
+    if p.out_start >= limit then (any := true;
+      { p with out_start = limit; out_len = 0; truncated = true })
+    else if p.out_start + p.out_len > limit then (any := true;
+      { p with out_len = limit - p.out_start; truncated = true })
+    else p
+  in
+  let clamped = List.map clamp_one phrases in
+  (clamped, !any)
+
+let json_of_phrase { rendering; warnings; out_start; out_len; truncated } =
   `Assoc [ "rendering", `String rendering; "warnings", `String warnings;
-           "out_start", `Int out_start; "out_len", `Int out_len ]
+           "out_start", `Int out_start; "out_len", `Int out_len;
+           "truncated", `Bool truncated ]
 
 let phrase_of_json j =
   let open Yojson.Safe.Util in
   { rendering = member "rendering" j |> to_string;
     warnings = member "warnings" j |> to_string;
     out_start = member "out_start" j |> to_int;
-    out_len = member "out_len" j |> to_int }
+    out_len = member "out_len" j |> to_int;
+    truncated = member "truncated" j |> to_bool }
 
 let json_of_response = function
   | Completed ps ->
     `Assoc [ "status", `String "completed";
              "phrases", `List (List.map json_of_phrase ps) ]
-  | Failed { phase; phrase_index; message; spans } ->
+  | Failed { phase; phrase_index; message; spans; lines } ->
     `Assoc [ "status", `String "failed";
              "phase", `String (string_of_phase phase);
              "phrase_index", `Int phrase_index;
              "message", `String message;
-             "spans", `List (List.map (fun (a, b) -> `List [ `Int a; `Int b ]) spans) ]
+             "spans", `List (List.map (fun (a, b) -> `List [ `Int a; `Int b ]) spans);
+             "lines", `List (List.map (fun (a, b) -> `List [ `Int a; `Int b ]) lines) ]
   | Interrupted { phrase_index; done_ } ->
     `Assoc [ "status", `String "interrupted";
              "phrase_index", `Int phrase_index;
@@ -93,7 +116,11 @@ let response_of_json j =
              spans = member "spans" j |> to_list
                      |> List.map (fun s -> match to_list s with
                          | [ a; b ] -> (to_int a, to_int b)
-                         | _ -> failwith "bad span") }
+                         | _ -> failwith "bad span");
+             lines = member "lines" j |> to_list
+                     |> List.map (fun s -> match to_list s with
+                         | [ a; b ] -> (to_int a, to_int b)
+                         | _ -> failwith "bad line range") }
   | "interrupted" ->
     Interrupted { phrase_index = member "phrase_index" j |> to_int;
                   done_ = member "phrases" j |> to_list |> List.map phrase_of_json }
