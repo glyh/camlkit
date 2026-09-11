@@ -51,6 +51,8 @@ must evaluate it first. Tests are Alcotest.
 
 ## Fog
 
+<!-- note: worker IPC serialization is under benchmark, see the ticket -->
+
 - **Project launch context.** Deferred deliberately. Whether a session can
   be started inside a dune project so its libraries are preloaded. The
   mechanism is known to work: utop's README documents
