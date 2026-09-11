@@ -134,7 +134,10 @@ has to be inferred.
 
 **About values, in a session.** `eval` runs OCaml phrases, `describe` shows a
 signature, `require` loads findlib packages, `load` brings in a dune
-project's own libraries, `reset` empties a session. Sessions are created on
+project's own libraries, `reset` empties a session. A reset takes optional
+`code`, evaluated in the fresh toplevel in the same call, which is how helpers
+go back without a window where the session is empty. Nothing is remembered:
+the next reset empties those too. Sessions are created on
 first use under whatever name you pick, and state persists between calls.
 
 **About source, with no session.** `locate` finds where a name is defined,

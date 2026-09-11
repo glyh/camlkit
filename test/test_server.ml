@@ -227,7 +227,23 @@ let test_reset () =
   Alcotest.(check bool) "and a reset is not reported as a restart" false
     (has "restarted" (text r));
   let r = call c ~id:5 ~tool:"eval" ~args:(args "let keep = 8;;") in
-  Alcotest.(check bool) "the session still works" false (is_error r)
+  Alcotest.(check bool) "the session still works" false (is_error r);
+  (* A reset can carry the preamble that has to stand in the empty toplevel,
+     so nothing reaches the session in between. *)
+  let r = call c ~id:6 ~tool:"reset"
+      ~args:(`Assoc [ "session", `String "s";
+                      "code", `String "let helper x = x * 2;;" ]) in
+  Alcotest.(check string) "the carried code is evaluated" "ok" (status r);
+  Alcotest.(check bool) "and the reset is said out loud" true
+    (has "was reset" (text r));
+  let r = call c ~id:7 ~tool:"eval" ~args:(args "helper 21;;") in
+  Alcotest.(check bool) "the preamble is standing" true (has "42" (text r));
+  Alcotest.(check string) "but the old binding is not" "failed"
+    (status (call c ~id:8 ~tool:"eval" ~args:(args "keep;;")));
+  (* Nothing is remembered: a plain reset empties the preamble too. *)
+  ignore (call c ~id:10 ~tool:"reset" ~args:(`Assoc [ "session", `String "s" ]));
+  Alcotest.(check string) "a session carries no preamble" "failed"
+    (status (call c ~id:11 ~tool:"eval" ~args:(args "helper 1;;")))
 
 (* utop installs printers for values marked [@@ocaml.toplevel_printer]. That
    lives in UTop_main.Autoprinter, which is internal, reached through

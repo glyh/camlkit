@@ -149,6 +149,11 @@ must evaluate it first. Tests are Alcotest.
   the allocator killing the worker. Detected by a flag because execute_phrase
   swallows the exception, and the catch compacts or the next phrase trips on
   the dead one's garbage.
+- [A reset can carry the code that follows it](tickets/031-reset-carries-its-preamble.md)
+  — `reset` takes optional code and evaluates it in the fresh toplevel in the
+  same call, so a preamble goes back atomically. Nothing is stored: a session
+  carrying a preamble would make "empty" conditional and put an init file back
+  under another name.
 - [Trust boundary](tickets/012-trust-boundary.md) — trusted local developer
   tool, deliberately not sandboxed; stdio implies a local parent and that
   assumption is load-bearing.

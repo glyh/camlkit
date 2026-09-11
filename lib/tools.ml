@@ -146,9 +146,18 @@ let reset_tool =
     "description", `String
       "Discard a session and start it clean. Its bindings and loaded packages \
        are gone. Use this to get back to a known state rather than inventing \
-       a new session name, which leaves the old toplevel running.";
-    "inputSchema", obj ~required:[ "session" ] [ session_arg ];
-    "outputSchema", obj [ ("status", `Assoc [ "type", `String "string" ]) ] ]
+       a new session name, which leaves the old toplevel running. Pass code \
+       to evaluate it in the fresh toplevel in the same call, which is how a \
+       preamble of helpers is put back; the result is then an eval's.";
+    "inputSchema", obj ~required:[ "session" ]
+      [ session_arg;
+        ("code", `Assoc [ "type", `String "string";
+                          "description", `String "OCaml source to evaluate in                             the empty toplevel, in this call. Nothing is                             remembered: a session carries no preamble, so the                             next reset empties this too unless it carries the                             code again." ]) ];
+    "outputSchema", obj [ ("status", `Assoc [ "type", `String "string" ]);
+                          ("phrases", `Assoc [ "type", `String "array";
+                                               "items", phrase_schema;
+                                               "description", `String
+                                                 "Present only when the reset                                                   carried code." ]) ] ]
 
 (* Source queries. These take a file and a position rather than a session:
    they ask about code as written, not about values in a toplevel, so they

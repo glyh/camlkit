@@ -313,16 +313,37 @@ let handle_call id params =
           | Ok () -> Hashtbl.replace pending session_name (id, note)
     end else
     if name = "reset" then begin
-      (* Server-side only: no worker round trip, and it clears the restart
-         note too, since the caller asked for the fresh toplevel. *)
+      (* Clears the restart note too, since the caller asked for the fresh
+         toplevel. *)
       discard session_name "reset was requested";
       Hashtbl.remove restarted session_name;
       (* An explicit reset means empty, including what was required. *)
       Hashtbl.remove required session_name;
-      reply id { Render.content =
-                   Printf.sprintf "Session %S is now empty." session_name;
-                 structured = `Assoc [ "status", `String "reset" ];
-                 is_error = false }
+      match Yojson.Safe.Util.member "code" args with
+      (* Bare reset is server-side only: no worker round trip. *)
+      | `String code when String.trim code <> "" ->
+        (* The preamble rides on the reset rather than following it, so
+           nothing can reach the empty toplevel in between. It is an ordinary
+           eval otherwise, which is why the result is an eval's: the caller
+           needs to see whether its own code typechecked. Nothing is
+           remembered - a session carries no preamble, and the next reset
+           empties this one too. *)
+        (match session_for session_name with
+         | Error e -> reply id (Render.infrastructure_failure e)
+         | Ok (s, _) ->
+           let note =
+             Printf.sprintf
+               "Session %S was reset; what follows is the code the reset                 carried, evaluated in the empty toplevel." session_name
+           in
+           (match Session.send s (Msg.Eval { source = code; autorun = None })
+                    ~timeout:eval_timeout with
+            | Error e -> reply id (Render.infrastructure_failure e)
+            | Ok () -> Hashtbl.replace pending session_name (id, Some note)))
+      | _ ->
+        reply id { Render.content =
+                     Printf.sprintf "Session %S is now empty." session_name;
+                   structured = `Assoc [ "status", `String "reset" ];
+                   is_error = false }
     end else
     match request_of_call name args with
     | Error e -> reply id (Render.infrastructure_failure e)
