@@ -115,3 +115,9 @@ removing it loses none; it only costs the reader context and confidence.
 
 A regression covers it, and would still pass once merlin stops emitting them,
 which is the signal that the hack can go.
+
+The dedup interacted with `search_type`'s limit: asking merlin for exactly
+the limit and then dropping a duplicate returned one short, so `limit: 8`
+gave 7. It now over-fetches and trims afterwards, because a limit is the
+number of results the caller gets rather than the number merlin happened to
+emit.

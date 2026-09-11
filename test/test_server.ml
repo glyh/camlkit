@@ -505,6 +505,30 @@ let test_enclosings_are_not_repeated () =
   Alcotest.(check bool) "and there is more than one enclosing" true
     (List.length entries > 1)
 
+(* A limit is the number of results the caller gets. Dedup runs after the
+   query, so asking merlin for exactly the limit and then dropping a duplicate
+   returned one short; it now over-fetches and trims afterwards. *)
+let test_search_type_fills_its_limit () =
+  with_server @@ fun c ->
+  with_source @@ fun path ->
+  let ask n =
+    let r = call c ~id:1 ~tool:"search_type"
+        ~args:(`Assoc [ "file", `String path; "line", `Int 1; "col", `Int 4;
+                        "query", `String "string -> string"; "limit", `Int n ]) in
+    Yojson.Safe.Util.(
+      r |> member "structuredContent" |> member "results" |> to_list)
+  in
+  List.iter
+    (fun n ->
+       let got = ask n in
+       Alcotest.(check int)
+         (Printf.sprintf "a limit of %d returns %d" n n) n (List.length got);
+       let distinct =
+         List.sort_uniq compare (List.map Yojson.Safe.to_string got) in
+       Alcotest.(check int) "and none of them repeat"
+         (List.length got) (List.length distinct))
+    [ 3; 8 ]
+
 let test_source_query_on_a_missing_file () =
   with_server @@ fun c ->
   let r = call c ~id:1 ~tool:"outline"
@@ -552,7 +576,9 @@ let () =
          Alcotest.test_case "uses flags an answer it could not complete" `Slow
            test_uses_says_when_it_cannot_be_project_wide;
          Alcotest.test_case "enclosings are not repeated" `Slow
-           test_enclosings_are_not_repeated ]);
+           test_enclosings_are_not_repeated;
+         Alcotest.test_case "search_type fills its limit" `Slow
+           test_search_type_fills_its_limit ]);
       ("cancellation",
        [ Alcotest.test_case "stops work and stays quiet" `Slow
            test_cancellation_stops_work_and_stays_quiet;

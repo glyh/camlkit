@@ -74,6 +74,11 @@ let is_source_query = function
 
 let source_query id name args =
   let ( let* ) = Result.bind in
+  let requested_limit =
+    match Yojson.Safe.Util.member "limit" args with
+    | `Int n when n > 0 -> Some n
+    | _ -> None
+  in
   let at () =
     let* line = arg_int args "line" in
     let* col = arg_int args "col" in
@@ -109,8 +114,11 @@ let source_query id name args =
     | "search_type" ->
       let* pos = at () in
       let* query = arg_string args "query" in
-      let limit = match Yojson.Safe.Util.member "limit" args with
-        | `Int n -> [ "-limit"; string_of_int n ] | _ -> [] in
+      (* Ask for more than was requested, because duplicates are dropped below
+         and a limit should mean the number of results the caller gets, not
+         the number merlin happened to emit. Trimmed back afterwards. *)
+      let limit = match requested_limit with
+        | Some n -> [ "-limit"; string_of_int (n * 2) ] | None -> [] in
       Merlin.query ~command:"search-by-type"
         ~args:(pos @ [ "-query"; query ] @ limit) ~file
     | other -> Error ("no such source query: " ^ other)
@@ -165,6 +173,13 @@ let source_query id name args =
       | v -> (None, v)
     in
     let value = dedup value in
+    (* Trim only after dedup, so the caller gets the number it asked for. *)
+    let value =
+      match requested_limit, value with
+      | Some n, `List items when List.length items > n ->
+        `List (List.filteri (fun i _ -> i < n) items)
+      | _ -> value
+    in
     let summary =
       match value with
       | `List [] -> "no results"
