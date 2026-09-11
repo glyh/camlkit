@@ -86,12 +86,18 @@ often is not.
 ```sh
 cd /path/to/project
 
-# whichever switch you installed into
+# current switch
 claude mcp add utop "$(opam var bin)/utop-mcp"
-claude mcp add utop "/path/to/project/_opam/bin/utop-mcp"
+
+# a specific switch, wherever opam actually put it
+claude mcp add utop "$(opam var bin --switch /path/to/project)/utop-mcp"
 
 claude mcp list        # expect: utop: ... - ✔ Connected
 ```
+
+Ask opam where the binary is rather than assuming a layout: a global switch
+lives under `~/.opam/<name>/bin` and a local one under `<project>/_opam/bin`,
+and `opam var bin --switch` covers both.
 
 `claude mcp add` defaults to `--scope local`, which registers the server for
 that project only and keeps it private to you. Prefer that over
