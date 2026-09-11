@@ -123,9 +123,12 @@ let rule_for env ty =
       rules
 
 (* Rewrites the bare expressions of a structure whose types call for it, using
-   the typed structure to know what those types are. *)
+   the typed structure to know what those types are. Also reports which rule
+   fired, if any, because the rewrite is otherwise invisible in the result:
+   a run promise renders exactly like the value it produced. *)
 let rewrite env (pstr : Parsetree.structure) (tstr : Typedtree.structure) =
-  if !enabled = [] then pstr else
+  if !enabled = [] then (pstr, None) else
+  let fired = ref None in
   let rewrite_item item titem =
     match item.Parsetree.pstr_desc, titem.Typedtree.str_desc with
     | ( Parsetree.Pstr_eval (e, attrs)
@@ -133,6 +136,7 @@ let rewrite env (pstr : Parsetree.structure) (tstr : Typedtree.structure) =
       (match rule_for env exp_type with
        | None -> item
        | Some rule ->
+         if !fired = None then fired := Some rule.name;
          { item with
            Parsetree.pstr_desc =
              Parsetree.Pstr_eval (rule.wrap item.Parsetree.pstr_loc e, attrs)
@@ -140,5 +144,7 @@ let rewrite env (pstr : Parsetree.structure) (tstr : Typedtree.structure) =
     | _ -> item
   in
   let titems = tstr.Typedtree.str_items in
-  if List.length pstr <> List.length titems then pstr
-  else List.map2 rewrite_item pstr titems
+  if List.length pstr <> List.length titems then (pstr, None)
+  else
+    let rewritten = List.map2 rewrite_item pstr titems in
+    (rewritten, !fired)

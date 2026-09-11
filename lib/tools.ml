@@ -26,7 +26,11 @@ let phrase_schema =
                  utop transcript." ];
              "warnings", `Assoc [ "type", `String "string" ];
              "output", `Assoc [ "type", `String "string";
-               "description", `String "What the phrase printed." ] ] ]
+               "description", `String "What the phrase printed." ];
+             "ran", `Assoc [ "type", `String "string";
+               "description", `String "The autorun rule that rewrote this \
+                 phrase, if one did: the expression was a promise and was run \
+                 rather than returned. Absent when nothing was rewritten." ] ] ]
 
 let eval_tool =
   `Assoc [
@@ -50,12 +54,21 @@ let eval_tool =
              "items", `Assoc [ "type", `String "string" ];
              "description", `String
                "Which promise types a bare expression should run rather than \
-                return, by name: lwt, async. Both by default, which does \
-                nothing in a session that has loaded neither. Pass an empty \
-                list to get the promise itself. Applies to this session from \
-                now on, not just this call." ]) ];
+                return, by name: lwt, async. Applies to this session from now \
+                on, not just this call, and every result reports the list in \
+                force as its autorun field. Three distinct cases: omit the \
+                argument to leave the setting alone; pass [\"lwt\", \"async\"], \
+                the default, to run both, which does nothing in a session \
+                that has loaded neither; pass [] to turn rewriting off and \
+                get the promise itself." ]) ];
     "outputSchema", obj [ ("phrases", `Assoc [ "type", `String "array";
-                                               "items", phrase_schema ]) ] ]
+                                               "items", phrase_schema ]);
+                          ("autorun", `Assoc
+                             [ "type", `String "array";
+                               "items", `Assoc [ "type", `String "string" ];
+                               "description", `String
+                                 "The autorun rules in force for this session \
+                                  after the call." ]) ] ]
 
 let phrase_array =
   `Assoc [ "type", `String "array"; "items", phrase_schema ]

@@ -21,11 +21,12 @@ let slice payload (p : Msg.phrase) =
   else String.sub payload p.out_start (min p.out_len (n - p.out_start))
 
 let json_phrase payload (p : Msg.phrase) =
-  `Assoc [ "bindings", `List (List.map Msg.json_of_binding p.bindings);
-           "rendering", `String p.rendering;
-           "warnings", `String p.warnings;
-           "output", `String (slice payload p);
-           "truncated", `Bool p.truncated ]
+  `Assoc ([ "bindings", `List (List.map Msg.json_of_binding p.bindings);
+            "rendering", `String p.rendering;
+            "warnings", `String p.warnings;
+            "output", `String (slice payload p);
+            "truncated", `Bool p.truncated ]
+          @ (match p.ran with None -> [] | Some r -> [ "ran", `String r ]))
 
 (* A transcript, in the order a terminal would show it: warnings, then what
    the phrase printed, then what the toplevel made of it. *)
@@ -38,7 +39,15 @@ let transcript payload phrases =
       if p.truncated then
         Buffer.add_string buf "\n[output truncated: the phrase printed more \
                                than the limit]\n";
-      if p.rendering <> "" then Buffer.add_string buf (String.trim p.rendering ^ "\n"))
+      if p.rendering <> "" then Buffer.add_string buf (String.trim p.rendering ^ "\n");
+      (* The rewrite is otherwise invisible here: the transcript of a promise
+         that was run looks exactly like one of a plain value. *)
+      match p.ran with
+      | None -> ()
+      | Some rule ->
+        Buffer.add_string buf
+          (Printf.sprintf "[autorun %s: the expression was run, not returned \
+                           as a promise]\n" rule))
     phrases;
   Buffer.contents buf
 
@@ -47,10 +56,15 @@ let spans_json spans =
 
 let of_response (response : Msg.response) payload =
   match response with
-  | Msg.Completed phrases ->
+  | Msg.Completed { phrases; autorun } ->
     { content = (match transcript payload phrases with "" -> "(no output)" | s -> s);
-      structured = `Assoc [ "status", `String "ok";
-                            "phrases", `List (List.map (json_phrase payload) phrases) ];
+      structured =
+        `Assoc ([ "status", `String "ok";
+                  "phrases", `List (List.map (json_phrase payload) phrases) ]
+                @ (match autorun with
+                    | None -> []
+                    | Some names ->
+                      [ "autorun", `List (List.map (fun n -> `String n) names) ]));
       is_error = false }
   | Msg.Failed f ->
     let where =

@@ -74,7 +74,7 @@ let () =
       in
       let response =
         match response with
-        | Msg.Completed ps -> Msg.Completed (clamp ps)
+        | Msg.Completed c -> Msg.Completed { c with phrases = clamp c.phrases }
         | Msg.Interrupted r -> Msg.Interrupted { r with done_ = clamp r.done_ }
         | Msg.Failed f -> Msg.Failed { f with done_ = clamp f.done_ }
         | other -> other

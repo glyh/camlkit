@@ -68,3 +68,33 @@ Async is untested: nothing in reach uses it. The rule mirrors utop's, and the
 runner it calls, `Async.Thread_safe.block_on_async_exn`, starts the scheduler
 around the work rather than waiting on a running deferred, which is why it
 takes a thunk.
+
+## Follow-up: the setting and the rewrite are both reported
+
+From a session exercising this end to end. Three things cost effort that the
+result should have saved:
+
+- The off switch was hard to express. An omitted argument means "leave it
+  alone", a list means "replace it", and `[]` means "off", three meanings
+  over one field, with nothing but the description to tell them apart.
+- Stickiness was invisible. Confirming that a setting had persisted took a
+  second probe expression, because no result said what the setting was.
+- The rewrite was silent. Nothing distinguished a plain value from a promise
+  that had been run for you; only the type hinted at it.
+
+**Both gaps are now fields rather than prose.** Every completed eval carries
+`autorun`, the rule list in force after the call, which also makes the empty
+list observable instead of something to infer. Each phrase carries `ran`, the
+rule that rewrote it, absent when nothing did, and the transcript gains one
+line saying the expression was run rather than returned.
+
+Which rule fired is known only from the first typing pass: by the second, a
+bare expression has become a `let` and nothing matches, so `Autorun.rewrite`
+returns the name alongside the rewritten structure and `eval` carries it
+through `bind_expressions` to the phrase record.
+
+The three input meanings stay as they are. Omission has to mean "leave it
+alone" for a session setting, and the alternative is a second argument for
+turning it off, which is more surface for the same thing. The description now
+names all three cases explicitly instead of mentioning the empty list in
+passing.

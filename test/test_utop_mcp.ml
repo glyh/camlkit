@@ -67,9 +67,17 @@ let test_response_roundtrip () =
       (Yojson.Safe.to_string
          (Msg.json_of_response (Msg.response_of_json (Msg.json_of_response r))))
   in
-  check (Msg.Completed [ { rendering = "val x : int = 42"; warnings = "";
+  check (Msg.Completed
+           { phrases = [ { rendering = "val x : int = 42"; warnings = "";
                            out_start = 0; out_len = 0; truncated = false;
-                           bindings = [ { bound = "x"; bound_type = "int" } ] } ]);
+                           bindings = [ { bound = "x"; bound_type = "int" } ];
+                           ran = None } ];
+             autorun = None });
+  check (Msg.Completed
+           { phrases = [ { rendering = "- : int = 42"; warnings = "";
+                           out_start = 0; out_len = 0; truncated = false;
+                           bindings = []; ran = Some "lwt" } ];
+             autorun = Some [ "lwt"; "async" ] });
   check (Msg.Failed { phase = Msg.Typecheck; phrase_index = 1;
                       message = "Error: ..."; spans = [ (4, 8) ];
                       lines = [ (1, 1) ]; done_ = [] });
@@ -82,7 +90,7 @@ let test_response_roundtrip () =
 let test_clamp () =
   let p start len =
     Msg.{ rendering = ""; warnings = ""; out_start = start; out_len = len;
-          truncated = false; bindings = [] } in
+          truncated = false; bindings = []; ran = None } in
   let ps, any = Msg.clamp ~limit:100 [ p 0 50; p 50 50 ] in
   Alcotest.(check bool) "nothing under the limit is touched" false any;
   Alcotest.(check bool) "spans unchanged" true
@@ -163,7 +171,7 @@ let has_substring needle hay =
   try ignore (Str.search_forward re hay 0); true with Not_found -> false
 
 let phrases = function
-  | Msg.Completed ps -> ps
+  | Msg.Completed { phrases = ps; _ } -> ps
   | Msg.Failed f -> Alcotest.failf "expected success, got failure: %s" f.Msg.message
   | Msg.Rejected r -> Alcotest.failf "expected success, got rejection: %s" r
   | Msg.Interrupted _ -> Alcotest.fail "expected success, got interrupt"
@@ -398,25 +406,52 @@ let test_lwt_expressions_run () =
   Alcotest.(check string) "nothing else changes" "int" (typ "40 + 2;;");
   (* the caller can ask for the promise itself *)
   (match ask s (ev ~autorun:[] "Lwt.return 42;;") with
-   | Msg.Completed [ p ], _ ->
+   | Msg.Completed { phrases = [ p ]; autorun }, _ ->
      Alcotest.(check bool) "an empty list returns the promise" true
-       (has_substring "Lwt.t" p.Msg.rendering)
+       (has_substring "Lwt.t" p.Msg.rendering);
+     Alcotest.(check bool) "and the result says rewriting is off" true
+       (autorun = Some []);
+     Alcotest.(check bool) "with no rule credited for the phrase" true
+       (p.Msg.ran = None)
    | _ -> Alcotest.fail "expected a completed phrase");
   (* naming only async leaves lwt alone *)
   (match ask s (ev ~autorun:[ "async" ] "Lwt.return 42;;") with
-   | Msg.Completed [ p ], _ ->
+   | Msg.Completed { phrases = [ p ]; autorun }, _ ->
      Alcotest.(check bool) "async only does not run lwt" true
-       (has_substring "Lwt.t" p.Msg.rendering)
+       (has_substring "Lwt.t" p.Msg.rendering);
+     Alcotest.(check bool) "and the setting is reported back" true
+       (autorun = Some [ "async" ])
    | _ -> Alcotest.fail "expected a completed phrase");
   (* and turning it back on works *)
   Alcotest.(check string) "re-enabling runs it again" "int"
     (typ ~autorun:[ "lwt" ] "Lwt.return 42;;");
-  (* an unknown rule is refused rather than ignored *)
+  (* a rewritten phrase says which rule rewrote it, and the setting is sticky
+     across calls that do not mention it *)
+  (match ask s (ev "Lwt.return 42;;") with
+   | Msg.Completed { phrases = [ p ]; autorun }, _ ->
+     Alcotest.(check bool) "the phrase credits the rule that ran it" true
+       (p.Msg.ran = Some "lwt");
+     Alcotest.(check bool) "and the setting persisted without being repeated"
+       true (autorun = Some [ "lwt" ])
+   | _ -> Alcotest.fail "expected a completed phrase");
+  (* ordinary code credits nothing *)
+  (match ask s (ev "40 + 2;;") with
+   | Msg.Completed { phrases = [ p ]; _ }, _ ->
+     Alcotest.(check bool) "a plain expression was not rewritten" true
+       (p.Msg.ran = None)
+   | _ -> Alcotest.fail "expected a completed phrase");
+  (* an unknown rule is refused rather than ignored, and leaves the previous
+     setting standing rather than clearing it *)
   (match ask s (ev ~autorun:[ "nonsense" ] "1;;") with
    | Msg.Failed f, _ ->
      Alcotest.(check bool) "and says what it knows" true
        (has_substring "no such autorun rule" f.Msg.message)
-   | _ -> Alcotest.fail "an unknown autorun rule should be refused")
+   | _ -> Alcotest.fail "an unknown autorun rule should be refused");
+  (match ask s (ev "Lwt.return 42;;") with
+   | Msg.Completed { autorun; _ }, _ ->
+     Alcotest.(check bool) "a refused setting leaves the old one intact" true
+       (autorun = Some [ "lwt" ])
+   | _ -> Alcotest.fail "expected a completed phrase")
 
 (* Reported from a session driving a real project: loading its code died with
    "Reference to undefined compilation unit Stdlib__Dynarray" even though the

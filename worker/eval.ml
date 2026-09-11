@@ -100,12 +100,12 @@ let typecheck_all phrases =
   let restore () = Toploop.toplevel_env := env0 in
   let rec go i acc = function
     | [] -> restore (); Ok (List.rev acc)
-    | (Parsetree.Ptop_dir _ as d) :: rest -> go (i + 1) (d :: acc) rest
+    | (Parsetree.Ptop_dir _ as d) :: rest -> go (i + 1) ((d, None) :: acc) rest
     | Parsetree.Ptop_def str :: rest ->
       (match Typemod.type_toplevel_phrase !Toploop.toplevel_env str with
        | (tstr, _, _, _, env) ->
          let env_before = !Toploop.toplevel_env in
-         let str' = Autorun.rewrite env_before str tstr in
+         let str', fired = Autorun.rewrite env_before str tstr in
          (* A rewritten phrase has a different type - unit rather than a
             promise - so it has to be typed again for the environment the next
             phrase sees to be right. *)
@@ -117,7 +117,7 @@ let typecheck_all phrases =
              | exception _ -> env
          in
          Toploop.toplevel_env := env;
-         go (i + 1) (Parsetree.Ptop_def str' :: acc) rest
+         go (i + 1) ((Parsetree.Ptop_def str', fired) :: acc) rest
        | exception exn ->
          let message, spans, lines = Toplevel.describe_exn exn in
          restore ();
@@ -134,8 +134,8 @@ let typecheck_all phrases =
 let execute_all cap phrases =
   let acc = ref [] and pos = ref 0 in
   let rec go i = function
-    | [] -> Msg.Completed (List.rev !acc)
-    | phrase :: rest ->
+    | [] -> Msg.Completed { phrases = List.rev !acc; autorun = None }
+    | (phrase, ran) :: rest ->
       let buf = Buffer.create 256 and wbuf = Buffer.create 64 in
       let ppf = Format.formatter_of_buffer buf in
       let wppf = Format.formatter_of_buffer wbuf in
@@ -154,7 +154,8 @@ let execute_all cap phrases =
       let record = Msg.{ rendering = Buffer.contents buf;
                          warnings = Buffer.contents wbuf;
                          out_start = !pos; out_len = stop - !pos;
-                         truncated = false; bindings = Outcome.take () } in
+                         truncated = false; bindings = Outcome.take ();
+                         ran } in
       pos := stop;
       acc := record :: !acc;
       if !interrupted then
@@ -170,6 +171,14 @@ let execute_all cap phrases =
                      done_ = List.rev (List.tl !acc) }
   in
   go 0 phrases
+
+(* Echo the session's rule list on the way out. A caller that just changed it,
+   or that wants to know whether the change stuck, should not have to evaluate
+   a probe expression to find out. *)
+let with_autorun = function
+  | Msg.Completed { phrases; _ } ->
+    Msg.Completed { phrases; autorun = Some (Autorun.current ()) }
+  | other -> other
 
 let eval cap ?autorun src =
   Capture.reset cap;
@@ -198,11 +207,18 @@ let eval cap ?autorun src =
          "let _N = ...", it is no longer an expression to rewrite. *)
       match typecheck_all phrases with
       | Error f -> Msg.Failed f
-      | Ok phrases ->
-        let phrases, next = bind_expressions !implicit_counter phrases in
+      | Ok typed ->
+        (* Which rule fired is known only from this first pass: by the second
+           a bare expression has become a let, so nothing there matches. *)
+        let fired = List.map snd typed in
+        let phrases, next =
+          bind_expressions !implicit_counter (List.map fst typed) in
         (match typecheck_all phrases with
          | Error f -> Msg.Failed f
-         | Ok phrases -> implicit_counter := next; execute_all cap phrases)
+         | Ok typed ->
+           implicit_counter := next;
+           let phrases = List.combine (List.map fst typed) fired in
+           with_autorun (execute_all cap phrases))
 
 (* Not the #require directive, and not UTop.require: both swallow findlib
    errors into printed text, so a missing package reported as success. Worse,
@@ -220,9 +236,10 @@ let require_packages packages =
   | Failure m -> Error m
 
 let ok_result cap rendering =
-  Msg.Completed [ { rendering; warnings = ""; out_start = 0;
-                    out_len = Capture.mark cap; truncated = false;
-                    bindings = [] } ]
+  Msg.Completed { phrases = [ { rendering; warnings = ""; out_start = 0;
+                                out_len = Capture.mark cap; truncated = false;
+                                bindings = []; ran = None } ];
+                  autorun = None }
 
 let fail_result message =
   Msg.Failed { phase = Msg.Execute; phrase_index = 0; message;
@@ -250,7 +267,7 @@ let directive cap src =
   Capture.reset cap;
   match parse src with
   | Error f -> Msg.Failed f
-  | Ok phrases -> execute_all cap phrases
+  | Ok phrases -> execute_all cap (List.map (fun p -> (p, None)) phrases)
 
 (* Directives print to stdout, not to the formatter passed to execute_phrase,
    so the answer arrives in the captured output with an empty rendering. *)

@@ -117,6 +117,46 @@ let test_eval_through_the_loop () =
   let r = call c ~id:2 ~tool:"eval" ~args:(args "x + 1;;") in
   Alcotest.(check bool) "state persists across calls" true (has "43" (text r))
 
+(* Reported from a session: whether an autorun setting had stuck could only be
+   found out by evaluating a second probe, and a promise that had been run
+   looked exactly like a plain value. Both answers are now in the result. *)
+let test_autorun_is_visible_in_the_result () =
+  with_server @@ fun c ->
+  let open Yojson.Safe.Util in
+  let eval ?autorun code =
+    let args =
+      `Assoc ([ "session", `String "s"; "code", `String code ]
+              @ (match autorun with
+                  | None -> []
+                  | Some names ->
+                    [ "autorun", `List (List.map (fun n -> `String n) names) ]))
+    in
+    call c ~id:1 ~tool:"eval" ~args
+  in
+  let autorun_of r = member "structuredContent" r |> member "autorun" in
+  let r = eval "1;;" in
+  Alcotest.(check bool) "the default setting is reported" true
+    (autorun_of r = `List [ `String "lwt"; `String "async" ]);
+  let r = eval ~autorun:[] "1;;" in
+  Alcotest.(check bool) "and so is an empty one, which omitting cannot say"
+    true (autorun_of r = `List []);
+  let r = eval "1;;" in
+  Alcotest.(check bool) "which persists without being repeated" true
+    (autorun_of r = `List []);
+  (* a rewritten phrase says so, in the structure and in the transcript *)
+  let r = call c ~id:2 ~tool:"require"
+      ~args:(`Assoc [ "session", `String "s";
+                      "packages", `List [ `String "lwt.unix" ] ]) in
+  if status r <> "ok" then Alcotest.fail "lwt.unix is needed for this test";
+  let r = eval ~autorun:[ "lwt" ] "Lwt.return 42;;" in
+  let ran =
+    member "structuredContent" r |> member "phrases" |> to_list |> List.hd
+    |> member "ran" in
+  Alcotest.(check bool) "the phrase names the rule that ran it" true
+    (ran = `String "lwt");
+  Alcotest.(check bool) "and the transcript says the promise was run" true
+    (has "[autorun lwt" (text r))
+
 (* A failed phrase is a successful call: isError means the server failed at its
    own job, not that the code was wrong. *)
 let test_type_error_is_not_is_error () =
@@ -656,7 +696,9 @@ let () =
          Alcotest.test_case "a stuck session does not block the server" `Slow
            test_a_stuck_session_does_not_block_the_server;
          Alcotest.test_case "answers before exiting on eof" `Slow
-           test_answers_before_exiting_on_eof ]);
+           test_answers_before_exiting_on_eof;
+         Alcotest.test_case "autorun is visible in the result" `Slow
+           test_autorun_is_visible_in_the_result ]);
       ("printers",
        [ Alcotest.test_case "automatic toplevel printers" `Slow
            test_automatic_toplevel_printers;

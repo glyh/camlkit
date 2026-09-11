@@ -34,6 +34,10 @@ type phrase = {
   out_len : int;
   truncated : bool;   (* this phrase printed more than the cap allowed *)
   bindings : binding list;  (* what it bound, with types *)
+  (* The autorun rule that rewrote this phrase, if one did. Without it the
+     rewrite is invisible: a run promise and a plain value render the same way,
+     and only the type hints that anything happened. *)
+  ran : string option;
 }
 
 type phase = Parse | Typecheck | Execute
@@ -51,7 +55,10 @@ type failure = {
 }
 
 type response =
-  | Completed of phrase list
+  (* [autorun] is the session's rule list as it now stands, echoed on every
+     eval so a caller can see what the setting is without probing for it. None
+     for the answers that are not an eval. *)
+  | Completed of { phrases : phrase list; autorun : string list option }
   (* Loading is not a phrase result and should not pretend to be one: a caller
      wants the library names as data, not a sentence to parse. *)
   | Loaded of { loaded : string list; failed : (string * string) list }
@@ -131,11 +138,13 @@ let binding_of_json j =
   { bound = member "name" j |> to_string;
     bound_type = member "type" j |> to_string }
 
-let json_of_phrase { rendering; warnings; out_start; out_len; truncated; bindings } =
-  `Assoc [ "rendering", `String rendering; "warnings", `String warnings;
-           "out_start", `Int out_start; "out_len", `Int out_len;
-           "truncated", `Bool truncated;
-           "bindings", `List (List.map json_of_binding bindings) ]
+let json_of_phrase { rendering; warnings; out_start; out_len; truncated;
+                     bindings; ran } =
+  `Assoc ([ "rendering", `String rendering; "warnings", `String warnings;
+            "out_start", `Int out_start; "out_len", `Int out_len;
+            "truncated", `Bool truncated;
+            "bindings", `List (List.map json_of_binding bindings) ]
+          @ (match ran with None -> [] | Some r -> [ "ran", `String r ]))
 
 let phrase_of_json j =
   let open Yojson.Safe.Util in
@@ -146,12 +155,17 @@ let phrase_of_json j =
     truncated = member "truncated" j |> to_bool;
     bindings = (match member "bindings" j with
         | `List bs -> List.map binding_of_json bs
-        | _ -> []) }
+        | _ -> []);
+    ran = (match member "ran" j with `String r -> Some r | _ -> None) }
 
 let json_of_response = function
-  | Completed ps ->
-    `Assoc [ "status", `String "completed";
-             "phrases", `List (List.map json_of_phrase ps) ]
+  | Completed { phrases; autorun } ->
+    `Assoc ([ "status", `String "completed";
+              "phrases", `List (List.map json_of_phrase phrases) ]
+            @ (match autorun with
+                | None -> []
+                | Some names ->
+                  [ "autorun", `List (List.map (fun n -> `String n) names) ]))
   | Failed { phase; phrase_index; message; spans; lines; done_ } ->
     `Assoc [ "status", `String "failed";
              "phase", `String (string_of_phase phase);
@@ -174,7 +188,11 @@ let json_of_response = function
 let response_of_json j =
   let open Yojson.Safe.Util in
   match member "status" j |> to_string with
-  | "completed" -> Completed (member "phrases" j |> to_list |> List.map phrase_of_json)
+  | "completed" ->
+    Completed { phrases = member "phrases" j |> to_list |> List.map phrase_of_json;
+                autorun = (match member "autorun" j with
+                    | `List l -> Some (List.map to_string l)
+                    | _ -> None) }
   | "failed" ->
     Failed { phase = member "phase" j |> to_string |> phase_of_string;
              phrase_index = member "phrase_index" j |> to_int;
