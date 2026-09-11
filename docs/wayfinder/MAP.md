@@ -124,6 +124,10 @@ must evaluate it first. Tests are Alcotest.
 - [Merlin-backed source queries](tickets/027-merlin-source-queries.md) — five
   session-less tools over `ocamlmerlin`, shelled out rather than linked, in
   server mode; answers about source rather than values.
+- [Building the project from a tool](tickets/025-build-from-a-tool.md) — `dune
+  build` shelled out, after five obstacles on the RPC route, the last of which
+  was unexplained; diagnostics are parsed into fields, dune emits no structured
+  form.
 - [Trust boundary](tickets/012-trust-boundary.md) — trusted local developer
   tool, deliberately not sandboxed; stdio implies a local parent and that
   assumption is load-bearing.

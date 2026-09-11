@@ -68,6 +68,44 @@ let arg_int args name =
   | `Null -> Error (Printf.sprintf "missing required argument %S" name)
   | _ -> Error (Printf.sprintf "argument %S must be an integer" name)
 
+(* Building. Shelled out rather than driven over dune's RPC; the reasoning,
+   and what was tried, is in lib/build.ml. *)
+let build_query id args =
+  match arg_string args "path" with
+  | Error e -> reply id (Render.infrastructure_failure e)
+  | Ok path ->
+    let targets =
+      match Yojson.Safe.Util.member "targets" args with
+      | `List l -> List.filter_map (function `String s -> Some s | _ -> None) l
+      | _ -> []
+    in
+    (match Build.build path targets with
+     | Error e -> reply id (Render.infrastructure_failure e)
+     | Ok result ->
+       let json_of (d : Build.diagnostic) =
+         `Assoc [ "severity", `String d.Build.severity;
+                  "file", `String d.Build.file;
+                  "line", `Int d.Build.line;
+                  "col", `Int d.Build.col;
+                  "message", `String d.Build.message ]
+       in
+       let text =
+         if result.Build.success then "build succeeded"
+         else if result.Build.diagnostics = [] then
+           (* dune failed without a located diagnostic: a dune file error, a
+              missing dependency. Its own words are all there is. *)
+           result.Build.output
+         else result.Build.output
+       in
+       reply id
+         { Render.content = text;
+           structured =
+             `Assoc [ "status",
+                      `String (if result.Build.success then "success" else "failure");
+                      "diagnostics",
+                      `List (List.map json_of result.Build.diagnostics) ];
+           is_error = false })
+
 let is_source_query = function
   | "locate" | "type_at" | "outline" | "uses" | "search_type" -> true
   | _ -> false
@@ -253,7 +291,8 @@ let handle_call id params =
     | `String s -> s | _ -> "" in
   let args = match Yojson.Safe.Util.member "arguments" params with
     | `Assoc _ as a -> a | _ -> `Assoc [] in
-  if is_source_query name then source_query id name args else
+  if name = "build" then build_query id args
+  else if is_source_query name then source_query id name args else
   match arg_string args "session" with
   | Error e -> reply id (Render.infrastructure_failure e)
   | Ok session_name ->

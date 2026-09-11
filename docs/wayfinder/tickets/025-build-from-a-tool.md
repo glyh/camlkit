@@ -1,8 +1,8 @@
 ---
-status: open
+status: closed
 type: grilling
 blocked-by: []
-assignee:
+assignee: lyh
 ---
 
 # Building the project from a tool
@@ -52,3 +52,49 @@ Their TODO notes a build needs a timeout, which the existing deadline gives,
 and cancellation matters more here than anywhere else: a build is the longest
 thing this will ever do. See
 [Honour a cancellation notification](023-mcp-cancellation.md).
+
+## Resolution: shelled out, after the RPC route was tried and abandoned
+
+The decision above was to supervise a watching dune and read diagnostics over
+RPC, because RPC carries them as data. That was attempted and abandoned.
+Recording what was learned, because each step looked like the last obstacle:
+
+1. **The `dune rpc` command reports no diagnostics.** `dune rpc build` answers
+   `Success` or `Failure` and nothing else, which is less than a plain build
+   gives. This is a limitation of the command, not the protocol.
+2. **The one published hand-rolled client does not work against dune 3.24.**
+   ocaml-platform-sdk sends a one-shot `(version 1.0)`; the real sequence is
+   `initialize` followed by a `version_menu` negotiation. Its last commit is
+   2025-07-22.
+3. **dune's client functor deadlocks under an identity monad.** `connect_raw`
+   contains `let handler = Fiber.Ivar.read handler_var in`, which with
+   `'a t = 'a` blocks immediately, before any thread exists to fill the ivar.
+   A fiber must be a deferred computation. With `'a t = unit -> 'a` over
+   threads, the handshake completes and diagnostics come back correctly - this
+   was demonstrated working.
+4. **The public API has no build request.** It offers ping, diagnostics,
+   flush_file_watcher, format_dune_file, promote and build_dir. `dune rpc
+   build` works because dune's command line declares the procedure itself, in
+   `src/dune_rpc_impl/decl.ml`. That declaration can be mirrored through
+   `Dune_rpc.Private`, which was done.
+5. **With all of that, the build request hangs.** Client, server and watcher
+   all idle at zero CPU, waiting on a response that does not arrive. Cause
+   unknown.
+
+So: `dune build`, shelled out. No watcher, no second process kind, no private
+protocol, no Experimental interface. The location header is lifted into
+`severity`, `file`, `line` and `col`; the compiler's own prose stays the
+message, with dune's source echo and caret underline stripped because the
+caller already has the file and the position is a field.
+
+**dune has no structured output for this.** Checked: every display mode is
+human text, and `dune diagnostics`, which sounds like the answer, is an RPC
+client and answers "RPC server not running" without a watcher. Two flags make
+the text less fragile, and are used: `--display-separate-messages` and
+`--error-reporting=deterministic`.
+
+What was removed with the RPC route: `lib/fiber.ml`, `lib/chan.ml`,
+`lib/dune_client.ml`, `lib/watcher.ml`, and the `dune-rpc` and `csexp`
+dependencies. The threaded fiber is the piece worth remembering: it is the
+only known way to drive dune's client functor without an event loop, and it
+worked.

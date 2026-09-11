@@ -214,6 +214,34 @@ let search_type_tool =
         ("limit", `Assoc [ "type", `String "integer" ]) ];
     "outputSchema", obj [ ("results", `Assoc [ "type", `String "array" ]) ] ]
 
+let build_tool =
+  `Assoc [
+    "name", `String "build";
+    "description", `String
+      "Build a dune project and report its errors and warnings, each with a \
+       file, line, column and severity, alongside dune's own output verbatim. \
+       Point it at the project root. After a successful build, reload a \
+       session with the load tool and reset set, or the session keeps running \
+       the old code.";
+    "inputSchema", obj ~required:[ "path" ]
+      [ ("path", `Assoc [ "type", `String "string";
+                          "description", `String "Project root, the directory \
+                            holding dune-project." ]);
+        ("targets", `Assoc [ "type", `String "array";
+                             "items", `Assoc [ "type", `String "string" ];
+                             "description", `String "Dune targets or aliases. \
+                               Defaults to the whole project." ]) ];
+    "outputSchema", obj
+      [ ("status", `Assoc [ "type", `String "string";
+                            "description", `String "success or failure." ]);
+        ("diagnostics", `Assoc [ "type", `String "array";
+                                 "items", obj
+                                   [ ("severity", `Assoc [ "type", `String "string" ]);
+                                     ("file", `Assoc [ "type", `String "string" ]);
+                                     ("line", `Assoc [ "type", `String "integer" ]);
+                                     ("col", `Assoc [ "type", `String "integer" ]);
+                                     ("message", `Assoc [ "type", `String "string" ]) ] ]) ] ]
+
 let all =
-  [ eval_tool; describe_tool; require_tool; load_tool; reset_tool;
+  [ eval_tool; describe_tool; require_tool; load_tool; reset_tool; build_tool;
     locate_tool; type_at_tool; outline_tool; uses_tool; search_type_tool ]
