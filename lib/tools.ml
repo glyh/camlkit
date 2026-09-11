@@ -39,6 +39,9 @@ let eval_tool =
     "outputSchema", obj [ ("phrases", `Assoc [ "type", `String "array";
                                                "items", phrase_schema ]) ] ]
 
+let phrase_array =
+  `Assoc [ "type", `String "array"; "items", phrase_schema ]
+
 let describe_tool =
   `Assoc [
     "name", `String "describe";
@@ -49,7 +52,8 @@ let describe_tool =
       [ session_arg;
         ("path", `Assoc [ "type", `String "string";
                           "description", `String "A module path such as \
-                            List, or a value such as List.map." ]) ] ]
+                            List, or a value such as List.map." ]) ];
+    "outputSchema", obj [ ("phrases", phrase_array) ] ]
 
 let require_tool =
   `Assoc [
@@ -60,6 +64,17 @@ let require_tool =
     "inputSchema", obj ~required:[ "session"; "packages" ]
       [ session_arg;
         ("packages", `Assoc [ "type", `String "array";
-                              "items", `Assoc [ "type", `String "string" ] ]) ] ]
+                              "items", `Assoc [ "type", `String "string" ] ]) ];
+    "outputSchema", obj [ ("phrases", phrase_array) ] ]
 
-let all = [ eval_tool; describe_tool; require_tool ]
+let reset_tool =
+  `Assoc [
+    "name", `String "reset";
+    "description", `String
+      "Discard a session and start it clean. Its bindings and loaded packages \
+       are gone. Use this to get back to a known state rather than inventing \
+       a new session name, which leaves the old toplevel running.";
+    "inputSchema", obj ~required:[ "session" ] [ session_arg ];
+    "outputSchema", obj [ ("status", `Assoc [ "type", `String "string" ]) ] ]
+
+let all = [ eval_tool; describe_tool; require_tool; reset_tool ]

@@ -41,12 +41,13 @@ utop ships no native archive; the server is native.
 
 ## Status
 
-Working end to end. `eval`, `describe` and `require` are served over MCP
-stdio against real toplevels, one worker per session. 28 tests, including
-seven that drive the server binary as a client would.
+Working end to end. `eval`, `describe`, `require` and `reset` are served
+over MCP stdio against real toplevels, one worker per session. 30 tests,
+including nine that drive the server binary as a client would.
 
-Not yet decided: session lifecycle beyond create-on-first-use, and whether
-`describe` and `require` should declare output schemas. See the map.
+Sessions are created on first use under whatever name the caller picks. If
+a session dies, the name stays usable and the first result afterwards says
+the toplevel is fresh.
 
 ## Design
 

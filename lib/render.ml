@@ -88,6 +88,17 @@ let of_response (response : Msg.response) payload =
       structured = `Assoc [ "status", `String "rejected"; "reason", `String why ];
       is_error = false }
 
+(* A session that had to be restarted comes back empty. Say so on the first
+   result afterwards rather than letting an agent assume its bindings survived.
+   ponytail: one note on one result; if agents start missing it, make the
+   restart its own structured status. *)
+let with_note note t =
+  { t with
+    content = note ^ "\n\n" ^ t.content;
+    structured = (match t.structured with
+        | `Assoc fields -> `Assoc (("note", `String note) :: fields)
+        | other -> other) }
+
 (* The server failing at its own job, as opposed to a phrase failing, which is
    an ordinary result above. *)
 let infrastructure_failure message =

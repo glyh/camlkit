@@ -14,9 +14,14 @@ let grace = 2.0
 
 let sessions : (string, Session.t) Hashtbl.t = Hashtbl.create 8
 
-(* JSON-RPC ids waiting on a worker, keyed by session name. A session holds at
-   most one, because a second evaluation is refused rather than queued. *)
-let pending : (string, Jsonrpc.Id.t) Hashtbl.t = Hashtbl.create 8
+(* JSON-RPC ids waiting on a worker, keyed by session name, with a note to
+   attach to the reply. A session holds at most one, because a second
+   evaluation is refused rather than queued. *)
+let pending : (string, Jsonrpc.Id.t * string option) Hashtbl.t = Hashtbl.create 8
+
+(* Names whose session died. The name stays usable, but the first result after
+   the restart says so, since the new toplevel is empty. *)
+let restarted : (string, string) Hashtbl.t = Hashtbl.create 8
 
 let log fmt = Printf.ksprintf (fun s -> prerr_endline ("utop-mcp: " ^ s)) fmt
 
@@ -51,19 +56,37 @@ let request_of_call name args =
   | "eval" -> Result.map (fun c -> Msg.Eval c) (arg_string args "code")
   | "describe" -> Result.map (fun p -> Msg.Describe p) (arg_string args "path")
   | "require" -> Result.map (fun p -> Msg.Require p) (arg_strings args "packages")
+  | "reset" -> assert false                      (* handled before we get here *)
   | other -> Error (Printf.sprintf "no such tool: %s" other)
 
-(* A session is created on first use. A name whose session died is not reused:
-   the toplevel state is genuinely gone, so the caller is told rather than
-   handed a fresh environment wearing the same name. *)
+(* A session is created on first use. A name whose session died is reusable,
+   because a name is only a handle and refusing it forever would make an agent
+   invent new ones after every crash. The replacement toplevel is empty, so the
+   first result after a restart carries a note saying so. *)
 let session_for name =
   match Hashtbl.find_opt sessions name with
-  | Some s -> Ok s
+  | Some s -> Ok (s, None)
   | None ->
     match Session.spawn name with
-    | s -> Hashtbl.replace sessions name s; Ok s
+    | s ->
+      Hashtbl.replace sessions name s;
+      let note = match Hashtbl.find_opt restarted name with
+        | None -> None
+        | Some why ->
+          Hashtbl.remove restarted name;
+          Some (Printf.sprintf
+                  "Session %S was restarted (%s). This is a fresh toplevel: \
+                   earlier bindings and loaded packages are gone." name why)
+      in
+      Ok (s, note)
     | exception Unix.Unix_error (e, _, _) ->
       Error (Printf.sprintf "could not start a worker: %s" (Unix.error_message e))
+
+let discard name why =
+  (match Hashtbl.find_opt sessions name with
+   | Some s -> Session.kill s why; Hashtbl.remove sessions name
+   | None -> ());
+  Hashtbl.replace restarted name why
 
 let handle_call id params =
   let name = match Yojson.Safe.Util.member "name" params with
@@ -73,17 +96,27 @@ let handle_call id params =
   match arg_string args "session" with
   | Error e -> reply id (Render.infrastructure_failure e)
   | Ok session_name ->
+    if name = "reset" then begin
+      (* Server-side only: no worker round trip, and it clears the restart
+         note too, since the caller asked for the fresh toplevel. *)
+      discard session_name "reset was requested";
+      Hashtbl.remove restarted session_name;
+      reply id { Render.content =
+                   Printf.sprintf "Session %S is now empty." session_name;
+                 structured = `Assoc [ "status", `String "reset" ];
+                 is_error = false }
+    end else
     match request_of_call name args with
     | Error e -> reply id (Render.infrastructure_failure e)
     | Ok request ->
       match session_for session_name with
       | Error e -> reply id (Render.infrastructure_failure e)
-      | Ok s ->
+      | Ok (s, note) ->
         (* Deadlines are the server's business; the worker knows nothing of
            them, and a describe or require is bounded by the same clock. *)
         match Session.send s request ~timeout:eval_timeout with
         | Error e -> reply id (Render.infrastructure_failure e)
-        | Ok () -> Hashtbl.replace pending session_name id
+        | Ok () -> Hashtbl.replace pending session_name (id, note)
 
 let handle_packet (packet : Jsonrpc.Packet.t) =
   match packet with
@@ -116,12 +149,14 @@ let drain_worker name s =
   let answer = Session.receive s in
   match Hashtbl.find_opt pending name with
   | None -> log "a worker answered with nothing waiting on it"
-  | Some id ->
+  | Some (id, note) ->
     Hashtbl.remove pending name;
     (match answer with
-     | Ok (response, payload) -> reply id (Render.of_response response payload)
+     | Ok (response, payload) ->
+       let r = Render.of_response response payload in
+       reply id (match note with None -> r | Some n -> Render.with_note n r)
      | Error e ->
-       Hashtbl.remove sessions name;
+       discard name "the worker died during evaluation";
        reply id (Render.infrastructure_failure e))
 
 (* A session killed mid-request still owes its caller an answer. *)
@@ -129,12 +164,13 @@ let reap_dead () =
   Hashtbl.iter (fun name s ->
       match Session.state s with
       | Supervision.Dead why when Hashtbl.mem pending name ->
-        let id = Hashtbl.find pending name in
+        let id, _ = Hashtbl.find pending name in
         Hashtbl.remove pending name;
-        Hashtbl.remove sessions name;
+        discard name why;
         reply id (Render.infrastructure_failure
                     ("the session was stopped: " ^ why ^
-                     ". Its toplevel state is gone; use a new session name."))
+                     ". Its toplevel state is gone; the next call under this \
+                      name starts a fresh one."))
       | _ -> ())
     (Hashtbl.copy sessions)
 

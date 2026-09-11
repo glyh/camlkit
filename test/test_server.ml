@@ -81,8 +81,14 @@ let test_tools_listed () =
   let names =
     Yojson.Safe.Util.(member "tools" r |> to_list
                       |> List.map (fun t -> member "name" t |> to_string)) in
-  Alcotest.(check (slist string compare)) "the three tools"
-    [ "describe"; "eval"; "require" ] names
+  Alcotest.(check (slist string compare)) "the tools"
+    [ "describe"; "eval"; "require"; "reset" ] names;
+  let schemas =
+    Yojson.Safe.Util.(member "tools" r |> to_list
+                      |> List.filter (fun t -> member "outputSchema" t <> `Null)
+                      |> List.map (fun t -> member "name" t |> to_string)) in
+  Alcotest.(check (slist string compare)) "every tool declares an output schema"
+    [ "describe"; "eval"; "require"; "reset" ] schemas
 
 let test_eval_through_the_loop () =
   with_server @@ fun c ->
@@ -132,6 +138,39 @@ let test_a_stuck_session_does_not_block_the_server () =
   Alcotest.(check bool) "a second session is served while the first spins" true
     (has "2" (text r))
 
+(* A phrase can take the worker down. The name stays usable afterwards, but
+   the replacement toplevel is empty and the first result must say so. *)
+let test_worker_death_restarts_the_name () =
+  with_server @@ fun c ->
+  let args code = `Assoc [ "session", `String "s"; "code", `String code ] in
+  ignore (call c ~id:1 ~tool:"eval" ~args:(args "let marker = 1;;"));
+  let r = call c ~id:2 ~tool:"eval" ~args:(args "let () = Stdlib.exit 0;;") in
+  Alcotest.(check bool) "a worker that exits is an infrastructure failure" true
+    (is_error r);
+  let r = call c ~id:3 ~tool:"eval" ~args:(args "marker;;") in
+  Alcotest.(check bool) "the name works again" false (is_error r);
+  Alcotest.(check bool) "and the result says the toplevel is fresh" true
+    (has "restarted" (text r));
+  Alcotest.(check string) "the old binding is genuinely gone" "failed" (status r);
+  (* the note is said once, not on every later call *)
+  let r = call c ~id:4 ~tool:"eval" ~args:(args "1 + 1;;") in
+  Alcotest.(check bool) "the note is not repeated" false (has "restarted" (text r))
+
+let test_reset () =
+  with_server @@ fun c ->
+  let args code = `Assoc [ "session", `String "s"; "code", `String code ] in
+  ignore (call c ~id:1 ~tool:"eval" ~args:(args "let keep = 7;;"));
+  let r = call c ~id:2 ~tool:"eval" ~args:(args "keep;;") in
+  Alcotest.(check bool) "the binding is there to start with" false (is_error r);
+  let r = call c ~id:3 ~tool:"reset" ~args:(`Assoc [ "session", `String "s" ]) in
+  Alcotest.(check string) "reset reports" "reset" (status r);
+  let r = call c ~id:4 ~tool:"eval" ~args:(args "keep;;") in
+  Alcotest.(check string) "the binding is gone" "failed" (status r);
+  Alcotest.(check bool) "and a reset is not reported as a restart" false
+    (has "restarted" (text r));
+  let r = call c ~id:5 ~tool:"eval" ~args:(args "let keep = 8;;") in
+  Alcotest.(check bool) "the session still works" false (is_error r)
+
 let () =
   Alcotest.run "utop-mcp-server"
     [ ("mcp",
@@ -146,4 +185,8 @@ let () =
          Alcotest.test_case "sessions are independent" `Slow
            test_sessions_are_independent;
          Alcotest.test_case "a stuck session does not block the server" `Slow
-           test_a_stuck_session_does_not_block_the_server ]) ]
+           test_a_stuck_session_does_not_block_the_server ]);
+      ("sessions",
+       [ Alcotest.test_case "worker death restarts the name" `Slow
+           test_worker_death_restarts_the_name;
+         Alcotest.test_case "reset" `Slow test_reset ]) ]

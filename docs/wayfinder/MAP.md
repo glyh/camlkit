@@ -77,6 +77,9 @@ must evaluate it first. Tests are Alcotest.
 - [What an eval returns to the agent](tickets/004-eval-result-contract.md) —
   `lib/render.ml`, pure; per-phrase rendering, warnings, output and spans;
   `isError` only for the server failing at its own job.
+- [Session lifecycle and the tool surface](tickets/006-tool-surface.md) — four
+  tools, all with output schemas; sessions created on first use; a dead name is
+  reusable and the first result after a restart says the toplevel is fresh.
 - [Trust boundary](tickets/012-trust-boundary.md) — trusted local developer
   tool, deliberately not sandboxed; stdio implies a local parent and that
   assumption is load-bearing.
