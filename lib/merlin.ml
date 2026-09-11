@@ -10,14 +10,32 @@
    Server mode rather than single: identical arguments, about 2 ms per query
    against 30, because the process stays warm. *)
 
-(* Beside our own executable before PATH, for the same reason dune is: we are
-   installed into an opam switch where merlin lives, and a client may spawn us
-   with neither on PATH. *)
-let binary =
-  lazy
-    (let beside =
-       Filename.concat (Filename.dirname Sys.executable_name) "ocamlmerlin" in
-     if Sys.file_exists beside then beside else "ocamlmerlin")
+let binary = lazy (Wire.Exe.find "ocamlmerlin")
+
+(* Project-wide occurrences need dune's index, and merlin says nothing when it
+   is missing: it quietly answers from the current buffer alone and reports
+   `class: return` with no notification. A caller then reads a complete-looking
+   list that omits every use in every other file.
+
+   So build the index first. It is cheap once the project itself is built -
+   measured at 0.2 s - and correctness here is worth a build, because a wrong
+   answer that looks complete is worse than a slow one. *)
+let ensure_index file =
+  match Wire.Exe.project_root_of file with
+  | None -> Error "not inside a dune project"
+  | Some root ->
+    let cmd =
+      Printf.sprintf "cd %s && %s build @ocaml-index 2>&1"
+        (Filename.quote root) (Filename.quote (Wire.Exe.find "dune"))
+    in
+    let ic = Unix.open_process_in cmd in
+    let buf = Buffer.create 256 in
+    (try
+       while true do Buffer.add_channel buf ic 1 done
+     with End_of_file -> ());
+    (match Unix.close_process_in ic with
+     | Unix.WEXITED 0 -> Ok ()
+     | _ -> Error (String.trim (Buffer.contents buf)))
 
 let read_file path =
   match open_in_bin path with

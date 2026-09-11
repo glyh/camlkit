@@ -462,6 +462,25 @@ let test_locate () =
   Alcotest.(check int) "greet is defined on line 1" 1
     Yojson.Safe.Util.(loc |> member "pos" |> member "line" |> to_int)
 
+(* Reported from a session: project-scope occurrences silently answered from
+   one file when dune's index was missing, so a function used elsewhere looked
+   unused. merlin gives no signal at all - class: return, no notification - so
+   the index is built first, and when it cannot be, the answer says so rather
+   than looking whole. *)
+let test_uses_says_when_it_cannot_be_project_wide () =
+  with_server @@ fun c ->
+  with_source @@ fun path ->
+  (* a standalone file, so there is no dune project and no index to build *)
+  let r = call c ~id:1 ~tool:"uses"
+      ~args:(`Assoc [ "file", `String path; "line", `Int 1; "col", `Int 4 ]) in
+  let sc = Yojson.Safe.Util.member "structuredContent" r in
+  Alcotest.(check bool) "flagged as not complete" true
+    (Yojson.Safe.Util.(member "complete" sc) = `Bool false);
+  Alcotest.(check bool) "and says so in the text" true
+    (has "INCOMPLETE" (text r));
+  Alcotest.(check bool) "naming the command that would fix it" true
+    (has "dune build @ocaml-index" (text r))
+
 let test_source_query_on_a_missing_file () =
   with_server @@ fun c ->
   let r = call c ~id:1 ~tool:"outline"
@@ -505,7 +524,9 @@ let () =
          Alcotest.test_case "type at a position" `Slow test_type_at;
          Alcotest.test_case "locate a definition" `Slow test_locate;
          Alcotest.test_case "a missing file fails cleanly" `Slow
-           test_source_query_on_a_missing_file ]);
+           test_source_query_on_a_missing_file;
+         Alcotest.test_case "uses flags an answer it could not complete" `Slow
+           test_uses_says_when_it_cannot_be_project_wide ]);
       ("cancellation",
        [ Alcotest.test_case "stops work and stays quiet" `Slow
            test_cancellation_stops_work_and_stays_quiet;

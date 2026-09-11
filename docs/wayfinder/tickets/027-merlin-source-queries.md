@@ -66,3 +66,30 @@ beyond the stdlib, so the tests query one written to a temp directory.
 Verified live against this repository as well: `outline` listed the
 definitions of a module, `locate` resolved a call into the stdlib's
 `unix.mli`, and `type_at` returned the enclosing types innermost first.
+
+## Amendment: project-wide occurrences were silently partial
+
+Reported from a session using it on a real project. Asking for uses of a
+function returned 26 occurrences, all inside its own file, and the reader
+reasonably concluded it was unused elsewhere. `grep` found a 27th in a test.
+After `dune build @ocaml-index`, the same call returned all 27.
+
+**merlin gives no signal whatsoever.** Checked directly: without the index a
+project-scope query answers `class: return`, `notifications: []`, and a list
+that is simply short. Nothing distinguishes it from a complete answer, which
+is what makes this the dangerous kind of bug rather than a missing feature.
+
+**`uses` now builds the index itself** before a project-scope query. Measured
+at 0.2 s once the project is otherwise built, which is worth paying: a wrong
+answer that looks complete is worse than a slow one. Verified from zero index
+files to twenty occurrences across three files.
+
+When the index cannot be built - a file outside any dune project, for
+instance - the result carries `complete: false` and a caveat naming the
+command, and the text half leads with INCOMPLETE. Tested both ways.
+
+**`search_type` needs qualified type names**, which the same report worked
+out the hard way: `Core.term -> string` finds things that bare `term` does
+not, even in a file whose first line opens `Core`, because merlin matches
+against its own environment rather than the buffer's. Not ours to fix, but
+the tool description now says so.

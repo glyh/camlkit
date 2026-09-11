@@ -181,21 +181,32 @@ let uses_tool =
     "name", `String "uses";
     "description", `String
       "Every occurrence of the name at a position. Defaults to the whole \
-       project rather than the one file.";
+       project rather than the one file, and builds dune's index first if \
+       needed, because merlin otherwise answers from this file alone without \
+       saying so. If the index cannot be built the result says it is \
+       incomplete rather than looking whole.";
     "inputSchema", obj ~required:[ "file"; "line"; "col" ]
       [ file_arg; line_arg; col_arg;
         ("scope", `Assoc [ "type", `String "string";
                            "description", `String "project (the default) or \
                              buffer." ]) ];
-    "outputSchema", obj [ ("occurrences", `Assoc [ "type", `String "array" ]) ] ]
+    "outputSchema", obj
+      [ ("occurrences", `Assoc [ "type", `String "array" ]);
+        ("complete", `Assoc [ "type", `String "boolean";
+                              "description", `String "Absent when the answer \
+                                is project-wide. False, with a caveat, when it \
+                                covers only this file." ]);
+        ("caveat", `Assoc [ "type", `String "string" ]) ] ]
 
 let search_type_tool =
   `Assoc [
     "name", `String "search_type";
     "description", `String
       "Find values by their type rather than their name, in scope at a \
-       position. A query is a type with holes, such as \"int -> string\" or \
-       \"'a list -> 'a option\".";
+       position. A query is a type, such as \"int -> string\" or \
+       \"'a list -> 'a option\". Qualify type names: merlin matches against \
+       its own environment, not the buffer's, so write \"Core.term -> string\" \
+       even in a file that opens Core, or the search finds nothing.";
     "inputSchema", obj ~required:[ "file"; "line"; "col"; "query" ]
       [ file_arg; line_arg; col_arg;
         ("query", `Assoc [ "type", `String "string" ]);

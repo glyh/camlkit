@@ -94,9 +94,18 @@ let source_query id name args =
       let* col = arg_int args "col" in
       let scope = match Yojson.Safe.Util.member "scope" args with
         | `String s -> s | _ -> "project" in
-      Merlin.query ~command:"occurrences"
-        ~args:[ "-identifier-at"; Merlin.position line col; "-scope"; scope ]
-        ~file
+      (* Project scope is silently buffer scope without dune's index, so build
+         it first rather than return a complete-looking partial answer. *)
+      let index =
+        if scope = "project" then Merlin.ensure_index file else Ok () in
+      let* value =
+        Merlin.query ~command:"occurrences"
+          ~args:[ "-identifier-at"; Merlin.position line col; "-scope"; scope ]
+          ~file
+      in
+      Ok (match index with
+          | Ok () -> value
+          | Error why -> `Assoc [ "incomplete", `String why; "value", value ])
     | "search_type" ->
       let* pos = at () in
       let* query = arg_string args "query" in
@@ -114,6 +123,19 @@ let source_query id name args =
     let key = match name with
       | "locate" -> "location" | "type_at" -> "enclosings"
       | "outline" -> "items" | "uses" -> "occurrences" | _ -> "results" in
+    (* An answer that could not be made complete says so, in the structure and
+       in the text, rather than looking whole. *)
+    let caveat, value =
+      match value with
+      | `Assoc [ ("incomplete", `String why); ("value", v) ] ->
+        ( Some (Printf.sprintf
+                  "INCOMPLETE: these are occurrences in this file only. \
+                   Project-wide results need dune's index, which could not be \
+                   built here (%s). Run `dune build @ocaml-index` in the \
+                   project and ask again." why),
+          v )
+      | v -> (None, v)
+    in
     let summary =
       match value with
       | `List [] -> "no results"
@@ -123,8 +145,14 @@ let source_query id name args =
           (Yojson.Safe.pretty_to_string value)
       | v -> Yojson.Safe.pretty_to_string v
     in
+    let summary = match caveat with
+      | None -> summary | Some c -> c ^ "\n\n" ^ summary in
+    let fields = [ key, value ] in
+    let fields = match caveat with
+      | None -> fields
+      | Some c -> ("complete", `Bool false) :: ("caveat", `String c) :: fields in
     reply id { Render.content = summary;
-               structured = `Assoc [ key, value ];
+               structured = `Assoc fields;
                is_error = false }
 
 

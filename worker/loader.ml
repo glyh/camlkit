@@ -15,14 +15,7 @@
    package directories, and the archives in dependency order, externals
    included. That subsumes the scan below, the retry-until-settled ordering,
    and the separate require step for things like sedlex. *)
-(* Look for dune beside our own executable before trusting PATH. We are
-   installed into an opam switch, and dune lives in that switch's bin; a client
-   may well spawn us with a PATH that has neither. *)
-let dune_binary =
-  lazy
-    (let beside =
-       Filename.concat (Filename.dirname Sys.executable_name) "dune" in
-     if Sys.file_exists beside then beside else "dune")
+let dune_binary = lazy (Wire.Exe.find "dune")
 
 (* Only ask when the path is itself a project root. dune searches upwards for
    a dune-project, so pointing at a subdirectory would silently answer for the
