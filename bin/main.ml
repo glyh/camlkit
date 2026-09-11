@@ -56,6 +56,16 @@ let request_of_call name args =
   | "eval" -> Result.map (fun c -> Msg.Eval c) (arg_string args "code")
   | "describe" -> Result.map (fun p -> Msg.Describe p) (arg_string args "path")
   | "require" -> Result.map (fun p -> Msg.Require p) (arg_strings args "packages")
+  | "load" ->
+    Result.map
+      (fun path ->
+         let libraries =
+           match Yojson.Safe.Util.member "libraries" args with
+           | `List l -> List.filter_map
+                          (function `String s -> Some s | _ -> None) l
+           | _ -> [] in
+         Msg.Load { path; libraries })
+      (arg_string args "path")
   | "reset" -> assert false                      (* handled before we get here *)
   | other -> Error (Printf.sprintf "no such tool: %s" other)
 
@@ -96,6 +106,11 @@ let handle_call id params =
   match arg_string args "session" with
   | Error e -> reply id (Render.infrastructure_failure e)
   | Ok session_name ->
+    (* Reloading a rebuilt archive into a session that still holds the old one
+       fails on an interface mismatch, so a reset-and-load has to happen in
+       that order, server-side, before the request reaches a worker. *)
+    if name = "load" && Yojson.Safe.Util.member "reset" args = `Bool true then
+      discard session_name "reset was requested before loading";
     if name = "reset" then begin
       (* Server-side only: no worker round trip, and it clears the restart
          note too, since the caller asked for the fresh toplevel. *)

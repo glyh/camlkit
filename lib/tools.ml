@@ -71,6 +71,32 @@ let require_tool =
                               "items", `Assoc [ "type", `String "string" ] ]) ];
     "outputSchema", obj [ ("phrases", phrase_array) ] ]
 
+let load_tool =
+  `Assoc [
+    "name", `String "load";
+    "description", `String
+      "Load a dune project's own libraries into a session, so its modules \
+       become available. Use this for the project you are working in; \
+       require only reaches findlib packages, and dune libraries are usually \
+       private. Point it at the project root. Pass reset after rebuilding the \
+       project: loading a changed archive into a session that already has the \
+       old one fails on an interface mismatch, so the session must start \
+       clean. The worker must have been built with the same OCaml version as \
+       the project, because bytecode is version-locked.";
+    "inputSchema", obj ~required:[ "session"; "path" ]
+      [ session_arg;
+        ("path", `Assoc [ "type", `String "string";
+                          "description", `String "Project root, or a \
+                            directory inside its _build tree." ]);
+        ("libraries", `Assoc [ "type", `String "array";
+                               "items", `Assoc [ "type", `String "string" ];
+                               "description", `String "Library names to load. \
+                                 Omit to load everything found." ]);
+        ("reset", `Assoc [ "type", `String "boolean";
+                           "description", `String "Empty the session first. \
+                             Use after rebuilding the project." ]) ];
+    "outputSchema", obj [ ("phrases", phrase_array) ] ]
+
 let reset_tool =
   `Assoc [
     "name", `String "reset";
@@ -81,4 +107,4 @@ let reset_tool =
     "inputSchema", obj ~required:[ "session" ] [ session_arg ];
     "outputSchema", obj [ ("status", `Assoc [ "type", `String "string" ]) ] ]
 
-let all = [ eval_tool; describe_tool; require_tool; reset_tool ]
+let all = [ eval_tool; describe_tool; require_tool; load_tool; reset_tool ]

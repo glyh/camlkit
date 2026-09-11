@@ -6,6 +6,8 @@ type request =
   | Eval of string          (* OCaml phrases; directives are rejected *)
   | Describe of string      (* a module path, answered via #show *)
   | Require of string list  (* findlib packages *)
+  (* A dune build tree, whose private libraries findlib cannot see. *)
+  | Load of { path : string; libraries : string list }
 
 (* One record per phrase. [rendering] is the toplevel's own output, such as
    "val x : int = 42"; program output lives in the raw segment at
@@ -52,6 +54,9 @@ let json_of_request = function
   | Require ps ->
     `Assoc [ "kind", `String "require";
              "packages", `List (List.map (fun p -> `String p) ps) ]
+  | Load { path; libraries } ->
+    `Assoc [ "kind", `String "load"; "path", `String path;
+             "libraries", `List (List.map (fun l -> `String l) libraries) ]
 
 let request_of_json j =
   let open Yojson.Safe.Util in
@@ -59,6 +64,10 @@ let request_of_json j =
   | "eval" -> Eval (member "source" j |> to_string)
   | "describe" -> Describe (member "path" j |> to_string)
   | "require" -> Require (member "packages" j |> to_list |> List.map to_string)
+  | "load" ->
+    Load { path = member "path" j |> to_string;
+           libraries = (match member "libraries" j with
+               | `List l -> List.map to_string l | _ -> []) }
   | k -> failwith ("unknown request kind: " ^ k)
 
 (* A phrase can print without bound, and an MCP result is a single payload with

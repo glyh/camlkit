@@ -1,8 +1,8 @@
 ---
-status: open
+status: closed
 type: prototype
 blocked-by: []
-assignee:
+assignee: lyh
 ---
 
 # Loading a dune project's own libraries
@@ -45,3 +45,33 @@ same switch as the project, because bytecode is version-locked. And this
 cannot be folded into `eval`: changing the search path and using a module
 from it in the same call fails, since nothing runs unless every phrase
 typechecks first. That behaviour is pinned by a test.
+
+## Resolution
+
+Implemented as the `load` tool, backed by `worker/loader.ml`. It takes a
+project root, finds the `.cma` archives under `_build/default`, adds each
+one's `.<lib>.objs/byte` directory to the search path, and loads them.
+
+**Dependency order settles itself.** Rather than parsing dune metadata, a
+failed archive is retried until a pass makes no progress. Verified against a
+real compiler project: seven interdependent libraries loaded from one call,
+in an order the caller never had to know.
+
+**The real error is surfaced, not the exception.** `Topdirs.dir_load`
+usually reports by printing to its formatter and sometimes raises, and the
+exception alone is useless: `Symtable.Error(_)`, or the
+`Compenv.Exit_with_status 125` reported from a session. Both the formatter
+text and the exception rendered through `Errors.report_error` are captured,
+which turns that into `Reference to undefined compilation unit 'Sedlexing'`.
+
+**External dependencies are named rather than guessed at.** dune records no
+machine-readable requires for private libraries, so they cannot be resolved
+automatically. When a missing unit is not built by the project, the error
+says it is external and to use `require` first. Confirmed on a project whose
+lexer needs `sedlex`: requiring it and loading again took all seven
+libraries.
+
+**Reload after a rebuild is a `reset` flag on the load.** It discards the
+session server-side before the request reaches a worker, so the stale
+interfaces are gone rather than conflicting. No per-session load history is
+needed, because the request already carries everything required to replay it.

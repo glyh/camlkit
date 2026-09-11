@@ -194,6 +194,37 @@ let eval cap src =
       | Error f -> Msg.Failed f
       | Ok () -> implicit_counter := next; execute_all cap phrases
 
+let ok_result cap rendering =
+  Msg.Completed [ { rendering; warnings = ""; out_start = 0;
+                    out_len = Capture.mark cap; truncated = false } ]
+
+let fail_result message =
+  Msg.Failed { phase = Msg.Execute; phrase_index = 0; message;
+               spans = []; lines = []; done_ = [] }
+
+(* Load a dune project's private libraries. Not an eval: it changes the search
+   path and loads archives, neither of which can share a call with code that
+   uses them, since nothing runs until every phrase typechecks. *)
+let load cap ~libraries path =
+  Capture.reset cap;
+  match Loader.load ~libraries path with
+  | Error e -> fail_result e
+  | Ok (loaded, failed) ->
+    let name a = Filename.remove_extension (Filename.basename a) in
+    let summary =
+      Printf.sprintf "loaded %d librar%s: %s" (List.length loaded)
+        (if List.length loaded = 1 then "y" else "ies")
+        (String.concat ", " (List.map name loaded))
+    in
+    if failed = [] then ok_result cap summary
+    else
+      let detail =
+        String.concat "\n"
+          (List.map (fun (a, e) -> Printf.sprintf "%s: %s" (name a) e) failed)
+      in
+      if loaded = [] then fail_result detail
+      else ok_result cap (summary ^ "\n\nnot loaded:\n" ^ detail)
+
 (* Directive-backed operations. These bypass the typing pass by design:
    directives are not typeable, which is why they are not allowed in eval. *)
 let directive cap src =

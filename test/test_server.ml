@@ -98,13 +98,13 @@ let test_tools_listed () =
     Yojson.Safe.Util.(member "tools" r |> to_list
                       |> List.map (fun t -> member "name" t |> to_string)) in
   Alcotest.(check (slist string compare)) "the tools"
-    [ "describe"; "eval"; "require"; "reset" ] names;
+    [ "describe"; "eval"; "load"; "require"; "reset" ] names;
   let schemas =
     Yojson.Safe.Util.(member "tools" r |> to_list
                       |> List.filter (fun t -> member "outputSchema" t <> `Null)
                       |> List.map (fun t -> member "name" t |> to_string)) in
   Alcotest.(check (slist string compare)) "every tool declares an output schema"
-    [ "describe"; "eval"; "require"; "reset" ] schemas
+    [ "describe"; "eval"; "load"; "require"; "reset" ] schemas
 
 let test_eval_through_the_loop () =
   with_server @@ fun c ->
@@ -244,6 +244,46 @@ let test_answers_before_exiting_on_eof () =
   (try Unix.kill c.pid Sys.sigkill with Unix.Unix_error _ -> ());
   (try ignore (Unix.waitpid [] c.pid) with Unix.Unix_error _ -> ())
 
+(* dune's private libraries are not findlib packages, so require cannot see
+   them. The load tool adds each archive's .objs/byte directory and loads it,
+   retrying failures so dependency order settles itself. *)
+let test_load_a_project () =
+  with_server @@ fun c ->
+  let fixtures = Filename.concat (Sys.getcwd ()) "fixtures/mylib" in
+  let r = call c ~id:1 ~tool:"load"
+      ~args:(`Assoc [ "session", `String "s"; "path", `String fixtures ]) in
+  Alcotest.(check bool) "loading succeeds" false (is_error r);
+  Alcotest.(check bool) "and says what it loaded" true (has "mylib" (text r));
+  let r = call c ~id:2 ~tool:"eval"
+      ~args:(`Assoc [ "session", `String "s"; "code", `String "Mylib.make 5;;" ]) in
+  Alcotest.(check bool) "the library's modules are usable" true
+    (has "mylib holding 5" (text r))
+
+let test_load_a_missing_path () =
+  with_server @@ fun c ->
+  let r = call c ~id:1 ~tool:"load"
+      ~args:(`Assoc [ "session", `String "s"; "path", `String "/nope/nowhere" ]) in
+  Alcotest.(check string) "reported as a failure, not a crash" "failed" (status r);
+  Alcotest.(check bool) "and names the path" true (has "/nope/nowhere" (text r))
+
+(* Loading a rebuilt archive into a session that still holds the old one fails
+   on an interface mismatch, so reset has to happen before the load, not after. *)
+let test_load_with_reset_empties_first () =
+  with_server @@ fun c ->
+  let fixtures = Filename.concat (Sys.getcwd ()) "fixtures/mylib" in
+  let ev code = call c ~id:9 ~tool:"eval"
+      ~args:(`Assoc [ "session", `String "s"; "code", `String code ]) in
+  ignore (ev "let sentinel = 1;;");
+  Alcotest.(check bool) "the binding is there" false (is_error (ev "sentinel;;"));
+  let r = call c ~id:2 ~tool:"load"
+      ~args:(`Assoc [ "session", `String "s"; "path", `String fixtures;
+                      "reset", `Bool true ]) in
+  Alcotest.(check bool) "load still succeeds" false (is_error r);
+  Alcotest.(check string) "but the session was emptied first" "failed"
+    (status (ev "sentinel;;"));
+  Alcotest.(check bool) "and the library is loaded in the fresh session" true
+    (has "mylib holding 5" (text (ev "Mylib.make 5;;")))
+
 let () =
   Alcotest.run "utop-mcp-server"
     [ ("mcp",
@@ -267,6 +307,11 @@ let () =
        [ Alcotest.test_case "automatic toplevel printers" `Slow
            test_automatic_toplevel_printers;
          Alcotest.test_case "in-session printer" `Slow test_in_session_printer ]);
+      ("load",
+       [ Alcotest.test_case "load a project" `Slow test_load_a_project;
+         Alcotest.test_case "missing path" `Slow test_load_a_missing_path;
+         Alcotest.test_case "reset empties first" `Slow
+           test_load_with_reset_empties_first ]);
       ("sessions",
        [ Alcotest.test_case "worker death restarts the name" `Slow
            test_worker_death_restarts_the_name;

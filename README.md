@@ -121,14 +121,26 @@ and no opam variables set.
 
 ## Using it
 
-Four tools. `eval` runs OCaml phrases in a named session, `describe` shows a
-signature, `require` loads findlib packages, and `reset` empties a session.
-Sessions are created on first use under whatever name you pick, and state
-persists between calls.
+Five tools. `eval` runs OCaml phrases in a named session, `describe` shows a
+signature, `require` loads findlib packages, `load` brings in a dune
+project's own libraries, and `reset` empties a session. Sessions are created
+on first use under whatever name you pick, and state persists between calls.
 
-Reaching a dune project's *own* libraries still takes manual work, because
-they are usually private libraries rather than findlib packages. See the
-open ticket `docs/wayfinder/tickets/021-dune-aware-load.md`.
+To explore the project you are working in:
+
+```
+require  { packages: ["sedlex", ...] }   # its external dependencies
+load     { path: "/path/to/project" }    # its own libraries
+```
+
+`load` finds the archives under `_build/default`, adds the `.objs/byte`
+directories where dune hides the compiled interfaces, and retries until
+dependency order settles. After rebuilding the project, pass `reset: true`:
+loading a changed archive into a session holding the old one fails on an
+interface mismatch.
+
+The worker must be built with the same OCaml version as the project, because
+bytecode is version-locked. Install into the project's own switch.
 
 ## Notes on the build
 

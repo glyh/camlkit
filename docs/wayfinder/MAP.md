@@ -93,6 +93,9 @@ must evaluate it first. Tests are Alcotest.
 - [Making it installable](tickets/020-installability.md) — only the server was
   installed, so an installed copy could never start a session; the worker now
   has a `public_name` and the installed pair is verified end to end.
+- [Loading a dune project's own libraries](tickets/021-dune-aware-load.md) —
+  the `load` tool: discover archives, add the hidden `.objs/byte` directories,
+  retry until dependency order settles, and `reset` before reloading a rebuild.
 - [Trust boundary](tickets/012-trust-boundary.md) — trusted local developer
   tool, deliberately not sandboxed; stdio implies a local parent and that
   assumption is load-bearing.
