@@ -233,19 +233,8 @@ let load cap ~libraries ~packages path =
   | Error e -> fail_result e
   | Ok (loaded, failed) ->
     let name a = Filename.remove_extension (Filename.basename a) in
-    let summary =
-      Printf.sprintf "loaded %d librar%s: %s" (List.length loaded)
-        (if List.length loaded = 1 then "y" else "ies")
-        (String.concat ", " (List.map name loaded))
-    in
-    if failed = [] then ok_result cap summary
-    else
-      let detail =
-        String.concat "\n"
-          (List.map (fun (a, e) -> Printf.sprintf "%s: %s" (name a) e) failed)
-      in
-      if loaded = [] then fail_result detail
-      else ok_result cap (summary ^ "\n\nnot loaded:\n" ^ detail)
+    Msg.Loaded { loaded = List.map name loaded;
+                 failed = List.map (fun (a, e) -> (name a, e)) failed }
 
 (* Directive-backed operations. These bypass the typing pass by design:
    directives are not typeable, which is why they are not allowed in eval. *)

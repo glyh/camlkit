@@ -95,7 +95,14 @@ let load_tool =
         ("reset", `Assoc [ "type", `String "boolean";
                            "description", `String "Empty the session first. \
                              Use after rebuilding the project." ]) ];
-    "outputSchema", obj [ ("phrases", phrase_array) ] ]
+    "outputSchema", obj
+      [ ("status", `Assoc [ "type", `String "string" ]);
+        ("loaded", `Assoc [ "type", `String "array";
+                            "items", `Assoc [ "type", `String "string" ];
+                            "description", `String "Library names now loaded." ]);
+        ("failed", `Assoc [ "type", `String "array";
+                            "items", obj [ ("library", `Assoc [ "type", `String "string" ]);
+                                           ("error", `Assoc [ "type", `String "string" ]) ] ]) ] ]
 
 let reset_tool =
   `Assoc [

@@ -41,6 +41,9 @@ type failure = {
 
 type response =
   | Completed of phrase list
+  (* Loading is not a phrase result and should not pretend to be one: a caller
+     wants the library names as data, not a sentence to parse. *)
+  | Loaded of { loaded : string list; failed : (string * string) list }
   | Failed of failure
   | Interrupted of { phrase_index : int; done_ : phrase list }
   | Rejected of string       (* e.g. a directive sent to eval *)
@@ -128,6 +131,11 @@ let json_of_response = function
     `Assoc [ "status", `String "interrupted";
              "phrase_index", `Int phrase_index;
              "phrases", `List (List.map json_of_phrase done_) ]
+  | Loaded { loaded; failed } ->
+    `Assoc [ "status", `String (if failed = [] then "ok" else "partial");
+             "loaded", `List (List.map (fun l -> `String l) loaded);
+             "failed", `List (List.map (fun (lib, err) ->
+                 `Assoc [ "library", `String lib; "error", `String err ]) failed) ]
   | Rejected why -> `Assoc [ "status", `String "rejected"; "reason", `String why ]
 
 let response_of_json j =
@@ -152,5 +160,11 @@ let response_of_json j =
   | "interrupted" ->
     Interrupted { phrase_index = member "phrase_index" j |> to_int;
                   done_ = member "phrases" j |> to_list |> List.map phrase_of_json }
+  | "ok" | "partial" ->
+    Loaded { loaded = member "loaded" j |> to_list |> List.map to_string;
+             failed = member "failed" j |> to_list
+                      |> List.map (fun f ->
+                          (member "library" f |> to_string,
+                           member "error" f |> to_string)) }
   | "rejected" -> Rejected (member "reason" j |> to_string)
   | s -> failwith ("unknown status: " ^ s)

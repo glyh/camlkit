@@ -94,6 +94,29 @@ let of_response (response : Msg.response) payload =
                             "phrase", `Int (phrase_index + 1);
                             "phrases", `List (List.map (json_phrase payload) done_) ];
       is_error = false }
+  | Msg.Loaded { loaded; failed } ->
+    let plural n = if n = 1 then "y" else "ies" in
+    let summary =
+      Printf.sprintf "loaded %d librar%s%s" (List.length loaded)
+        (plural (List.length loaded))
+        (match loaded with [] -> "" | ls -> ": " ^ String.concat ", " ls)
+    in
+    let detail =
+      match failed with
+      | [] -> ""
+      | fs ->
+        "\n\nnot loaded:\n"
+        ^ String.concat "\n"
+            (List.map (fun (lib, err) -> Printf.sprintf "%s: %s" lib err) fs)
+    in
+    { content = summary ^ detail;
+      structured =
+        `Assoc [ "status", `String (if failed = [] then "ok" else "partial");
+                 "loaded", `List (List.map (fun l -> `String l) loaded);
+                 "failed", `List (List.map (fun (lib, err) ->
+                     `Assoc [ "library", `String lib; "error", `String err ])
+                     failed) ];
+      is_error = false }
   | Msg.Rejected why ->
     { content = why;
       structured = `Assoc [ "status", `String "rejected"; "reason", `String why ];

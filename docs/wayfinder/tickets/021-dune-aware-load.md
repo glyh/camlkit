@@ -110,3 +110,15 @@ A reset-load now carries its own note: the session was reset, earlier
 bindings are gone, and these packages were re-required. A load that reused
 the session says nothing, which is the distinguishing signal. Both
 directions are tested.
+
+## Amendment: the result is data, not a sentence
+
+The first version returned "loaded 7 libraries: a, b, c" as a phrase
+rendering, so a caller wanting to know which libraries failed had to parse
+prose. Against the standing preference that an endpoint serves structure,
+that was the wrong shape.
+
+`load` now has its own response carrying `loaded` as an array of names and
+`failed` as an array of `{library, error}`, with `status` distinguishing a
+complete load from a partial one. The readable summary still ships as text
+content alongside.

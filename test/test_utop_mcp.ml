@@ -71,7 +71,9 @@ let test_response_roundtrip () =
   check (Msg.Failed { phase = Msg.Typecheck; phrase_index = 1;
                       message = "Error: ..."; spans = [ (4, 8) ];
                       lines = [ (1, 1) ]; done_ = [] });
-  check (Msg.Rejected "directives not accepted")
+  check (Msg.Rejected "directives not accepted");
+  check (Msg.Loaded { loaded = [ "a"; "b" ]; failed = [ ("c", "boom") ] });
+  check (Msg.Loaded { loaded = []; failed = [] })
 
 (* Output is capped because an MCP result is one payload with no streaming.
    Clamping is pure, so this needs no toplevel. *)
@@ -160,6 +162,7 @@ let phrases = function
   | Msg.Failed f -> Alcotest.failf "expected success, got failure: %s" f.Msg.message
   | Msg.Rejected r -> Alcotest.failf "expected success, got rejection: %s" r
   | Msg.Interrupted _ -> Alcotest.fail "expected success, got interrupt"
+  | Msg.Loaded _ -> Alcotest.fail "expected phrase results, got a load result"
 
 let test_eval_and_state () =
   with_worker @@ fun s ->

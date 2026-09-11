@@ -33,6 +33,15 @@ respectively. Every compiler-libs signature the worker touches is identical
 across those releases; the one that does differ, `Longident.Ldot`, is
 reached through `UTop_compat.ldot`.
 
+**Keep what an endpoint serves as structural as possible.** A tool result
+carries typed fields in `structuredContent`, not prose the caller has to
+parse back out. Counts are numbers, lists are arrays, errors carry spans and
+line ranges as data, and a failure names the thing that failed in a field
+rather than only inside a sentence. Human-readable text ships alongside for
+display, never instead. The test is whether a caller could act on the result
+without reading the prose: if it has to regex a message to learn which
+library failed, the shape is wrong.
+
 **Standing preferences.** Build against opam's utop, never the reference
 checkout at `/home/lyh/pullground/mina/utop`, which is behind opam. The
 worker is bytecode because utop has no native archive; the server is
