@@ -5,15 +5,17 @@ blocked-by: [015]
 assignee:
 ---
 
-# Session driver over Eio
+# Session driver: the select loop
 
 ## Question
 
 Build the core: a session that owns a worker child process and turns a
 phrase into a captured result.
 
-Covers spawning under an Eio switch, the per-eval deadline, the interrupt
-escalation, and reaping a dead worker. The framing problems that
+Covers the `Unix.select` loop over MCP stdin and every worker's response
+descriptor, with the timeout set to the earliest pending deadline. Also
+spawning, the interrupt escalation, and reaping a dead worker with
+`waitpid`. The framing problems that
 dominated this ticket are gone now that the worker owns its own output
 channel; see
 [Worker linked to utop replaces the subprocess protocol](014-worker-architecture.md).

@@ -78,9 +78,22 @@ may print to it. All logging goes to stderr.
 phrase can print without bound and an MCP result is a single payload with
 no streaming.
 
-## Verified Eio recipe
+## Amendment: no Eio, no Lwt
 
-`Eio.Process.pipe` and `Eio.Process.spawn` for the bidirectional pipes,
-`Eio.Buf_read.line` for the protocol, `Eio.Time.with_timeout` for the
-deadline and `Eio.Process.signal` for the interrupt. Driven end to end
-through eval, timeout, interrupt, recovery and a state check.
+The Eio recipe verified here worked, but the server does not need it. Its
+job is I/O multiplexing, which `Unix.select` covers directly: select over
+MCP stdin and every worker's response descriptor, with the timeout set to
+the earliest pending deadline. That yields cross-session concurrency and
+keeps the server responsive while one session is stuck, single-threaded
+and with no runtime.
+
+`Unix.create_process`, `Unix.kill` and `Unix.waitpid` cover spawn, signal
+and reap. Dependencies reduce to `unix`, `jsonrpc` and `yojson`.
+
+The worker was already free of both. See
+[Worker linked to utop replaces the subprocess protocol](014-worker-architecture.md)
+for why keeping it that way matters: evaluated code calling `Lwt_main.run`
+works natively, and nothing needs `lwt_eio` to bridge.
+
+Note that the opam-exec spawn decision above is also obsolete. The worker
+links utop at build time, so there is no runtime binary lookup.

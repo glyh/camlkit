@@ -45,12 +45,21 @@ exact because we own the channel, not because we guessed a marker.
 `rewrite` and `bind_expressions` are internal, and those are Lwt auto-run
 and implicit bindings, both replaceable.
 
+**Neither the worker nor the server runs Eio or Lwt.** The worker's case
+first, then the server's.
+
 **The worker runs no Eio and no Lwt runtime, deliberately.** It is
 sequential by nature: one toplevel, one phrase at a time, blocking reads.
 Concurrency belongs to the server, which supervises N workers. Keeping the
 worker free of Eio means evaluated code calling `Lwt_main.run` works
 natively, so `lwt_eio` is not needed. Adding Eio to the worker is what
 would create the conflict that `lwt_eio` exists to bridge.
+
+**The server drops Eio too, for `Unix.select`.** It is an I/O
+multiplexer: select over MCP stdin and each worker's response descriptor,
+timeout set to the earliest pending deadline. Single-threaded, no runtime,
+and still responsive while a session is stuck. Dependencies reduce to
+`unix`, `jsonrpc` and `yojson`.
 
 **The worker is bytecode.** utop has no native archive, so the worker is
 built `byte_complete`. The server stays native.

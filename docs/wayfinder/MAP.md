@@ -41,7 +41,8 @@ must evaluate it first. Tests are Alcotest.
   an `outputSchema`.
 - [Worker linked to utop replaces the subprocess protocol](tickets/014-worker-architecture.md)
   — the eval loop is ~30 lines and owning it removes the sentinel, the output
-  race and stdin theft outright; supersedes the subprocess baseline.
+  race and stdin theft outright; supersedes the subprocess baseline. Neither
+  server nor worker runs Eio or Lwt: the server is a `Unix.select` loop.
 - [Trust boundary](tickets/012-trust-boundary.md) — trusted local developer
   tool, deliberately not sandboxed; stdio implies a local parent and that
   assumption is load-bearing.
