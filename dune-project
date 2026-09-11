@@ -1,8 +1,8 @@
 (lang dune 3.20)
-(name utop_mcp)
+(name utop-mcp)
 (generate_opam_files true)
 (package
- (name utop_mcp)
+ (name utop-mcp)
  (synopsis "MCP server exposing an OCaml utop toplevel")
  (depends
   (ocaml (>= 5.3.0))

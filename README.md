@@ -28,40 +28,53 @@ execution.** Do not do that.
 
 ## Installing
 
+You do not need to clone this repository.
+
 **Install it into the same opam switch as the project you want to explore.**
 The worker is bytecode, and bytecode is version-locked: a worker built with
 OCaml 5.4 cannot load artifacts compiled by 5.3. If you only want to poke at
 installed libraries, any switch will do.
 
-For your default switch:
+Into your current switch:
+
+```sh
+opam pin add utop-mcp https://github.com/glyh/utop-mcp.git
+```
+
+Into a project that has its own local switch, which is the case that matters
+if you want to reach that project's own code:
+
+```sh
+opam pin add --switch /path/to/project \
+  utop-mcp https://github.com/glyh/utop-mcp.git
+```
+
+This installs two binaries into that switch's `bin`. `utop-mcp` is the
+server; `utop-mcp-worker` is the toplevel it spawns, one per session. The
+server finds the worker beside its own executable, so they must stay
+installed together. `UTOP_MCP_WORKER` overrides that if you need a specific
+build.
+
+Requires OCaml 5.3.0 or newer. Everything else comes in as a dependency.
+
+### From a clone, for development
 
 ```sh
 eval $(opam env)          # fish: eval (opam env)
 dune build
-dune install              # or: opam install .
+dune test
+dune install
 ```
 
-For a project with its own local switch, which is the case that matters if
-you want to reach that project's code:
+To build against a different switch without disturbing your default build:
 
 ```sh
 PROJ=/path/to/project
-
-# 1. the toolchain, in the project's switch
 opam install --switch $PROJ utop yojson jsonrpc alcotest
-
-# 2. build and install utop-mcp there, in a separate build dir so it does
-#    not fight your default-switch build
-cd /path/to/utop-mcp
 opam exec --switch $PROJ -- dune build --build-dir=/tmp/utop-mcp-build
 opam exec --switch $PROJ -- \
   dune install --build-dir=/tmp/utop-mcp-build --prefix=$PROJ/_opam
 ```
-
-Either way this installs two binaries. `utop-mcp` is the server;
-`utop-mcp-worker` is the toplevel it spawns, one per session. The server
-finds the worker beside its own executable, so they must stay installed
-together. `UTOP_MCP_WORKER` overrides that if you need a specific build.
 
 ## Registering it with Claude Code
 
@@ -72,8 +85,10 @@ often is not.
 
 ```sh
 cd /path/to/project
-claude mcp add utop "$(opam var bin)/utop-mcp"          # default switch
-claude mcp add utop "$PROJ/_opam/bin/utop-mcp"          # project switch
+
+# whichever switch you installed into
+claude mcp add utop "$(opam var bin)/utop-mcp"
+claude mcp add utop "/path/to/project/_opam/bin/utop-mcp"
 
 claude mcp list        # expect: utop: ... - ✔ Connected
 ```
@@ -109,18 +124,10 @@ Reaching a dune project's *own* libraries still takes manual work, because
 they are usually private libraries rather than findlib packages. See the
 open ticket `docs/wayfinder/tickets/021-dune-aware-load.md`.
 
-## Building
+## Notes on the build
 
-`opam env` must be in scope:
-
-```sh
-eval $(opam env)
-dune build
-dune test
-```
-
-Requires OCaml 5.3.0 or newer and `utop`. The worker is bytecode, because
-utop ships no native archive; the server is native.
+The worker is bytecode, because utop ships no native archive; the server is
+native.
 
 Verified on OCaml 5.3.0 with utop 2.17.0 and on 5.4.0 with utop 2.16.0, so
 it is not pinned to either.
