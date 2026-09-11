@@ -112,6 +112,9 @@ must evaluate it first. Tests are Alcotest.
 - [Removing the utop dependency](tickets/022-drop-utop.md) — 22 packages down
   to 2; the remaining helpers were reimplemented over compiler-libs, which also
   fixed incomplete input killing the worker.
+- [Loading libraries into a session](tickets/007-library-loading.md) — calls
+  `Topfind` directly rather than a directive, so a missing package fails
+  honestly; largely superseded by `dune top` reporting externals too.
 - [Trust boundary](tickets/012-trust-boundary.md) — trusted local developer
   tool, deliberately not sandboxed; stdio implies a local parent and that
   assumption is load-bearing.
