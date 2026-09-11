@@ -1,8 +1,8 @@
 ---
-status: open
+status: closed
 type: grilling
 blocked-by: []
-assignee:
+assignee: lyh
 ---
 
 # Protocol between server and worker
@@ -58,8 +58,36 @@ report how many succeeded so the caller knows where it stopped. Rejected
 running all phrases regardless, which happily executes code depending on a
 binding an earlier failed phrase never created.
 
-## Still open
+**Per-phrase records with offsets into the raw segment.** Evaluation
+yields two genuinely different things and the prototype wrongly glued them
+together: the toplevel's own rendering (`val x : int = 42`,
+`Exception: Failure "boom".`) comes from the formatter passed to
+`execute_phrase`, while program output comes from the capture file. Each
+phrase gets a record carrying its rendering, its warnings, and a start and
+length into the raw segment. The offsets are free, since capture is
+truncated per eval and the file size after each phrase gives the span.
 
-The concrete request and response field lists. Keep them minimal: the
-server already holds the process handle, so liveness and kill need no
-protocol support.
+**Warnings are their own field.** `Location.formatter_for_warnings` is a
+ref in compiler-libs; pointing it at a separate buffer separates warning
+text from value rendering cleanly. Verified: an unused-variable warning and
+a non-exhaustive-match warning both moved out of the rendering buffer
+intact. Free, so taken.
+
+**Error locations carry both forms.** `UTop.check_phrase` returns
+`location list` where `location = int * int` byte offsets, plus a
+`lines option list` for line ranges. Both are already there, so both are
+reported.
+
+**Parse the whole buffer first; a parse error executes nothing.**
+`UTop.parse_use_file` yields the phrase list in one go, so a syntax error
+in the last phrase is known before the first runs. The agent then fixes
+and resubmits against unchanged state instead of reconstructing which
+phrases took effect.
+
+**Type errors are necessarily asymmetric, and this is documented rather
+than papered over.** Whether a later phrase typechecks depends on what
+earlier phrases did to the environment, so typing is checked as execution
+reaches each phrase. Partial execution is therefore possible on a type
+error but not on a syntax error. Say so in the tool description. Rejected
+making it uniform by rolling back, which the toplevel cannot do and whose
+side effects have already happened, so it would be a lie.

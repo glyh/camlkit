@@ -46,6 +46,9 @@ must evaluate it first. Tests are Alcotest.
 - [Serialization format for worker IPC](tickets/017-serialization-benchmark.md)
   — no serialization dependency; frame is JSON metadata plus a raw byte
   segment, which measured faster than every library tested.
+- [Protocol between server and worker](tickets/015-worker-ipc.md) — two-segment
+  frames, per-phrase records with offsets, warnings split out via
+  `Location.formatter_for_warnings`, whole-buffer parse before any execution.
 - [Trust boundary](tickets/012-trust-boundary.md) — trusted local developer
   tool, deliberately not sandboxed; stdio implies a local parent and that
   assumption is load-bearing.
