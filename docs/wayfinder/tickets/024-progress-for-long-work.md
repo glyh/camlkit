@@ -1,7 +1,7 @@
 ---
 status: open
 type: research
-blocked-by: []
+blocked-by: [025]
 assignee:
 ---
 
@@ -21,3 +21,7 @@ milestones, one per archive, and an evaluation has none.
 Worth weighing against the capture file, which already lets the server read
 partial output at any time; progress may be better spent on `load` and on a
 build than on `eval`.
+
+**Blocked on the build tool**, which is what creates an operation long enough
+to justify this. Before that, the longest thing here is an evaluation, whose
+deadline is thirty seconds and which has no milestones to report.
