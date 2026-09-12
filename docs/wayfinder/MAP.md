@@ -232,6 +232,15 @@ must evaluate it first. Tests are Alcotest.
   and `OPAM_SWITCH_PREFIX` only: `CAML_LD_LIBRARY_PATH` stays untouched so
   ticket 028's `Dll.add_path` decision stands. `CAMLKIT_SWITCH` overrides,
   soundly only for a switch of the same OCaml version.
+- [A failed dune top degrades in silence](tickets/040-a-silent-fallback.md) —
+  **fixed.** `dune top` failing was indistinguishable from a directory that is
+  not a dune project, and both fell through to scanning `_build` for archives.
+  Reproduced on camlkit itself: the scan dropped both externals, pulled a test
+  fixture into the session, and advised `require` for a package the project
+  declares. The call now keeps dune's stderr instead of discarding it, and a
+  dune project whose dune could not answer is refused with what dune said
+  rather than scanned. Refused rather than scanned-with-a-field, because a
+  field beside a wrong answer does not stop a caller acting on the message.
 - [Typecheck without running](tickets/041-typecheck-without-running.md) —
   **done.** `check: true` on `eval` stops after the typecheck pass: types back,
   nothing runs, no implicit name consumed, the same warnings and the same
@@ -355,11 +364,13 @@ it is also where `dune top` came from.
   that no longer writes the file, and its hand-written `compiler-libs`
   occurrence walker serves a 4.14 tree this server cannot start a session for.
 
-- **The environment a client launches us in.** The cause is fixed, see the
-  decision below; what remains open is
-  [A failed dune top degrades in silence](tickets/040-a-silent-fallback.md),
-  because removing the common cause of a fallback does not make the fallback
-  say it happened.
+- **A file's context is missing its wrapper.** New, and the one open defect on
+  a tool that is otherwise done:
+  [context lost the wrapper](tickets/051-context-lost-the-wrapper.md). `context`
+  on a file in this project's own wrapped library answers with the file's own
+  `open` and neither dune's `-open` nor the file's own module, which is the
+  half a reader cannot guess. merlin is answering correctly; the reading of its
+  reply is not. Found by `scripts/load-check.py`, which had been failing.
 
 - **Resource limits beyond time and heap.** Both are now bounded, see
   [A ceiling on a phrase's heap](tickets/030-heap-ceiling.md). File

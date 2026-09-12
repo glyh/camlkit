@@ -1,8 +1,8 @@
 ---
-status: open
+status: resolved
 type: defect
 blocked-by: []
-assignee:
+assignee: lyh
 ---
 
 # A failed dune top degrades in silence
@@ -30,7 +30,57 @@ point where it is known. `load` then treats an empty list as "not a dune
 project" and scans, which is the right response to one of the two things an
 empty list can mean.
 
-## Not yet decided
+## Reproduced
+
+On camlkit itself, the same call twice, with the server started from a shell
+with no dune on `PATH` and switch adoption off - the shape
+[dune cannot see the switch a client did not pass on](039-dune-in-a-bare-environment.md)
+is about.
+
+With dune reachable: `ok`, four libraries, `wire` and `camlkit` with the
+externals `yojson` and `jsonrpc`.
+
+Without: `partial`, two libraries, `wire` and `mylib` - the test fixture -
+both externals gone, and `camlkit` failing with
+
+    Reference to undefined compilation unit `Yojson__Safe'
+      Yojson__Safe is not built by this project, so it comes from an external
+      library. Load it with the require tool first, then load again.
+
+Every sentence of which is true about the scan's result and false about the
+project: `yojson` is declared in `lib/dune`, dune knows it, and it had loaded
+seconds earlier. A directory that is genuinely not a dune project still fails
+honestly, since there is nothing to scan, which is the case the fallback was
+written for.
+
+## Decided
+
+**The evidence stops being discarded.** `dune_top` kept `2>/dev/null` and
+mapped any non-zero exit to `[]`. It now keeps stderr and answers with one of
+three things rather than a list that meant all of them: `Not_a_project`,
+`Dune_failed` carrying what dune said, or `Answered`.
+
+**A dune project is not scanned.** The empty list conflated three situations
+and the caller could only read it as the first. Now: no `dune-project` falls
+through to the scan, which is what it was for; a dune project whose dune could
+not answer is refused, naming what dune said; and dune answering with nothing
+left to load is `Ok ([], [])` rather than a reason to scan.
+
+Refused rather than scanned-with-a-field, which is where the ticket had been
+leaning. A field beside a wrong answer does not stop a caller acting on the
+message, and the message is the part that lies. It also costs little now that
+039 removed the common cause, and the refusal names the one thing that fixes
+it: in the reproduction above, dune's own `Library "yojson" not found`.
+
+**A named library the project does not build is refused too.** It reached the
+same fallback and came back as "no .cma archives under ...", a sentence about
+the wrong thing. It now says what the project does build.
+
+**The scan collecting test fixtures** stops mattering for dune projects, since
+they no longer reach it, and stays true for the directories where walking the
+tree is the whole point. Not otherwise addressed.
+
+## Superseded questions
 
 **What a caller should be told.** The project conventions say a failure names
 the failing thing in a field, and that a field with nothing to say is absent.
@@ -50,3 +100,8 @@ produces a confident, wrong result. Distinguishing them is already possible:
 build tree for `.cma` files, so it collects test fixtures and anything else
 built. Harmless when the scan is a last resort for a small directory, noise
 when it stands in for a real project.
+
+Checked by `scripts/load-check.py`, which cannot live in `dune test` because
+the load shells out to `dune top` and dune will not run inside dune. It starts
+a second server with no dune on `PATH` and requires a refusal naming dune,
+rather than a partial load.

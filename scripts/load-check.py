@@ -29,11 +29,34 @@ render = os.path.join(project, "lib", "render.ml")
 opens = call(3, "context", {"file": render})
 in_context = call(4, "eval", {"session": "s", "code": opens + "\ninfrastructure_failure;;"})
 
+# A dune that cannot answer must not fall through to scanning the build tree.
+# The scan finds the project's own libraries plus anything else built there,
+# and none of the externals, which reads as a complete answer and is not one;
+# see docs/wayfinder/tickets/040. Reproduced the way a client causes it: no
+# dune on PATH and no switch to put one back.
+blind = subprocess.Popen(
+    [server], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True,
+    bufsize=1, env=dict(os.environ, CAMLKIT_WORKER=worker,
+                        PATH="/usr/bin:/bin", CAMLKIT_SWITCH="none"))
+blind.stdin.write(json.dumps(
+    {"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+     "params": {"name": "load", "arguments": {"session": "s", "path": project}}}) + "\n")
+blind.stdin.flush()
+refused = json.loads(blind.stdout.readline())["result"]
+try: blind.terminate(); blind.wait(timeout=5)
+except Exception: blind.kill()
+refused_text = refused["content"][0]["text"].strip()
+refused_ok = (refused["structuredContent"].get("status") == "failed"
+              and "dune could not say" in refused_text)
+
 print("load said     :", loaded)
+print("without dune  :", refused_text.split("\n")[0],
+      "(expect a refusal, not a partial load)")
 print("next phrase   :", after, "(expect a Warnings.loc value)")
 print("context said  :", opens.replace("\n", " "))
 print("in context    :", in_context, "(expect a function, not Unbound value)")
 ok = ("ocamltoplevel" not in loaded and "loc_ghost" in after
+      and refused_ok
       and "open Camlkit.Render;;" in opens and "Unbound" not in in_context)
 print("PASS" if ok else "FAIL")
 try: p.terminate(); p.wait(timeout=5)

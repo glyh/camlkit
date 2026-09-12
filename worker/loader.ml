@@ -23,11 +23,25 @@ let dune_binary = lazy (Wire.Exe.find "dune")
    for the build lock. *)
 let is_dune_project path = Sys.file_exists (Filename.concat path "dune-project")
 
+(* Three answers, not two. An empty list used to mean all of them, and the
+   caller could only read it as "not a dune project", which is the one case
+   where scanning the build tree is the right response. A dune project whose
+   dune could not answer was scanned too, and that produced a confident wrong
+   result rather than a failure: see docs/wayfinder/tickets/040. *)
+type asked =
+  | Not_a_project             (* no dune-project here; nothing to ask *)
+  | Dune_failed of string     (* asked, and dune could not answer *)
+  | Answered of string list
+
 let dune_top path =
-  if not (is_dune_project path) then []
+  if not (is_dune_project path) then Not_a_project
   else
+  (* stderr kept rather than discarded: it is the whole diagnosis when this
+     fails, and it was being thrown away at the one point that had it. On the
+     way through it is harmless, since only #directory and #load lines are
+     read out of the output. *)
   let cmd =
-    Printf.sprintf "cd %s && %s top . 2>/dev/null" (Filename.quote path)
+    Printf.sprintf "cd %s && %s top . 2>&1" (Filename.quote path)
       (Filename.quote (Lazy.force dune_binary)) in
   let ic = Unix.open_process_in cmd in
   let rec drain acc =
@@ -37,8 +51,10 @@ let dune_top path =
   in
   let lines = drain [] in
   match Unix.close_process_in ic with
-  | Unix.WEXITED 0 -> lines
-  | _ -> []
+  | Unix.WEXITED 0 -> Answered lines
+  | _ ->
+    let said = String.trim (String.concat "\n" lines) in
+    Dune_failed (if said = "" then "dune exited non-zero and said nothing" else said)
 
 (* #directory "..." ;; and #load "..." ;; *)
 let directive_arg prefix line =
@@ -180,21 +196,61 @@ let attempt ?(add_dirs = true) archive =
   | Some e, "" -> Error e
   | Some e, said -> Error (said ^ " (" ^ e ^ ")")
 
-(* Ask dune, and fall back to scanning for a directory that is not a dune
-   project (or a dune that cannot answer). *)
+(* What the dune route concluded. [Scan] is the one case that falls through to
+   walking the build tree: a directory that is not a dune project, where there
+   is nothing to ask and nothing but archives to look at. Every other outcome
+   is dune's answer, including dune failing to give one. *)
+type route =
+  | Scan
+  | Refuse of string
+  | Nothing_to_do
+  | Did of (string list * (string * string) list)
+
 let load_via_dune ~libraries path =
   match dune_top path with
-  | [] -> None
-  | lines ->
+  | Not_a_project -> Scan
+  | Dune_failed said ->
+    (* Deliberately not a scan. The scan answers from whatever .cma files are
+       under _build, which for a real project means the externals it depends on
+       are missing and anything else built - a test fixture, say - is present.
+       That reads as a complete answer and is not one, and the error it then
+       reports names a package the project does in fact declare. An honest
+       failure names the one thing that fixes it. *)
+    Refuse
+      (Printf.sprintf
+         "dune could not say what %s is built from, so there is nothing \
+          reliable to load. Scanning the build tree instead would find the \
+          wrong set: the externals this project depends on are not under \
+          _build, and whatever else was built there is. dune said:\n%s"
+         path said)
+  | Answered lines ->
     let dirs = List.filter_map (directive_arg "directory") lines in
     let archives = List.filter_map (directive_arg "load") lines in
+    let wanted_missing =
+      match libraries with
+      | [] -> []
+      | wanted ->
+        List.filter (fun w -> not (List.exists (fun a -> name_of a = w) archives))
+          wanted
+    in
     let archives =
       match libraries with
       | [] -> archives
       | wanted -> List.filter (fun a -> List.mem (name_of a) wanted) archives
     in
     let archives = List.filter (fun a -> not (already_linked ~root:path a)) archives in
-    if archives = [] then None
+    match wanted_missing with
+    (* dune answered and does not have them, which the scan used to turn into
+       "no .cma archives under ...", a sentence about the wrong thing. *)
+    | _ :: _ ->
+      Refuse
+        (Printf.sprintf "%s does not build %s. It builds: %s"
+           path (String.concat ", " wanted_missing)
+           (match List.map name_of (List.filter_map (directive_arg "load") lines) with
+            | [] -> "nothing"
+            | names -> String.concat ", " names))
+    | [] ->
+    if archives = [] then Nothing_to_do
     else begin
       List.iter (fun d -> Topdirs.dir_directory d) dirs;
       (* dune's order is already correct, so load once through, in order. *)
@@ -206,14 +262,18 @@ let load_via_dune ~libraries path =
              | Error e -> (loaded, (a, e) :: failed))
           ([], []) archives
       in
-      Some (List.rev loaded, List.rev failed)
+      Did (List.map name_of (List.rev loaded),
+           List.map (fun (a, e) -> (name_of a, e)) (List.rev failed))
     end
 
 let load ~libraries path =
   match load_via_dune ~libraries path with
-  | Some (loaded, failed) ->
-    Ok (List.map name_of loaded, List.map (fun (a, e) -> (name_of a, e)) failed)
-  | None ->
+  | Did (loaded, failed) -> Ok (loaded, failed)
+  | Refuse why -> Error why
+  (* dune answered and every archive it named is already in the session. Not a
+     failure and not a reason to scan: there is simply nothing left to load. *)
+  | Nothing_to_do -> Ok ([], [])
+  | Scan ->
   match build_root path with
   | Error e -> Error e
   | Ok root ->
