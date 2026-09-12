@@ -98,17 +98,17 @@ let test_tools_listed () =
     Yojson.Safe.Util.(member "tools" r |> to_list
                       |> List.map (fun t -> member "name" t |> to_string)) in
   Alcotest.(check (slist string compare)) "the tools"
-    [ "context"; "continue"; "describe"; "document"; "eval"; "inspect"; "load";
-      "locate"; "outline"; "require"; "reset"; "search_type"; "signature";
-      "type_at"; "uses" ] names;
+    [ "context"; "continue"; "describe"; "document"; "eval"; "expand";
+      "inspect"; "load"; "locate"; "outline"; "require"; "reset";
+      "search_type"; "signature"; "type_at"; "uses" ] names;
   let schemas =
     Yojson.Safe.Util.(member "tools" r |> to_list
                       |> List.filter (fun t -> member "outputSchema" t <> `Null)
                       |> List.map (fun t -> member "name" t |> to_string)) in
   Alcotest.(check (slist string compare)) "every tool declares an output schema"
-    [ "context"; "continue"; "describe"; "document"; "eval"; "inspect"; "load";
-      "locate"; "outline"; "require"; "reset"; "search_type"; "signature";
-      "type_at"; "uses" ] schemas
+    [ "context"; "continue"; "describe"; "document"; "eval"; "expand";
+      "inspect"; "load"; "locate"; "outline"; "require"; "reset";
+      "search_type"; "signature"; "type_at"; "uses" ] schemas
 
 let test_eval_through_the_loop () =
   with_server @@ fun c ->
@@ -539,6 +539,28 @@ let with_source f =
    wrapped library, so what this reaches is the file's own opens and the
    decision not to offer a module a session could not name; the wrapper half
    needs a dune project and lives in scripts/load-check.py. *)
+(* A file whose ppx is named in a .merlin rather than by dune. dune's `pps`
+   refuses a plain Ast_mapper rewriter - "No ppx driver were found" - and no
+   ppx package is installed in this switch, so the fixture rewriter is reached
+   through the -ppx protocol the compiler itself uses. merlin still reads
+   .merlin, which is what makes an expansion testable here at all. *)
+let with_ppx_source f =
+  let ppx = Filename.concat (Sys.getcwd ()) "fixtures/ppx/demo_ppx.bc.exe" in
+  let dir = Filename.temp_dir "camlkit-ppx" "" in
+  let write name contents =
+    let oc = open_out (Filename.concat dir name) in
+    output_string oc contents; close_out oc
+  in
+  write "thing.ml" "let greeting = [%demo]\nlet plain = 1\n";
+  write ".merlin" (Printf.sprintf "FLG -ppx %s\n" ppx);
+  Fun.protect
+    ~finally:(fun () ->
+        List.iter
+          (fun n -> try Sys.remove (Filename.concat dir n) with Sys_error _ -> ())
+          [ "thing.ml"; ".merlin" ];
+        (try Unix.rmdir dir with Unix.Unix_error _ -> ()))
+    (fun () -> f (Filename.concat dir "thing.ml"))
+
 let with_opens f =
   let dir = Filename.temp_dir "camlkit-ctx" "" in
   let path = Filename.concat dir "widget.ml" in
@@ -581,6 +603,34 @@ let test_context_of_a_missing_file () =
   Alcotest.(check bool) "a negative answer, not the server failing" false
     (is_error r);
   Alcotest.(check bool) "and names the file" true (has "/nope/nowhere.ml" (text r))
+
+(* An agent cannot read a generated name off the source in front of it, which
+   is the whole reason for this tool. See docs/wayfinder/tickets/037. *)
+let test_expand () =
+  with_server @@ fun c ->
+  with_ppx_source @@ fun path ->
+  let r = call c ~id:1 ~tool:"expand"
+      ~args:(`Assoc [ "file", `String path; "line", `Int 1; "col", `Int 17 ]) in
+  Alcotest.(check bool) "not an error" false (is_error r);
+  let sc = Yojson.Safe.Util.member "structuredContent" r in
+  let code = Yojson.Safe.Util.(member "code" sc |> to_string) in
+  Alcotest.(check bool) "the generated name, which the call site does not show"
+    true (has "demo_generated_name" code);
+  Alcotest.(check bool) "the text half is source, not JSON with escapes" true
+    (has "demo_generated_name" (text r) && not (has "\\n" (text r)));
+  Alcotest.(check bool) "and the node it came from is located" true
+    (Yojson.Safe.Util.(member "deriver" sc |> member "start" |> member "line")
+     = `Int 1);
+  (* A position with no ppx on it is an answer about the file, not a failure,
+     and merlin reports it as a success carrying a bare string. *)
+  let r = call c ~id:2 ~tool:"expand"
+      ~args:(`Assoc [ "file", `String path; "line", `Int 2; "col", `Int 4 ]) in
+  Alcotest.(check bool) "still not an error" false (is_error r);
+  let sc = Yojson.Safe.Util.member "structuredContent" r in
+  Alcotest.(check bool) "no code came back" true
+    (Yojson.Safe.Util.member "code" sc = `Null);
+  Alcotest.(check bool) "and the reason says where a position has to point" true
+    (has "deriving" Yojson.Safe.Util.(member "error" sc |> to_string))
 
 let test_outline () =
   with_server @@ fun c ->
@@ -1054,6 +1104,7 @@ let () =
            test_a_breakpoint_the_runtime_cannot_reach_says_so ]);
       ("source",
        [ Alcotest.test_case "outline" `Slow test_outline;
+         Alcotest.test_case "expand a ppx" `Slow test_expand;
          Alcotest.test_case "type at a position" `Slow test_type_at;
          Alcotest.test_case "locate a definition" `Slow test_locate;
          Alcotest.test_case "a missing file fails cleanly" `Slow

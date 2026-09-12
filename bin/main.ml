@@ -71,7 +71,8 @@ let arg_int args name =
   | _ -> Error (Printf.sprintf "argument %S must be an integer" name)
 
 let is_source_query = function
-  | "locate" | "type_at" | "outline" | "uses" | "search_type" | "document" ->
+  | "locate" | "type_at" | "outline" | "uses" | "search_type" | "document"
+  | "expand" ->
     true
   | _ -> false
 
@@ -159,6 +160,9 @@ let source_query id name args =
     | "type_at" ->
       let* pos = at () in
       Merlin.query ~command:"type-enclosing" ~args:pos ~file
+    | "expand" ->
+      let* pos = at () in
+      Merlin.query ~command:"expand-ppx" ~args:pos ~file
     | "uses" ->
       let* line = arg_int args "line" in
       let* col = arg_int args "col" in
@@ -256,6 +260,22 @@ let source_query id name args =
     in
     (* Not isError: a name with no comment on it is an answer. *)
     reply id { Render.content; structured = `Assoc fields; is_error = false }
+  (* Expanded code is source to read, so it goes in the text half as it came
+     rather than through the JSON pretty-printer, which would escape every
+     newline in it. The deriver's span rides alongside as data. *)
+  | Ok value when name = "expand" ->
+    (match Merlin.expansion value with
+     | Ok (code, deriver) ->
+       let fields =
+         ("code", `String code)
+         :: (match deriver with `Null -> [] | d -> [ ("deriver", d) ]) in
+       reply id { Render.content = code; structured = `Assoc fields;
+                  is_error = false }
+     | Error why ->
+       (* Not isError: no ppx at that position is an answer about the file. *)
+       reply id { Render.content = why;
+                  structured = `Assoc [ "error", `String why ];
+                  is_error = false })
   | Ok value ->
     (* merlin already answers in structure; name it so the result says what it
        is, and give the text half something readable. *)

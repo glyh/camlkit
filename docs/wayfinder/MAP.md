@@ -232,6 +232,15 @@ must evaluate it first. Tests are Alcotest.
   and `OPAM_SWITCH_PREFIX` only: `CAML_LD_LIBRARY_PATH` stays untouched so
   ticket 028's `Dll.add_path` decision stands. `CAMLKIT_SWITCH` overrides,
   soundly only for a switch of the same OCaml version.
+- [What a ppx generated](tickets/037-ppx-expansion.md) — **done.** The `expand`
+  tool over merlin's `expand-ppx`: the code a deriver or extension produced at a
+  position, as source rather than as JSON with its newlines escaped, so an agent
+  stops guessing whether `[@@deriving yojson]` gave `to_yojson` or
+  `yojson_of_t`. A position, like every other source tool, because merlin takes
+  only one and `outline` already supplies them. Verified against a rewriter the
+  suite grew for itself over compiler-libs, since no ppx package is installed
+  here: dune's `pps` refuses a plain `Ast_mapper` rewriter, and merlin still
+  reads a `.merlin`, which is what made an expansion testable at all.
 - [A warning arrives several times over](tickets/050-a-warning-arrives-several-times-over.md)
   — **fixed.** One warning reached the caller five times: once as a warning and
   four times as the phrase's own output, because the typecheck passes print to
@@ -475,11 +484,12 @@ conversation already is, which History below declined.
   constructor. Not from the Lisps, but the same family, and an agent writing
   OCaml has no way to ask for it today.
 
-- **Macroexpansion.** Specified in [What a ppx generated](tickets/037-ppx-expansion.md),
-  open. Core to both CIDER and SLY, and the OCaml equivalent is ppx,
-  currently invisible. Merlin's `expand-ppx` expands at a position, which
-  is cheaper than `dune describe pp`, which builds the file and prints the
-  whole preprocessed source.
+- **Macroexpansion.** No longer fog, see
+  [What a ppx generated](tickets/037-ppx-expansion.md): the `expand` tool.
+  Merlin's `expand-ppx` answers at a position without a build, where
+  `dune describe pp` builds the file and prints the whole preprocessed source.
+  What remains open is only whether a real deriver's output is worth reading at
+  scale, which needs a ppx package this switch does not have.
 
 - **Tracing, again.** `sly-trace-dialog` builds a real call tree with
   arguments and return values per frame, which is more than `#trace` gives and

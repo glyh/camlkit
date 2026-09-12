@@ -275,6 +275,38 @@ let type_at_tool =
                                 "description", `String "Each with type and the \
                                   range it covers, innermost first." ]) ] ]
 
+(* An agent cannot read a generated name off the source in front of it:
+   whether [@@deriving yojson] gives to_yojson or yojson_of_t is the deriver's
+   choice, and guessing it reads as confident. See tickets/037. *)
+let expand_tool =
+  `Assoc [
+    "name", `String "expand";
+    "description", `String
+      "The code a ppx generated at a position: what [@@deriving ...] or a \
+       [%extension] expands to, as source. Answers from the file, with no \
+       build and no session, so it works on a name that does not exist yet \
+       anywhere else. Put the position on the deriver name inside \
+       [@@deriving ...], or on the [%extension] itself; a position on the type \
+       or expression it is attached to finds nothing. A structure-level \
+       extension such as let%test_module may not expand where an expression \
+       one does. When the generated names are all you want and the project \
+       builds, describe on the built module is cheaper.";
+    "inputSchema", obj ~required:[ "file"; "line"; "col" ]
+      [ file_arg; line_arg; col_arg ];
+    "outputSchema", obj
+      [ ("code", `Assoc [ "type", `String "string";
+                          "description", `String "The generated source." ]);
+        ("deriver", `Assoc
+           [ "type", `String "object";
+             "description", `String
+               "The range of the deriver or extension node this came from." ]);
+        ("error", `Assoc
+           [ "type", `String "string";
+             "description", `String
+               "Present instead of code when there is no ppx node at that \
+                position, which is an answer about the file rather than a \
+                failure." ]) ] ]
+
 let outline_tool =
   `Assoc [
     "name", `String "outline";
@@ -410,4 +442,5 @@ let all =
   [ eval_tool; describe_tool; require_tool; load_tool; reset_tool;
     continue_tool; inspect_tool;
     locate_tool; type_at_tool; outline_tool; uses_tool; search_type_tool;
+    expand_tool;
     document_tool; signature_tool; context_tool ]

@@ -10,4 +10,7 @@
   %{exe:../bin/main.exe}
   fixtures/mylib/META
   fixtures/mylib/mylib.cma
-  fixtures/mylib/mylib.cmi))
+  fixtures/mylib/mylib.cmi
+  ; The suite's own ppx, reached through the -ppx protocol rather than dune's
+  ; pps, which refuses a plain Ast_mapper rewriter. See tickets/037.
+  %{exe:fixtures/ppx/demo_ppx.bc.exe}))

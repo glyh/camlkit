@@ -189,6 +189,30 @@ let documentation value =
     else Ok s
   | _ -> Error "merlin answered document with something other than text"
 
+(* What `expand-ppx` answers with.
+
+   Two shapes under one class. On success an object with the generated `code`
+   and the span of the deriver or extension node it came from; on failure a
+   bare string, `class: return` and all, the same sentinel-inside-a-success
+   that [documentation] above has to decode. There is one failure string and it
+   is matched whole rather than by prefix, because unlike the document
+   sentinels it carries nothing variable.
+
+   See docs/wayfinder/tickets/037. *)
+let expansion value =
+  match value with
+  | `String _ ->
+    Error
+      "no ppx deriver or extension node at that position. A deriver is the \
+       name inside [@@deriving ...] and an extension is the [%name] itself; \
+       the position has to be on one of those, not on the type or expression \
+       it is attached to."
+  | `Assoc _ as v ->
+    (match Yojson.Safe.Util.member "code" v with
+     | `String code -> Ok (code, Yojson.Safe.Util.member "deriver" v)
+     | _ -> Error "merlin answered expand-ppx without any expanded code")
+  | _ -> Error "merlin answered expand-ppx with neither code nor a reason"
+
 (* Merlin infers which namespace to search from the node under the cursor, even
    when the name is given outright: src/analysis/locate.ml infers a context
    from the browse tree and src/analysis/env_lookup.ml maps a module path to

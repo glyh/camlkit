@@ -1,0 +1,7 @@
+; Built as an executable, not a library of kind ppx_rewriter: dune's `pps`
+; wants a ppxlib driver and refuses a plain Ast_mapper rewriter. The -ppx
+; protocol needs only a program, which is what Ast_mapper.run_main gives.
+(executable
+ (name demo_ppx)
+ (modes byte_complete)
+ (libraries compiler-libs.common))

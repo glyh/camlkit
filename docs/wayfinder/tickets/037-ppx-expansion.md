@@ -1,8 +1,8 @@
 ---
-status: open
+status: resolved
 type: research
 blocked-by: [027]
-assignee:
+assignee: lyh
 ---
 
 # What a ppx generated
@@ -45,19 +45,54 @@ and `let%expect_test` returned the sentinel at every column tried, including
 the `%` itself. Worth confirming against a second ppx before believing the
 rule, but a tool description should not promise `let%`.
 
+## Decided
+
+**A position, like every other merlin-backed tool here.** By name was
+considered and declined: merlin's command takes a position and nothing else, so
+answering by name means finding the deriver's column from a type's name first,
+which is machinery for a caller that can get the position from `outline`. The
+description says where the position has to point, because the failure sentinel
+is the only other way to find out.
+
+**The expanded code goes in the text half as source.** The generic renderer
+pretty-prints JSON, which would escape every newline in generated code and make
+the one thing the caller asked for unreadable. So `expand` has its own branch,
+as `document` does, with the deriver's span alongside as data.
+
+**The code as it comes, un-trimmed.** The open question was whether the bodies
+are worth their bytes. They are the answer when the question is what a `let%`
+does, and a caller that wants names alone has `describe` on a built module,
+which the description now says.
+
+**Not `isError` when there is no ppx there.** That is an answer about the file,
+like a name with no documentation on it.
+
+## Verified
+
+Not against a real deriver: no ppx package is installed in this switch. Rather
+than install one, the suite grew its own rewriter,
+`test/fixtures/ppx/demo_ppx.ml`, over compiler-libs alone, so it adds no
+dependency.
+
+Two things were learned getting there. dune's `(preprocess (pps ...))` refuses a
+plain `Ast_mapper` rewriter outright - "No ppx driver were found. It seems that
+demo_ppx is not compatible with Dune" - because it wants a ppxlib-style driver.
+And merlin still reads a `.merlin` file, so `FLG -ppx <exe>` names the rewriter
+without dune, without ppxlib and without a package. That is what makes an
+expansion testable here at all: the test writes a two-line `.merlin` beside a
+temp source file and the tool answers through its ordinary path.
+
+`[%demo]` expands to a `let` of `demo_generated_name`, which is exactly the case
+the question is about: a name the call site does not show.
+
 ## Open
 
-**Whether a position is the right way to ask.** Every other merlin-backed
-tool here takes one, so consistency says yes. But an agent reading a type
-definition wants "what did `[@@deriving sexp]` give me on this type", and it
-knows the type's name more reliably than the deriver's column. `document`
-already faced this and answers both ways.
-
-**Whether the expanded code is worth its bytes.** A deriver on a large variant
-generates a lot, and the useful part is usually the names and their types
-rather than the bodies. Against that: the bodies are the answer when the
-question is what a `let%` actually does. Perhaps the generated code as it
-comes, and the caller can ask `describe` for names alone.
+**Still unverified against a real deriver.** The fixture rewriter proves the
+plumbing, the decoding and the rendering against a genuine merlin reply, and
+says nothing about how a real deriver behaves at scale: whether
+`[@@deriving yojson]` on a large variant returns something worth reading, and
+whether the structure-extension gap measured in this ticket holds for other
+ppxes. Installing one into the switch would settle it.
 
 **The whole-file alternative.** `dune describe pp FILE` prints the entire
 preprocessed source. It builds the file first and returns everything, so it is
