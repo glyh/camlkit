@@ -257,7 +257,12 @@ it is also where `dune top` came from.
 - **A project as a tree of modules rather than files.** From ocaml-mcp's
   TODO, and the most interesting idea in it: an agent working on an OCaml
   project arguably wants to address modules, not paths. What that would mean
-  for a tool surface here is not yet sharp.
+  for a tool surface here is not yet sharp. `dune describe` was measured as the
+  obvious source and is weaker than it looks: s-expressions rather than JSON,
+  library dependencies named by opaque hashes that have to be resolved back,
+  and it needs the dune environment that
+  [dune cannot see the switch a client did not pass on](tickets/039-dune-in-a-bare-environment.md)
+  is about. Most of what it gives is readable off the file tree anyway.
 
 - **Package search and an opam index.** Declined. ocaml-mcp plans to process
   opam-repository into a cached index keyed by commit, to resolve package
@@ -299,6 +304,14 @@ it is also where `dune top` came from.
   `#trace` shows the boundary and never the interior, the debuggers cannot
   evaluate, and a breakpoint here would be an effect handler rather than
   either. Nothing is built; what is open is whether an agent ever asks for it.
+- **Two features an agent would use, specified and open.**
+  [Typecheck without running](tickets/041-typecheck-without-running.md), which
+  the two-pass evaluation almost already does, and
+  [Diagnostics without a build](tickets/042-diagnostics-without-a-build.md),
+  which is merlin answering about one file, including an edit that has not been
+  written, in tens of milliseconds. Neither is a build tool and neither
+  reverses ticket 025.
+
 - **The environment a client launches us in.** Two open defects, found through
   a real MCP client rather than reasoned about:
   [dune cannot see the switch a client did not pass on](tickets/039-dune-in-a-bare-environment.md)
