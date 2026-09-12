@@ -5,14 +5,19 @@
 
 let session_arg =
   ("session", `Assoc [ "type", `String "string";
-                       "description", `String "Session name. Sessions are \
-                         independent toplevels; state persists between calls." ])
+                       "description", `String "Session name, defaulting to \
+                         \"main\". Sessions are independent toplevels and \
+                         state persists between calls, so name one only to \
+                         keep work apart from what is already in main." ])
 
 let obj ?(required = []) props =
   `Assoc [ "type", `String "object";
            "properties", `Assoc props;
            "required", `List (List.map (fun r -> `String r) required) ]
 
+(* Every field here is absent when it has nothing to say: no bindings, no
+   rendering, no warnings, no output. A result is read by a model, so an empty
+   string costs tokens for no information. *)
 let phrase_schema =
   `Assoc [ "type", `String "object";
            "properties", `Assoc [
@@ -26,7 +31,9 @@ let phrase_schema =
                  utop transcript." ];
              "warnings", `Assoc [ "type", `String "string" ];
              "output", `Assoc [ "type", `String "string";
-               "description", `String "What the phrase printed." ];
+               "description", `String "What the phrase printed. If it printed \
+                 more than the limit, this ends with [output truncated, N \
+                 more characters]." ];
              "ran", `Assoc [ "type", `String "string";
                "description", `String "The autorun rule that rewrote this \
                  phrase, if one did: the expression was a promise and was run \
@@ -44,7 +51,7 @@ let eval_tool =
        #require are not accepted: loading a library is the require and load \
        tools, and showing a signature is describe. Write [%break] in a phrase \
        to stop there and inspect it, then continue.";
-    "inputSchema", obj ~required:[ "session"; "code" ]
+    "inputSchema", obj ~required:[ "code" ]
       [ session_arg;
         ("code", `Assoc [ "type", `String "string";
                           "description", `String "OCaml source. Phrases are \
@@ -64,9 +71,10 @@ let eval_tool =
                              [ "type", `String "array";
                                "items", `Assoc [ "type", `String "string" ];
                                "description", `String
-                                 "The rules this call ran under. A rewrite is \
-                                  otherwise invisible, since a run promise \
-                                  renders like any value." ]) ] ]
+                                 "The rules this call ran under, when they \
+                                  were not the default. A rewritten phrase \
+                                  credits its rule in the phrase's ran \
+                                  field." ]) ] ]
 
 let phrase_array =
   `Assoc [ "type", `String "array"; "items", phrase_schema ]
@@ -77,7 +85,7 @@ let describe_tool =
     "description", `String
       "Show the signature of a module, value or type in a session, including \
        modules defined during the session. Prefer this over guessing at names.";
-    "inputSchema", obj ~required:[ "session"; "path" ]
+    "inputSchema", obj ~required:[ "path" ]
       [ session_arg;
         ("path", `Assoc [ "type", `String "string";
                           "description", `String "A module path such as \
@@ -90,7 +98,7 @@ let require_tool =
     "description", `String
       "Load findlib packages into a session, making their modules available \
        to later evaluations.";
-    "inputSchema", obj ~required:[ "session"; "packages" ]
+    "inputSchema", obj ~required:[ "packages" ]
       [ session_arg;
         ("packages", `Assoc [ "type", `String "array";
                               "items", `Assoc [ "type", `String "string" ] ]) ];
@@ -115,11 +123,13 @@ let load_tool =
        interface mismatch, so the session must start clean. The worker must \
        have been built with the same OCaml version as the project, because \
        bytecode is version-locked.";
-    "inputSchema", obj ~required:[ "session"; "path" ]
+    "inputSchema", obj
       [ session_arg;
         ("path", `Assoc [ "type", `String "string";
                           "description", `String "Project root, or a \
-                            directory inside its _build tree." ]);
+                            directory inside its _build tree. Defaults to the \
+                            project the server was started in, which is the \
+                            usual case." ]);
         ("libraries", `Assoc [ "type", `String "array";
                                "items", `Assoc [ "type", `String "string" ];
                                "description", `String "Library names to load. \
@@ -145,7 +155,7 @@ let reset_tool =
        a new session name, which leaves the old toplevel running. Pass code \
        to evaluate it in the fresh toplevel in the same call, which is how a \
        preamble of helpers is put back; the result is then an eval's.";
-    "inputSchema", obj ~required:[ "session" ]
+    "inputSchema", obj ~required:[]
       [ session_arg;
         ("code", `Assoc [ "type", `String "string";
                           "description", `String "OCaml source to evaluate \
@@ -180,7 +190,7 @@ let continue_tool =
        Abandon raises inside the phrase instead of resuming it, so the rest \
        does not run but whatever it set up to release on the way out is \
        released.";
-    "inputSchema", obj ~required:[ "session" ]
+    "inputSchema", obj ~required:[]
       [ session_arg; id_arg;
         ("abandon", `Assoc [ "type", `String "boolean";
                              "description", `String "Raise inside the phrase \
@@ -196,7 +206,7 @@ let inspect_tool =
        bp_ names. A stop already binds them, so this is for reading them once \
        more, and for getting an earlier stop's values back after a later stop \
        overwrote the names. It does not resume anything.";
-    "inputSchema", obj ~required:[ "session" ] [ session_arg; id_arg ];
+    "inputSchema", obj [ session_arg; id_arg ];
     "outputSchema", obj
       [ ("id", `Assoc [ "type", `String "integer" ]);
         ("bound", `Assoc [ "type", `String "array";

@@ -20,13 +20,29 @@ let slice payload (p : Msg.phrase) =
   if p.out_len <= 0 || p.out_start < 0 || p.out_start > n then ""
   else String.sub payload p.out_start (min p.out_len (n - p.out_start))
 
+(* A field that says nothing is not worth its bytes: a result lands in a
+   model's context, where every empty string and every false flag is paid for
+   in tokens. So an empty rendering, no output, no warnings and no bindings
+   are simply absent, as [ran] already was, and truncation is folded into the
+   output it qualifies rather than carried as a flag beside it. *)
+let field name = function "" -> [] | s -> [ (name, `String s) ]
+
 let json_phrase payload (p : Msg.phrase) =
-  `Assoc ([ "bindings", `List (List.map Msg.json_of_binding p.bindings);
-            "rendering", `String p.rendering;
-            "warnings", `String p.warnings;
-            "output", `String (slice payload p);
-            "truncated", `Bool p.truncated ]
-          @ (match p.ran with None -> [] | Some r -> [ "ran", `String r ]))
+  let out = slice payload p in
+  let out =
+    if p.dropped > 0 then
+      Printf.sprintf "%s\n[output truncated, %d more character%s]" out p.dropped
+        (if p.dropped = 1 then "" else "s")
+    else out
+  in
+  `Assoc
+    ((match p.bindings with
+       | [] -> []
+       | bs -> [ ("bindings", `List (List.map Msg.json_of_binding bs)) ])
+     @ field "rendering" p.rendering
+     @ field "warnings" p.warnings
+     @ field "output" out
+     @ (match p.ran with None -> [] | Some r -> [ ("ran", `String r) ]))
 
 (* A transcript, in the order a terminal would show it: warnings, then what
    the phrase printed, then what the toplevel made of it. *)
@@ -36,9 +52,10 @@ let transcript payload phrases =
       if p.warnings <> "" then Buffer.add_string buf (String.trim p.warnings ^ "\n");
       let out = slice payload p in
       if out <> "" then Buffer.add_string buf out;
-      if p.truncated then
-        Buffer.add_string buf "\n[output truncated: the phrase printed more \
-                               than the limit]\n";
+      if p.dropped > 0 then
+        Buffer.add_string buf
+          (Printf.sprintf "\n[output truncated, %d more character%s]\n" p.dropped
+             (if p.dropped = 1 then "" else "s"));
       if p.rendering <> "" then Buffer.add_string buf (String.trim p.rendering ^ "\n");
       (* The rewrite is otherwise invisible here: the transcript of a promise
          that was run looks exactly like one of a plain value. *)
@@ -61,10 +78,12 @@ let of_response (response : Msg.response) payload =
       structured =
         `Assoc ([ "status", `String "ok";
                   "phrases", `List (List.map (json_phrase payload) phrases) ]
+                (* Only when it is not the default: a caller knows what it
+                   passed, and a phrase that was rewritten says so itself. *)
                 @ (match autorun with
-                    | None -> []
-                    | Some names ->
-                      [ "autorun", `List (List.map (fun n -> `String n) names) ]));
+                    | Some names when names <> Msg.autorun_default ->
+                      [ "autorun", `List (List.map (fun n -> `String n) names) ]
+                    | _ -> []));
       is_error = false }
   | Msg.Failed f ->
     let where =
@@ -126,11 +145,16 @@ let of_response (response : Msg.response) payload =
     in
     { content = summary ^ detail;
       structured =
-        `Assoc [ "status", `String (if failed = [] then "ok" else "partial");
-                 "loaded", `List (List.map (fun l -> `String l) loaded);
-                 "failed", `List (List.map (fun (lib, err) ->
-                     `Assoc [ "library", `String lib; "error", `String err ])
-                     failed) ];
+        `Assoc
+          ([ ("status", `String (if failed = [] then "ok" else "partial"));
+             ("loaded", `List (List.map (fun l -> `String l) loaded)) ]
+           @ (match failed with
+               | [] -> []
+               | fs ->
+                 [ ("failed",
+                    `List (List.map (fun (lib, err) ->
+                        `Assoc [ ("library", `String lib);
+                                 ("error", `String err) ]) fs)) ]));
       is_error = false }
   (* A stop is not a completion and does not pretend to be one: the caller has
      to know the phrase is still waiting, and with which id. *)
@@ -158,12 +182,21 @@ let of_response (response : Msg.response) payload =
     let body = transcript payload done_ in
     { content = (if body = "" then head else body ^ "\n" ^ head);
       structured =
-        `Assoc [ "status", `String "stopped";
-                 "id", `Int id;
-                 "bound", `List (List.map Msg.json_of_binding bound);
-                 "skipped", `List (List.map (fun (n, why) ->
-                     `Assoc [ "name", `String n; "reason", `String why ]) skipped);
-                 "phrases", `List (List.map (json_phrase payload) done_) ];
+        `Assoc
+          ([ ("status", `String "stopped"); ("id", `Int id) ]
+           @ (match bound with
+               | [] -> []
+               | bs -> [ ("bound", `List (List.map Msg.json_of_binding bs)) ])
+           @ (match skipped with
+               | [] -> []
+               | ss ->
+                 [ ("skipped",
+                    `List (List.map (fun (n, why) ->
+                        `Assoc [ ("name", `String n);
+                                 ("reason", `String why) ]) ss)) ])
+           @ (match done_ with
+               | [] -> []
+               | ps -> [ ("phrases", `List (List.map (json_phrase payload) ps)) ]));
       is_error = false }
   | Msg.Rejected why ->
     { content = why;

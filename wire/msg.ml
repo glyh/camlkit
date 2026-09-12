@@ -39,7 +39,10 @@ type phrase = {
   warnings : string;
   out_start : int;
   out_len : int;
-  truncated : bool;   (* this phrase printed more than the cap allowed *)
+  (* How much of what this phrase printed did not fit the cap, in bytes. Zero
+     when all of it did. A count rather than a flag, so a caller knows whether
+     it lost a line or a megabyte. *)
+  dropped : int;
   bindings : binding list;  (* what it bound, with types *)
   (* The autorun rule that rewrote this phrase, if one did. Without it the
      rewrite is invisible: a run promise and a plain value render the same way,
@@ -144,14 +147,19 @@ let request_of_json j =
    ponytail: one fixed limit; make it per-request if anyone needs more. *)
 let output_limit = 16 * 1024
 
+(* The rules a call runs under unless it says otherwise. Here rather than in
+   the worker so the server can leave them out of a result that used them. *)
+let autorun_default = [ "lwt"; "async" ]
+
 let clamp ~limit phrases =
   let any = ref false in
   let clamp_one p =
     if p.out_len <= 0 then p                       (* nothing to cut *)
     else if p.out_start >= limit then (any := true;
-      { p with out_start = limit; out_len = 0; truncated = true })
+      { p with out_start = limit; out_len = 0; dropped = p.out_len })
     else if p.out_start + p.out_len > limit then (any := true;
-      { p with out_len = limit - p.out_start; truncated = true })
+      let kept = limit - p.out_start in
+      { p with out_len = kept; dropped = p.out_len - kept })
     else p
   in
   let clamped = List.map clamp_one phrases in
@@ -165,11 +173,11 @@ let binding_of_json j =
   { bound = member "name" j |> to_string;
     bound_type = member "type" j |> to_string }
 
-let json_of_phrase { rendering; warnings; out_start; out_len; truncated;
+let json_of_phrase { rendering; warnings; out_start; out_len; dropped;
                      bindings; ran } =
   `Assoc ([ "rendering", `String rendering; "warnings", `String warnings;
             "out_start", `Int out_start; "out_len", `Int out_len;
-            "truncated", `Bool truncated;
+            "dropped", `Int dropped;
             "bindings", `List (List.map json_of_binding bindings) ]
           @ (match ran with None -> [] | Some r -> [ "ran", `String r ]))
 
@@ -179,7 +187,7 @@ let phrase_of_json j =
     warnings = member "warnings" j |> to_string;
     out_start = member "out_start" j |> to_int;
     out_len = member "out_len" j |> to_int;
-    truncated = member "truncated" j |> to_bool;
+    dropped = (match member "dropped" j with `Int n -> n | _ -> 0);
     bindings = (match member "bindings" j with
         | `List bs -> List.map binding_of_json bs
         | _ -> []);

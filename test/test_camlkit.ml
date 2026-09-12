@@ -69,13 +69,13 @@ let test_response_roundtrip () =
   in
   check (Msg.Completed
            { phrases = [ { rendering = "val x : int = 42"; warnings = "";
-                           out_start = 0; out_len = 0; truncated = false;
+                           out_start = 0; out_len = 0; dropped = 0;
                            bindings = [ { bound = "x"; bound_type = "int" } ];
                            ran = None } ];
              autorun = None });
   check (Msg.Completed
            { phrases = [ { rendering = "- : int = 42"; warnings = "";
-                           out_start = 0; out_len = 0; truncated = false;
+                           out_start = 0; out_len = 0; dropped = 0;
                            bindings = []; ran = Some "lwt" } ];
              autorun = Some [ "lwt"; "async" ] });
   check (Msg.Failed { phase = Msg.Typecheck; phrase_index = 1;
@@ -90,19 +90,21 @@ let test_response_roundtrip () =
 let test_clamp () =
   let p start len =
     Msg.{ rendering = ""; warnings = ""; out_start = start; out_len = len;
-          truncated = false; bindings = []; ran = None } in
+          dropped = 0; bindings = []; ran = None } in
   let ps, any = Msg.clamp ~limit:100 [ p 0 50; p 50 50 ] in
   Alcotest.(check bool) "nothing under the limit is touched" false any;
-  Alcotest.(check bool) "spans unchanged" true
-    (List.for_all (fun q -> not q.Msg.truncated) ps);
+  Alcotest.(check bool) "nothing is recorded as lost" true
+    (List.for_all (fun q -> q.Msg.dropped = 0) ps);
   let ps, any = Msg.clamp ~limit:100 [ p 0 50; p 50 80; p 130 20 ] in
   Alcotest.(check bool) "crossing the limit is reported" true any;
   match ps with
   | [ a; b; c ] ->
-    Alcotest.(check bool) "the phrase below the limit is intact" false a.Msg.truncated;
+    Alcotest.(check int) "the phrase below the limit loses nothing" 0 a.Msg.dropped;
     Alcotest.(check int) "the straddling phrase is cut at the limit" 50 b.Msg.out_len;
-    Alcotest.(check bool) "and marked" true b.Msg.truncated;
+    (* 80 asked for, 50 fitted: the caller is told it lost thirty. *)
+    Alcotest.(check int) "and says how much it lost" 30 b.Msg.dropped;
     Alcotest.(check int) "one entirely past the limit reads nothing" 0 c.Msg.out_len;
+    Alcotest.(check int) "and lost all of it" 20 c.Msg.dropped;
     Alcotest.(check bool) "no span reaches past the payload" true
       (List.for_all (fun q -> q.Msg.out_start + q.Msg.out_len <= 100) ps)
   | _ -> Alcotest.fail "expected three records"
@@ -530,14 +532,17 @@ let test_large_output_is_capped_honestly () =
     Msg.output_limit (String.length output);
   Alcotest.(check int) "and the span matches what was sent"
     Msg.output_limit p.Msg.out_len;
-  Alcotest.(check bool) "truncation is reported" true p.Msg.truncated
+  (* Half a million printed, sixteen thousand delivered: the caller is told
+     how much it lost, not merely that it lost something. *)
+  Alcotest.(check int) "and says how much was lost"
+    (500_000 - Msg.output_limit) p.Msg.dropped
 
-(* The flag has to be honest in both directions, or it is worse than useless. *)
+(* The count has to be honest in both directions, or it is worse than useless. *)
 let test_small_output_is_not_marked_truncated () =
   with_worker @@ fun s ->
   let r, _ = ask s (ev "let () = print_string \"small\";; 1 + 1;;") in
   List.iter
-    (fun p -> Alcotest.(check bool) "not truncated" false p.Msg.truncated)
+    (fun p -> Alcotest.(check int) "nothing lost" 0 p.Msg.dropped)
     (phrases r)
 
 (* Output that is merely long, rather than enormous, must survive intact:
@@ -548,7 +553,7 @@ let test_output_between_64k_and_the_cap () =
       (ev "let () = print_string (String.make 12_000 'y');;") in
   let p = List.hd (phrases r) in
   Alcotest.(check int) "nothing is lost below the cap" 12_000 p.Msg.out_len;
-  Alcotest.(check bool) "and it is not marked truncated" false p.Msg.truncated;
+  Alcotest.(check int) "and nothing is recorded as lost" 0 p.Msg.dropped;
   Alcotest.(check int) "payload carries it all" 12_000 (String.length output)
 
 (* Reported as a sharp edge rather than a bug: because nothing runs unless

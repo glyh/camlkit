@@ -365,7 +365,7 @@ let rec execute_from cap ~acc ~pos start phrases =
       let record = Msg.{ rendering = Buffer.contents buf;
                          warnings = Buffer.contents wbuf;
                          out_start = !pos; out_len = stop - !pos;
-                         truncated = false; bindings = Outcome.take ();
+                         dropped = 0; bindings = Outcome.take ();
                          ran } in
       pos := stop;
       acc := record :: !acc;
@@ -497,7 +497,7 @@ let require_packages cap packages =
 
 let ok_result cap rendering =
   Msg.Completed { phrases = [ { rendering; warnings = ""; out_start = 0;
-                                out_len = Capture.mark cap; truncated = false;
+                                out_len = Capture.mark cap; dropped = 0;
                                 bindings = []; ran = None } ];
                   autorun = None }
 
@@ -557,7 +557,7 @@ let record_of_parked cap (p : Breakpoint.parked) =
   in
   Msg.{ rendering; warnings = Buffer.contents p.Breakpoint.wbuf;
         out_start = 0; out_len = Capture.mark cap;
-        truncated = false; bindings = Outcome.take (); ran = None }
+        dropped = 0; bindings = Outcome.take (); ran = None }
 
 let continue_ cap ~id ~abandon =
   Capture.reset cap;
@@ -627,7 +627,7 @@ let inspect cap ~id =
     let record =
       Msg.{ rendering = Buffer.contents buf; warnings = "";
             out_start = 0; out_len = Capture.mark cap;
-            truncated = false; bindings = bound; ran = None }
+            dropped = 0; bindings = bound; ran = None }
     in
     Msg.Stopped { id = p.Breakpoint.id; phrase_index = -1; bound; skipped;
                   done_ = [ record ] }

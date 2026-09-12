@@ -136,18 +136,19 @@ let test_autorun_is_visible_in_the_result () =
     call c ~id:1 ~tool:"eval" ~args
   in
   let autorun_of r = member "structuredContent" r |> member "autorun" in
+  (* The default is not reported: it costs tokens to say what the caller could
+     not have changed without saying so. *)
   let r = eval "1;;" in
-  Alcotest.(check bool) "the default setting is reported" true
-    (autorun_of r = `List [ `String "lwt"; `String "async" ]);
+  Alcotest.(check bool) "the default is left out" true (autorun_of r = `Null);
   let r = eval ~autorun:[] "1;;" in
-  Alcotest.(check bool) "and so is an empty one, which omitting cannot say"
-    true (autorun_of r = `List []);
-  let r = eval "1;;" in
+  Alcotest.(check bool) "anything else is reported" true
+    (autorun_of r = `List []);
   (* Per call, not per session: the next call is back to the default, so the
      answer to "will this run my promise" does not depend on a call the
      caller may not remember making. *)
-  Alcotest.(check bool) "and the next call is back to the default" true
-    (autorun_of r = `List [ `String "lwt"; `String "async" ]);
+  let r = eval "1;;" in
+  Alcotest.(check bool) "and the next call is the default again" true
+    (autorun_of r = `Null);
   (* a rewritten phrase says so, in the structure and in the transcript *)
   let r = call c ~id:2 ~tool:"require"
       ~args:(`Assoc [ "session", `String "s";
@@ -179,6 +180,35 @@ let test_a_raise_can_be_located () =
                    print_string (Printexc.get_backtrace ()));;") in
   Alcotest.(check bool) "the backtrace names the phrase it came from" true
     (has "//toplevel//" (text r))
+
+(* A result lands in a model's context, so a field that says nothing is not
+   worth its bytes: an empty rendering, no output, no warnings, no bindings
+   are absent, and truncation is folded into the output it qualifies. The
+   session name is defaulted too, so a one-off evaluation invents nothing. *)
+let test_a_result_carries_only_what_it_has_to_say () =
+  with_server @@ fun c ->
+  let structured r = Yojson.Safe.Util.member "structuredContent" r in
+  let phrase r =
+    Yojson.Safe.Util.(structured r |> member "phrases" |> to_list |> List.hd) in
+  let keys j = match j with `Assoc kvs -> List.map fst kvs | _ -> [] in
+  (* no session argument at all *)
+  let r = call c ~id:1 ~tool:"eval"
+      ~args:(`Assoc [ "code", `String "let x = 6 * 7;;" ]) in
+  Alcotest.(check (slist string compare)) "only what the phrase did"
+    [ "bindings"; "rendering" ] (keys (phrase r));
+  Alcotest.(check (slist string compare)) "and no default autorun"
+    [ "status"; "phrases" ] (keys (structured r));
+  (* the same session, unnamed again *)
+  let r = call c ~id:2 ~tool:"eval" ~args:(`Assoc [ "code", `String "x + 1;;" ]) in
+  Alcotest.(check bool) "the default session persists" true (has "43" (text r));
+  let r = call c ~id:3 ~tool:"eval"
+      ~args:(`Assoc [ "code", `String "print_string (String.make 20_000 'x');;" ]) in
+  let out = Yojson.Safe.Util.(phrase r |> member "output" |> to_string) in
+  Alcotest.(check bool) "truncation is part of the output, not a flag" true
+    (not (List.mem "dropped" (keys (phrase r)))
+     (* twenty thousand printed, the cap is sixteen thousand three hundred
+        and eighty four, so three thousand six hundred and sixteen are lost *)
+     && has "[output truncated, 3616 more characters]" out)
 
 let test_type_error_is_not_is_error () =
   with_server @@ fun c ->
@@ -921,6 +951,8 @@ let () =
          Alcotest.test_case "tools listed" `Slow test_tools_listed ]);
       ("tools",
        [ Alcotest.test_case "eval through the loop" `Slow test_eval_through_the_loop;
+         Alcotest.test_case "a result carries only what it has to say" `Slow
+           test_a_result_carries_only_what_it_has_to_say;
          Alcotest.test_case "a raise can be located" `Slow
            test_a_raise_can_be_located;
          Alcotest.test_case "type error is not isError" `Slow

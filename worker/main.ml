@@ -65,15 +65,10 @@ let () =
       (* Read at most the cap, and be told whether more existed, so the
          truncated flag reports what actually happened rather than only what
          the clamp did. *)
-      let payload, cut_by_reader = Capture.contents ~limit:Msg.output_limit cap in
-      let clamp ps =
-        let ps, clamped = Msg.clamp ~limit:(String.length payload) ps in
-        (* Only a phrase that actually printed can have lost anything. *)
-        if cut_by_reader || clamped then
-          List.map (fun p ->
-              if p.Msg.out_len > 0 then Msg.{ p with truncated = true } else p) ps
-        else ps
-      in
+      let payload, _ = Capture.contents ~limit:Msg.output_limit cap in
+      (* The reader stops at the same limit the clamp uses, so the clamp alone
+         accounts for what was lost, per phrase and by how much. *)
+      let clamp ps = fst (Msg.clamp ~limit:(String.length payload) ps) in
       let response =
         match response with
         | Msg.Completed c -> Msg.Completed { c with phrases = clamp c.phrases }

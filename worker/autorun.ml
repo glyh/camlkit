@@ -84,7 +84,7 @@ let rules =
    the answer to "will this run my promise" depend on a call the caller may
    not remember making. A call says what it wants or takes the default; see
    docs/wayfinder/tickets/019. *)
-let default = [ "lwt"; "async" ]
+let default = Wire.Msg.autorun_default
 let available = List.map (fun r -> r.name) rules
 
 (* Unknown names are refused rather than ignored: a caller that asks for a

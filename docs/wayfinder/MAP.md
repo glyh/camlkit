@@ -50,6 +50,11 @@ merely restates readable text is not worth its bytes. The eval rendering is a
 utop transcript and stays one; see
 [What an eval returns to the agent](tickets/004-eval-result-contract.md).
 
+**Sane defaults, so a call says only what is unusual.** The session name
+defaults to "main", because a name is a handle and most callers want one
+toplevel; `load` defaults to the project the server was started in. A caller
+that needs two independent toplevels, or another project, still says so.
+
 **Standing preferences.** The worker is bytecode because the toplevel it
 links loads bytecode archives; the server is native.
 `opam env` is not loaded in the user's fish shell, so every build command
@@ -96,7 +101,10 @@ must evaluate it first. Tests are Alcotest.
   worker mid-phrase needs a signal rather than a closed pipe.
 - [What an eval returns to the agent](tickets/004-eval-result-contract.md) —
   `lib/render.ml`, pure; per-phrase rendering, warnings, output and spans;
-  `isError` only for the server failing at its own job.
+  `isError` only for the server failing at its own job. **Revised for token
+  cost:** a field with nothing to say is absent, truncation is folded into the
+  output as a count of what was lost, and the autorun rules are reported only
+  when they were not the default.
 - [Session lifecycle and the tool surface](tickets/006-tool-surface.md) — four
   tools, all with output schemas; sessions created on first use; a dead name is
   reusable and the first result after a restart says the toplevel is fresh.

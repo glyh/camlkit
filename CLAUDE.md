@@ -92,6 +92,15 @@ numbers, errors carry spans and line ranges as data, a failure names the
 failing thing in a field. Human-readable text ships alongside, never instead.
 Structure that merely restates the text is not worth its bytes.
 
+**A result pays for itself in tokens.** A field with nothing to say is absent,
+not present and empty. A qualifier folds into what it qualifies: truncated
+output ends with `[output truncated, N more characters]` rather than carrying
+a flag beside it. A default is not echoed back. See ticket 004.
+
+**A call says only what is unusual.** The session name defaults to `main` and
+`load` defaults to the project the server was started in, so a one-off
+evaluation invents no names.
+
 **Evaluation is all or nothing.** Several phrases per request, and nothing
 executes unless every phrase parses and typechecks. That is why `eval`
 rejects directives (`#require` and friends are not typeable) and why loading

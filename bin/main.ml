@@ -39,6 +39,8 @@ let cancelled : (string, unit) Hashtbl.t = Hashtbl.create 8
    the restart says so, since the new toplevel is empty. *)
 let restarted : (string, string) Hashtbl.t = Hashtbl.create 8
 
+let default_session = "main"
+
 let log fmt = Printf.ksprintf (fun s -> prerr_endline ("camlkit: " ^ s)) fmt
 
 let reply id (r : Render.t) =
@@ -347,9 +349,15 @@ let handle_call id params =
     | `Assoc _ as a -> a | _ -> `Assoc [] in
   if is_source_query name then source_query id name args
   else if name = "signature" then signature_call id args else
-  match arg_string args "session" with
-  | Error e -> reply id (Render.infrastructure_failure e)
-  | Ok session_name ->
+  (* A name is a handle, and most callers want one session. Defaulting it
+     means a one-off evaluation needs no invented name; a caller that wants
+     two independent toplevels still says so. *)
+  let session_name =
+    match Yojson.Safe.Util.member "session" args with
+    | `String s when String.trim s <> "" -> s
+    | _ -> default_session
+  in
+  begin
     if name = "load" then begin
       let strings key =
         match Yojson.Safe.Util.member key args with
@@ -385,7 +393,19 @@ let handle_call id params =
                    | ps -> Printf.sprintf " Re-required %s."
                              (String.concat ", " ps)))
       in
-      match arg_string args "path" with
+      (* Defaulting to where the server runs: a client starts it in the
+         project it is working on, so the usual load names nothing. *)
+      match
+        match Yojson.Safe.Util.member "path" args with
+        | `String p -> Ok p
+        | _ ->
+          (match Wire.Exe.project_root_of (Sys.getcwd ()) with
+           | Some root -> Ok root
+           | None ->
+             Error
+               "no path, and the directory the server runs in is not inside a \
+                dune project. Give the project root.")
+      with
       | Error e -> reply id (Render.infrastructure_failure e)
       | Ok path ->
         let request = Msg.Load { path; libraries = strings "libraries"; packages } in
@@ -448,6 +468,7 @@ let handle_call id params =
         match Session.send s request ~timeout:eval_timeout with
         | Error e -> reply id (Render.infrastructure_failure e)
         | Ok () -> Hashtbl.replace pending session_name (id, note)
+  end
 
 (* Ids are matched exactly, with no coercion between an integer and its
    decimal spelling: a client knows what it issued. JSON-RPC permits either

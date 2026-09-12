@@ -159,3 +159,27 @@ small and inverts for anything substantial - 27 bytes against a rendering of
 The general lesson, worth more than the field: "this restates readable text"
 was true of the value and false of the type, and both were dropped on one
 argument.
+
+## Revised: a result says only what it has to
+
+**A field that says nothing is left out.** An empty rendering, no output, no
+warnings and no bindings are absent rather than present and empty, as the
+autorun rule name already was. A result is read by a model, so an empty string
+is paid for in tokens and buys nothing. Measured on a one-binding evaluation:
+190 bytes of structure became 110.
+
+**Truncation is folded into the output it qualifies, and counted.** There is no
+`truncated` flag. Output that did not fit ends with
+`[output truncated, N more characters]`, where N comes from the clamp, which
+knows exactly how much each phrase lost. A flag said something was missing; a
+count says whether a line or a megabyte was missing, for the same bytes.
+
+**The autorun rules are reported only when they were not the default.** A
+caller knows what it passed, and a phrase that was rewritten credits its rule
+in its own field, so echoing the default on every result was restating the
+documentation.
+
+**Nothing was folded that a caller would have to parse back out.** Bindings
+stay a list of name and type, spans stay numbers, a failure still names its
+phase and phrase. The rule is that structure earns its bytes by being
+actionable, not by being present.
