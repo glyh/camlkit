@@ -299,6 +299,15 @@ it is also where `dune top` came from.
   `#trace` shows the boundary and never the interior, the debuggers cannot
   evaluate, and a breakpoint here would be an effect handler rather than
   either. Nothing is built; what is open is whether an agent ever asks for it.
+- **The environment a client launches us in.** Two open defects, found through
+  a real MCP client rather than reasoned about:
+  [dune cannot see the switch a client did not pass on](tickets/039-dune-in-a-bare-environment.md)
+  and [A failed dune top degrades in silence](tickets/040-a-silent-fallback.md).
+  A client inherits a shell without `opam env`, so `dune top` cannot resolve a
+  project's externals, and `load` answers from a build-tree scan without saying
+  it did. merlin is unaffected, because it reads dune's cached configuration
+  rather than resolving packages.
+
 - **Resource limits beyond time and heap.** Both are now bounded, see
   [A ceiling on a phrase's heap](tickets/030-heap-ceiling.md). File
   descriptors, subprocesses and disk are not, and a phrase can still spawn
