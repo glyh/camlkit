@@ -69,7 +69,8 @@ let arg_int args name =
   | _ -> Error (Printf.sprintf "argument %S must be an integer" name)
 
 let is_source_query = function
-  | "locate" | "type_at" | "outline" | "uses" | "search_type" -> true
+  | "locate" | "type_at" | "outline" | "uses" | "search_type" | "document" ->
+    true
   | _ -> false
 
 (* Also session-less, but it asks the switch rather than merlin: what an
@@ -147,6 +148,16 @@ let source_query id name args =
       Ok (match index with
           | Ok () -> value
           | Error why -> `Assoc [ "incomplete", `String why; "value", value ])
+    | "document" ->
+      (match Yojson.Safe.Util.member "identifier" args with
+       | `String identifier ->
+         (* Not the caller's position: see Merlin.neutral_position. *)
+         Merlin.query ~command:"document"
+           ~args:[ "-position"; Merlin.neutral_position;
+                   "-identifier"; identifier ] ~file
+       | _ ->
+         let* pos = at () in
+         Merlin.query ~command:"document" ~args:pos ~file)
     | "search_type" ->
       let* pos = at () in
       let* query = arg_string args "query" in
@@ -189,6 +200,16 @@ let source_query id name args =
   in
   match run () with
   | Error e -> reply id (Render.infrastructure_failure e)
+  (* Documentation is one string, not a list of results, and merlin hides its
+     failures inside it, so it is neither deduped nor trimmed nor pretty-
+     printed as JSON. *)
+  | Ok value when name = "document" ->
+    let content, fields = match Merlin.documentation value with
+      | Ok doc -> (doc, [ "documentation", `String doc ])
+      | Error why -> (why, [ "error", `String why ])
+    in
+    (* Not isError: a name with no comment on it is an answer. *)
+    reply id { Render.content; structured = `Assoc fields; is_error = false }
   | Ok value ->
     (* merlin already answers in structure; name it so the result says what it
        is, and give the text half something readable. *)

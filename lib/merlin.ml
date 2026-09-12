@@ -105,3 +105,47 @@ let query ~command ~args ~file =
         | None -> Error "merlin reply had no class"
 
 let position line col = Printf.sprintf "%d:%d" line col
+
+(* What `document` answers with.
+
+   Every outcome arrives as `class: return` carrying a plain string, so a name
+   that is not in scope reads exactly like a docstring unless the sentinels are
+   known. They are a closed set, spelled out in merlin's
+   src/commands/query_json.ml, and this is the whole of it. Two are constant
+   and are matched whole; the rest are built from a name and are matched by the
+   part that is not. The one that cannot be recognised is `File_not_found`,
+   whose message is arbitrary, so it is returned as documentation; it means an
+   interface the name lives in is missing, which is an honest thing to show.
+
+   A comment whose first line is one of these sentinels would be misread. That
+   is not worth defending against. *)
+let documentation value =
+  match value with
+  | `String s ->
+    let starts p =
+      String.length s >= String.length p
+      && String.sub s 0 (String.length p) = p
+    in
+    let contains p =
+      let re = Str.regexp_string p in
+      try ignore (Str.search_forward re s 0); true with Not_found -> false
+    in
+    if s = "No documentation available" || s = "Not a valid identifier"
+       || starts "Not in environment '" || starts "didn't manage to find "
+       || contains " was supposed to be in "
+       || contains "is a builtin, and it is therefore impossible"
+    then Error s
+    else Ok s
+  | _ -> Error "merlin answered document with something other than text"
+
+(* Merlin infers which namespace to search from the node under the cursor, even
+   when the name is given outright: src/analysis/locate.ml infers a context
+   from the browse tree and src/analysis/env_lookup.ml maps a module path to
+   modules alone. So asking for a value at a position inside a module path
+   answers "Not in environment", about a name that is plainly in scope.
+
+   Column zero is never inside a module path, a constructor or a record label,
+   which are the three narrow contexts, so the permissive one applies and every
+   namespace is searched. The caller's position is therefore not used for a
+   name it named itself; it gets this one. *)
+let neutral_position = position 1 0

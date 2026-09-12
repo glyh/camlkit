@@ -98,14 +98,14 @@ let test_tools_listed () =
     Yojson.Safe.Util.(member "tools" r |> to_list
                       |> List.map (fun t -> member "name" t |> to_string)) in
   Alcotest.(check (slist string compare)) "the tools"
-    [ "describe"; "eval"; "load"; "locate"; "outline"; "require";
+    [ "describe"; "document"; "eval"; "load"; "locate"; "outline"; "require";
       "reset"; "search_type"; "signature"; "type_at"; "uses" ] names;
   let schemas =
     Yojson.Safe.Util.(member "tools" r |> to_list
                       |> List.filter (fun t -> member "outputSchema" t <> `Null)
                       |> List.map (fun t -> member "name" t |> to_string)) in
   Alcotest.(check (slist string compare)) "every tool declares an output schema"
-    [ "describe"; "eval"; "load"; "locate"; "outline"; "require";
+    [ "describe"; "document"; "eval"; "load"; "locate"; "outline"; "require";
       "reset"; "search_type"; "signature"; "type_at"; "uses" ] schemas
 
 let test_eval_through_the_loop () =
@@ -585,6 +585,34 @@ let test_search_type_fills_its_limit () =
          (List.length got) (List.length distinct))
     [ 3; 8 ]
 
+(* Documentation by name rather than by position. Merlin infers the namespace
+   to search from the node under the cursor even when the name is given, so a
+   position inside a module path would answer "Not in environment" about a
+   name that is in scope; the server passes its own position instead. This
+   asks for a value, which is the case that position would break. *)
+let test_document_by_identifier () =
+  with_server @@ fun c ->
+  with_source @@ fun path ->
+  let r = call c ~id:1 ~tool:"document"
+      ~args:(`Assoc [ "file", `String path;
+                      "identifier", `String "String.concat" ]) in
+  Alcotest.(check bool) "not an error" false (is_error r);
+  Alcotest.(check bool) "the comment on String.concat" true
+    (has "concatenates" (text r))
+
+(* Merlin hides this inside an otherwise successful answer, so without the
+   sentinels it would be served as if it were the documentation. *)
+let test_document_of_a_name_not_in_scope () =
+  with_server @@ fun c ->
+  with_source @@ fun path ->
+  let r = call c ~id:1 ~tool:"document"
+      ~args:(`Assoc [ "file", `String path;
+                      "identifier", `String "No.Such.Thing" ]) in
+  let structured = Yojson.Safe.Util.member "structuredContent" r in
+  Alcotest.(check bool) "an error field, no documentation" true
+    (Yojson.Safe.Util.member "error" structured <> `Null
+     && Yojson.Safe.Util.member "documentation" structured = `Null)
+
 (* A signature read from an installed package's interfaces: no session, and
    nothing of the package is loaded or run. yojson because this server links
    it, so it is installed wherever the tests run. *)
@@ -698,6 +726,10 @@ let () =
            test_enclosings_are_not_repeated;
          Alcotest.test_case "search_type fills its limit" `Slow
            test_search_type_fills_its_limit;
+         Alcotest.test_case "document by identifier" `Slow
+           test_document_by_identifier;
+         Alcotest.test_case "document a name not in scope" `Slow
+           test_document_of_a_name_not_in_scope;
          Alcotest.test_case "signature without a session" `Slow
            test_signature_without_a_session;
          Alcotest.test_case "signature of an unknown package" `Slow

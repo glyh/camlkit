@@ -257,6 +257,34 @@ let search_type_tool =
         ("limit", `Assoc [ "type", `String "integer" ]) ];
     "outputSchema", obj [ ("results", `Assoc [ "type", `String "array" ]) ] ]
 
+let document_tool =
+  `Assoc [
+    "name", `String "document";
+    "description", `String
+      "The documentation comment on a name, as its author wrote it. Answers \
+       from source, so nothing needs to be built or loaded. Name the \
+       identifier to ask about anything in scope in that file, including its \
+       dependencies; give a line and column instead to ask about whatever is \
+       at that position, which is how to reach a name defined in the file \
+       itself. The text comes back as odoc markup, unrendered: braces such as \
+       {!Bytes.t} and {b bold} are the comment's own syntax.";
+    "inputSchema", obj ~required:[ "file" ]
+      [ file_arg;
+        ("identifier", `Assoc [ "type", `String "string";
+                                "description", `String "A name in scope in \
+                                  that file, such as List.map or \
+                                  Yojson.Safe.t. The file supplies the \
+                                  environment; the position is not used." ]);
+        line_arg; col_arg ];
+    "outputSchema", obj
+      [ ("documentation", `Assoc [ "type", `String "string";
+                                   "description", `String "The comment, in \
+                                     odoc markup, verbatim." ]);
+        ("error", `Assoc [ "type", `String "string";
+                           "description", `String "Present instead of \
+                             documentation when there is none, or when the \
+                             name is not in scope in that file." ]) ] ]
+
 let signature_tool =
   `Assoc [
     "name", `String "signature";
@@ -295,4 +323,4 @@ let signature_tool =
 let all =
   [ eval_tool; describe_tool; require_tool; load_tool; reset_tool;
     locate_tool; type_at_tool; outline_tool; uses_tool; search_type_tool;
-    signature_tool ]
+    document_tool; signature_tool ]

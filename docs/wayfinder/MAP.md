@@ -158,6 +158,12 @@ must evaluate it first. Tests are Alcotest.
   — the `signature` tool: findlib's recursive directories on a throwaway
   toplevel's search path and `#show`, so an installed package's signature can
   be read without linking it; local rungs only, no network.
+- [Reading a name's documentation](tickets/032-documentation-lookup.md) — the
+  `document` tool over merlin: ask by name and the server supplies position
+  1:0, because merlin infers the namespace to search from the node under the
+  cursor and a module path narrows it to modules alone; merlin's failures are
+  strings that read like docstrings, so the sentinel set is decoded into an
+  error field; odoc markup is passed through unrendered.
 - [Trust boundary](tickets/012-trust-boundary.md) — trusted local developer
   tool, deliberately not sandboxed; stdio implies a local parent and that
   assumption is load-bearing.
@@ -196,9 +202,12 @@ it is also where `dune top` came from.
   installs in `init.ml`, so their own types print as `<abstr>`. Tracked as
   [Let a session opt out of hermetic spawn](tickets/010-hermetic-opt-out.md);
   noted here only because it is a visible behavioural difference.
-- **Documentation lookup.** Reading odoc or docstrings for a value. merlin
-  has a `document` command; whether that is worth a tool is unclear. Jump to
-  source is no longer fog, see
+- **Documentation lookup.** No longer fog for a name a project file can see:
+  the `document` tool, see
+  [Reading a name's documentation](tickets/032-documentation-lookup.md). What
+  remains is a comment on a name in a package nothing references, which merlin
+  cannot reach and `signature` reads without comments; it would mean reading
+  the installed `.mli`. Jump to source is no longer fog either, see
   [Merlin-backed source queries](tickets/027-merlin-source-queries.md), and
   neither is reading an uninstalled-in-the-session signature, see
   [Module signatures without loading](tickets/026-signatures-without-loading.md).

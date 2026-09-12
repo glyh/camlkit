@@ -593,6 +593,29 @@ let test_partial_output_recovered_on_interrupt () =
   let r, _ = ask s (ev "1 + 1;;") in
   Alcotest.(check bool) "session survives" true (phrases r <> [])
 
+(* merlin answers document with class: return whatever happened, so its
+   failures are strings that read like documentation. Pure, so no merlin. *)
+let test_document_sentinels () =
+  let doc = function
+    | Ok s -> "doc:" ^ s
+    | Error e -> "error:" ^ e in
+  let check label expected value =
+    Alcotest.(check string) label expected (doc (Merlin.documentation value)) in
+  check "a real comment is documentation"
+    "doc:[map f l] applies f" (`String "[map f l] applies f");
+  check "no comment is not documentation"
+    "error:No documentation available" (`String "No documentation available");
+  check "a name out of scope is not documentation"
+    "error:Not in environment 'List.map'"
+    (`String "Not in environment 'List.map'");
+  check "a name it could not find is not documentation"
+    "error:didn't manage to find Foo" (`String "didn't manage to find Foo");
+  check "a name in a missing interface is not documentation"
+    "error:Foo was supposed to be in bar.mli but could not be found"
+    (`String "Foo was supposed to be in bar.mli but could not be found");
+  Alcotest.(check bool) "a non-string answer is refused" true
+    (Result.is_error (Merlin.documentation (`Int 1)))
+
 let () =
   Alcotest.run "camlkit"
     [ ("frame",
@@ -604,6 +627,9 @@ let () =
        [ Alcotest.test_case "request" `Quick test_request_roundtrip;
          Alcotest.test_case "response" `Quick test_response_roundtrip ]);
       ("output cap", [ Alcotest.test_case "clamp" `Quick test_clamp ]);
+      ("merlin",
+       [ Alcotest.test_case "document sentinels" `Quick
+           test_document_sentinels ]);
       ("supervision",
        [ Alcotest.test_case "escalation" `Quick test_escalation;
          Alcotest.test_case "interrupt answered" `Quick
