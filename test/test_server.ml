@@ -951,6 +951,76 @@ let test_a_breakpoint_under_autorun_is_refused () =
     (has "autorun will run as a promise" (text r));
   Alcotest.(check bool) "and nothing ran" true (has "Nothing was executed" (text r))
 
+(* A watch records every value flowing through it and never stops, which is the
+   complement of a stop: a breakpoint shows the locals once, a watch reads a
+   loop body a thousand times. See docs/wayfinder/tickets/049. *)
+let test_watch_records_without_stopping () =
+  with_server @@ fun c ->
+  let session = `String "wt" in
+  let ev code =
+    call c ~id:1 ~tool:"eval"
+      ~args:(`Assoc [ "session", session; "code", `String code ]) in
+  let watched r =
+    match Yojson.Safe.Util.(member "structuredContent" r |> member "phrases") with
+    | `List (p :: _) -> Yojson.Safe.Util.member "watched" p
+    | _ -> `Null
+  in
+  let values r =
+    match watched r with
+    | `List (w :: _) ->
+      (match Yojson.Safe.Util.(member "values" w) with
+       | `List vs -> List.map Yojson.Safe.Util.to_string vs
+       | _ -> [])
+    | _ -> []
+  in
+  let hits r =
+    match watched r with
+    | `List (w :: _) -> Yojson.Safe.Util.(member "hits" w)
+    | _ -> `Null
+  in
+  ignore (ev "let g xs = List.map (fun x -> [%watch \"doubled\" (x * 2)]) xs;;");
+  (* Defining it records nothing: the marker is in code that has not run. *)
+  Alcotest.(check bool) "a definition records nothing" true
+    (values (ev "1;;") = []);
+  let r = ev "g [1; 2; 3];;" in
+  Alcotest.(check (list string)) "every value that flowed through"
+    [ "2"; "4"; "6" ] (values r);
+  Alcotest.(check bool) "and the phrase still produced its own value" true
+    (has "[2; 4; 6]" (text r));
+  (* This call's values, the site's lifetime count. *)
+  let r = ev "g [7];;" in
+  Alcotest.(check (list string)) "only this call's values" [ "14" ] (values r);
+  Alcotest.(check bool) "with the lifetime count beside them" true
+    (hits r = `Int 4);
+  (* Consecutive duplicates are counted and not stored, so a loop that changes
+     nothing stays at one entry. *)
+  ignore (ev "let loop () = for _ = 1 to 5 do ignore [%watch \"same\" 0] done;;");
+  let r = ev "loop ();;" in
+  Alcotest.(check bool) "an unchanging loop keeps one value and counts five"
+    true
+    (match watched r with
+     | `List ws ->
+       List.exists (fun w ->
+           Yojson.Safe.Util.(member "site" w) = `String "same"
+           && Yojson.Safe.Util.(member "hits" w) = `Int 5
+           && (match Yojson.Safe.Util.(member "values" w) with
+               | `List [ `String "0" ] -> true | _ -> false))
+         ws
+     | _ -> false);
+  (* Disarming stops the recording and not the counting, as for a breakpoint. *)
+  ignore (call c ~id:2 ~tool:"markers"
+            ~args:(`Assoc [ "session", session;
+                            "disarm", `List [ `String "doubled" ] ]));
+  let r = ev "g [5];;" in
+  Alcotest.(check (list string)) "a disarmed watch records nothing" []
+    (values r);
+  Alcotest.(check bool) "and the expression still evaluates" true
+    (has "[10]" (text r));
+  (* A watch without a name is refused, and says what the form is. *)
+  let r = ev "let bad = [%watch (1 + 1)];;" in
+  Alcotest.(check bool) "an unnamed watch is refused" true
+    (has "A watch is written" (text r))
+
 (* A marker is compiled into the code holding it, so it fires whenever that
    code runs and nothing removes it. Disarming is what stopping one means, and
    it exists because a marker in a function you call often is otherwise a trap.
@@ -1205,6 +1275,8 @@ let () =
            test_two_parked_phrases_need_an_id;
          Alcotest.test_case "a breakpoint under autorun is refused" `Slow
            test_a_breakpoint_under_autorun_is_refused;
+         Alcotest.test_case "a watch records without stopping" `Slow
+           test_watch_records_without_stopping;
          Alcotest.test_case "markers list and disarm" `Slow
            test_markers_list_and_disarm;
          Alcotest.test_case "a malformed marker says the right form" `Slow

@@ -58,6 +58,15 @@ type cost = {
   allocated_bytes : int;
 }
 
+(* What one watch site recorded while a phrase ran. [hits] is the site's
+   lifetime count and [values] are this phrase's, printed; see
+   docs/wayfinder/tickets/049 for why the two windows differ. *)
+type watched = {
+  site : string;
+  site_hits : int;
+  values : string list;
+}
+
 type phrase = {
   rendering : string;
   warnings : string;
@@ -73,6 +82,9 @@ type phrase = {
   ran : string option;
   (* Absent unless the call asked to be told. *)
   cost : cost option;
+  (* What the watches reached while this phrase ran. Empty for a phrase that
+     reached none, which is most of them. *)
+  watched : watched list;
 }
 
 (* One marker, as the markers tool reports it. [hits] is the site's lifetime

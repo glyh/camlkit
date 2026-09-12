@@ -136,14 +136,17 @@ let test_response_roundtrip () =
   check (Msg.Completed
            { phrases = [ { rendering = "val x : int = 42"; warnings = "";
                            out_start = 0; out_len = 0; dropped = 0;
-                           ran = None; cost = None } ];
+                           ran = None; cost = None; watched = [] } ];
              autorun = Msg.Not_an_eval; checked = false });
   check (Msg.Completed
            { phrases = [ { rendering = "- : int = 42"; warnings = "";
                            out_start = 0; out_len = 0; dropped = 0;
                            ran = Some "lwt";
                            cost = Some { wall_ms = 1.5;
-                                         allocated_bytes = 4096 } } ];
+                                         allocated_bytes = 4096 };
+                           watched =
+                             [ { site = "doubled"; site_hits = 3;
+                                 values = [ "2"; "4"; "6" ] } ] } ];
              autorun = Msg.Ran_under [ "lwt"; "async" ]; checked = true });
   check (Msg.Failed { phase = Msg.Typecheck; phrase_index = 1;
                       message = "Error: ..."; spans = [ (4, 8) ];
@@ -157,7 +160,7 @@ let test_response_roundtrip () =
 let test_clamp () =
   let p start len =
     Msg.{ rendering = ""; warnings = ""; out_start = start; out_len = len;
-          dropped = 0; ran = None; cost = None } in
+          dropped = 0; ran = None; cost = None; watched = [] } in
   let ps, any = Msg.clamp ~limit:100 [ p 0 50; p 50 50 ] in
   Alcotest.(check bool) "nothing under the limit is touched" false any;
   Alcotest.(check bool) "nothing is recorded as lost" true

@@ -35,6 +35,13 @@ let phrase_schema =
                "description", `String "The autorun rule that rewrote this \
                  phrase, if one did: the expression was a promise and was run \
                  rather than returned. Absent when nothing was rewritten." ];
+             "watched", `Assoc [ "type", `String "array";
+               "description", `String "What the watches reached while this \
+                 phrase ran: each site's name, the values it recorded during \
+                 this phrase, and hits, which is its lifetime count rather \
+                 than this phrase's. Consecutive equal values are counted and \
+                 stored once, so a loop that changes nothing shows one value \
+                 and many hits. Absent for a phrase that reached none." ];
              "cost", `Assoc [ "type", `String "object";
                "description", `String "wall_ms and allocated_bytes for this \
                  phrase, present only when the call asked for them. Both \
@@ -57,9 +64,12 @@ let eval_tool =
        cannot use something an earlier phrase in the same call put on the \
        search path; put such a change in its own call. Directives such as \
        #require are not accepted: loading a library is the require and load \
-       tools, and showing a signature is describe. Write [%break] in a phrase \
-       to stop there and inspect it, then continue. Pass check to typecheck \
-       without running.";
+       tools, and showing a signature is describe. Write [%break \"name\"] in a \
+       phrase to stop there and inspect it, then continue, or \
+       [%watch \"name\" expr] to record every value that flows through an \
+       expression without stopping at all. Both keep firing whenever the code \
+       holding them runs; the markers tool lists them and turns them off. Pass \
+       check to typecheck without running.";
     "inputSchema", obj ~required:[ "code" ]
       [ session_arg;
         ("code", `Assoc [ "type", `String "string";

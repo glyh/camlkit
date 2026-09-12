@@ -51,13 +51,31 @@ let pending : local list ref = ref []
    and the server has nothing to delete. What it can do is disarm - a flag this
    table holds and the hook reads - which is the only way to stop a marker in a
    hot function short of redefining the function. See tickets/049. *)
-type kind = Break
+type kind = Break | Watch
+
+(* How many recorded values a watch keeps, per site and per call. A watch in a
+   hot loop would otherwise be a leak with a printer attached: the table holds
+   the values themselves, since printing needs the type and that is only known
+   at typecheck time. Consecutive duplicates are not stored at all, which is
+   incremental's cutoff idea and bounds an unchanging loop at one entry.
+   ponytail: one fixed cap; make it per call if anyone needs more. *)
+let trail_limit = 100
 
 type site = {
   site_name : string;
   kind : kind;
   mutable armed : bool;
   mutable hits : int;            (* lifetime, not this call's *)
+  (* A watch's values, newest first, as the runtime handed them over. Printing
+     needs the type, which only the typing pass knows, so they are kept raw and
+     printed when the result is built. [trail] is the site's lifetime and
+     [this_call] is emptied at the start of every phrase. *)
+  mutable trail : Obj.t list;
+  mutable this_call : Obj.t list;
+  mutable last : Obj.t option;   (* for the cutoff *)
+  (* The type and environment of the watched expression, stashed when the
+     phrase carrying the marker is typed. *)
+  mutable printed_as : (Types.type_expr * Env.t) option;
 }
 
 let sites : (string, site) Hashtbl.t = Hashtbl.create 8
@@ -70,7 +88,8 @@ let register ~kind name =
   match Hashtbl.find_opt sites name with
   | Some s -> s
   | None ->
-    let s = { site_name = name; kind; armed = true; hits = 0 } in
+    let s = { site_name = name; kind; armed = true; hits = 0;
+              trail = []; this_call = []; last = None; printed_as = None } in
     Hashtbl.replace sites name s; s
 
 let known () =
@@ -88,6 +107,30 @@ let arm name =
   | Some s -> s.armed <- true; true
 
 let forget_sites () = Hashtbl.reset sites
+
+let find_site name = Hashtbl.find_opt sites name
+
+(* Emptied per phrase, so a result reports what its own phrase recorded rather
+   than everything the site has ever seen. The trail keeps the rest. *)
+let start_call () =
+  Hashtbl.iter (fun _ s -> s.this_call <- []) sites
+
+let cap n l = if List.length l > n then List.filteri (fun i _ -> i < n) l else l
+
+(* Called by the rewritten code. Counts every hit; stores a value only when it
+   differs from the one before it, which is what keeps a loop that changes
+   nothing to a single entry. *)
+let record name (v : Obj.t) =
+  let s = register ~kind:Watch name in
+  s.hits <- s.hits + 1;
+  if s.armed then begin
+    let same = match s.last with Some p -> p == v | None -> false in
+    if not same then begin
+      s.last <- Some v;
+      s.trail <- cap trail_limit (v :: s.trail);
+      s.this_call <- cap trail_limit (v :: s.this_call)
+    end
+  end
 
 (* What a continue with abandon raises inside the parked phrase. The toplevel
    prints an exception by the name it was defined with, which for a worker

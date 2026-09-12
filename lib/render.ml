@@ -54,6 +54,16 @@ let json_phrase payload (p : Msg.phrase) =
      @ field "warnings" p.warnings
      @ field "output" out
      @ (match p.ran with None -> [] | Some r -> [ ("ran", `String r) ])
+     @ (match p.watched with
+         | [] -> []
+         | ws ->
+           [ ("watched",
+              `List (List.map (fun (w : Msg.watched) ->
+                  `Assoc [ ("site", `String w.Msg.site);
+                           ("hits", `Int w.Msg.site_hits);
+                           ("values",
+                            `List (List.map (fun v -> `String v) w.Msg.values)) ])
+                  ws)) ])
      @ (match p.cost with
          | None -> []
          | Some c ->
@@ -82,6 +92,19 @@ let transcript payload phrases =
          Buffer.add_string buf
            (Printf.sprintf "[autorun %s: the expression was run, not returned \
                             as a promise]\n" rule));
+      (* A watch prints nothing of its own while it runs, so without this the
+         transcript would show a phrase that recorded a thousand values as one
+         that did nothing. The lifetime count is beside this phrase's values
+         because the two answer different questions. *)
+      List.iter
+        (fun (w : Msg.watched) ->
+           Buffer.add_string buf
+             (Printf.sprintf "[watch %S: %s%s]\n" w.Msg.site
+                (String.concat ", " w.Msg.values)
+                (if w.Msg.site_hits > List.length w.Msg.values then
+                   Printf.sprintf " (%d hits in all)" w.Msg.site_hits
+                 else "")))
+        p.watched;
       (* Only when the call asked. A phrase that allocated nothing still says
          so, because zero is the answer to "did this allocate" and absence
          would read as the measurement having been skipped. *)

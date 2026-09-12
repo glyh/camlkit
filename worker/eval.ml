@@ -37,6 +37,7 @@ let install_break_hook () =
   declare Breakpoint.local_hook_name Breakpoint.local_hook_type
     (Obj.repr Breakpoint.local_hook);
   declare Breakpoint.hook_name Breakpoint.hook_type (Obj.repr Breakpoint.hook);
+  declare Watch.hook_name Watch.hook_type (Obj.repr Watch.hook);
   (* Defined in the session so that abandoning a phrase renders as
      "Exception: Camlkit_abandoned." rather than as this worker's internal
      module path. *)
@@ -199,6 +200,12 @@ let typecheck_all ~autorun phrases =
       (* A marker cannot be typed as it stands, so it becomes a call with no
          locals first. What is in scope at it is only knowable from the typed
          tree, which is why the locals arrive in a second rewrite. *)
+      (* Watches first, and once: unlike a breakpoint's locals, what a watch
+         needs from the typed tree is the watched expression's type, which the
+         wrapping does not change. So there is no second rewrite, only a look
+         at the tree afterwards. *)
+      let str0, watch_sites =
+        if Watch.has_marker str0 then Watch.rewrite str0 else (str0, []) in
       let breaking = Breakpoint.has_marker str0 in
       let str, marker_locs =
         if breaking then Breakpoint.rewrite_empty str0 else (str0, []) in
@@ -209,6 +216,10 @@ let typecheck_all ~autorun phrases =
         (fun (_, name) ->
            ignore (Breakpoint.register ~kind:Breakpoint.Break name))
         marker_locs;
+      List.iter
+        (fun (_, name) ->
+           ignore (Breakpoint.register ~kind:Breakpoint.Watch name))
+        watch_sites;
       (* The typing is wrapped so its warnings can be attributed to this
          phrase. It answers with a result rather than raising through the
          wrapper, so the failure path below is unchanged. *)
@@ -220,6 +231,7 @@ let typecheck_all ~autorun phrases =
       in
       (match typing with
        | Ok (tstr, sg, _, _, env) ->
+         Watch.stash_types tstr watch_sites;
          let env_before = !Toploop.toplevel_env in
          let str', fired = Autorun.rewrite ~enabled:autorun env_before str tstr in
          if breaking && fired <> None then begin
@@ -371,6 +383,22 @@ let bind_locals (locals : Breakpoint.local list) =
     locals;
   (List.rev !bound, List.rev !skipped)
 
+(* What the watches recorded while this phrase ran, printed. Read after the
+   phrase and before the next one clears the buffers, so a result reports its
+   own phrase's values rather than everything a site has ever seen; the
+   lifetime count travels beside them, because "this has fired 4000 times" is
+   what a caller wants before reading any of it. See tickets/049. *)
+let recorded_this_phrase () =
+  List.filter_map
+    (fun (s : Breakpoint.site) ->
+       match s.Breakpoint.kind, s.Breakpoint.this_call with
+       | Breakpoint.Break, _ | _, [] -> None
+       | Breakpoint.Watch, values ->
+         Some Msg.{ site = s.Breakpoint.site_name;
+                    site_hits = s.Breakpoint.hits;
+                    values = Watch.printed s values })
+    (Breakpoint.known ())
+
 (* Runs phrases from a given point, so a call that stopped can be finished
    later from where it left off. execute_all is this from the beginning. *)
 let rec execute_from cap ~acc ~pos ~measure start phrases =
@@ -389,6 +417,7 @@ let rec execute_from cap ~acc ~pos ~measure start phrases =
       (* Scan before and after, as utop does: a phrase may itself load the
          cmis carrying the printers it then wants to use. *)
       Printers.scan ppf;
+      Breakpoint.start_call ();
       (* Around the phrase itself, not around the printer scans or the record
          building. A minor collection precedes each reading, because without
          one the counters are quantised beyond use: `Array.make 1000` measured
@@ -439,7 +468,8 @@ let rec execute_from cap ~acc ~pos ~measure start phrases =
       let record = Msg.{ rendering = Buffer.contents buf;
                          warnings = Buffer.contents wbuf;
                          out_start = !pos; out_len = stop - !pos;
-                         dropped = 0; ran; cost } in
+                         dropped = 0; ran; cost;
+                         watched = recorded_this_phrase () } in
       pos := stop;
       acc := record :: !acc;
       match step with
@@ -488,7 +518,7 @@ let checked_phrase t ran =
   let rendering = match String.trim (Buffer.contents buf) with
     | "" -> "" | s -> s ^ "\n" in
   Msg.{ rendering; warnings = t.warns; out_start = 0; out_len = 0;
-        dropped = 0; ran; cost = None }
+        dropped = 0; ran; cost = None; watched = [] }
 
 (* The rules the call ran under, echoed on the way out: a rewrite is otherwise
    invisible, and a caller should not have to probe to learn what was in
@@ -514,13 +544,24 @@ let eval cap ~autorun ~check ~cost src =
   match parse src with
   | Error f -> Msg.Failed f
   | Ok phrases ->
-    match
+    let malformed f =
       List.filter_map
         (function
-          | Parsetree.Ptop_def str -> Breakpoint.malformed_marker str
+          | Parsetree.Ptop_def str -> f str
           | Parsetree.Ptop_dir _ -> None)
         phrases
-    with
+    in
+    match malformed Watch.malformed with
+    | _ :: _ ->
+      Msg.Rejected
+        "A watch is written [%watch \"name\" expr], a string literal naming it \
+         applied to the expression to record, where an expression belongs. The \
+         name is how the markers tool lists and disarms it, so it is required. \
+         Without a name, without an expression, or as a structure item \
+         ([%%watch]), it is not a watch, and the compiler reports it as an \
+         uninterpreted extension."
+    | [] ->
+    match malformed Breakpoint.malformed_marker with
     | _ :: _ ->
       Msg.Rejected
         "A breakpoint is written [%break \"name\"], with a string literal \
@@ -619,7 +660,7 @@ let require_packages cap packages =
 let ok_result cap rendering =
   Msg.Completed { phrases = [ { rendering; warnings = ""; out_start = 0;
                                 out_len = Capture.mark cap; dropped = 0;
-                                ran = None; cost = None } ];
+                                ran = None; cost = None; watched = [] } ];
                   autorun = Not_an_eval; checked = false }
 
 let fail_result message =
@@ -655,7 +696,8 @@ let markers ~disarm ~arm =
   let of_site (s : Breakpoint.site) =
     Msg.{ marker = s.Breakpoint.site_name;
           marker_kind =
-            (match s.Breakpoint.kind with Breakpoint.Break -> "break");
+            (match s.Breakpoint.kind with
+             | Breakpoint.Break -> "break" | Breakpoint.Watch -> "watch");
           armed = s.Breakpoint.armed;
           hits = s.Breakpoint.hits }
   in
@@ -698,7 +740,7 @@ let record_of_parked cap (p : Breakpoint.parked) =
   in
   Msg.{ rendering; warnings = Buffer.contents p.Breakpoint.wbuf;
         out_start = 0; out_len = Capture.mark cap;
-        dropped = 0; ran = None; cost = None }
+        dropped = 0; ran = None; cost = None; watched = [] }
 
 let continue_ cap ~id ~abandon =
   Capture.reset cap;
@@ -770,7 +812,7 @@ let inspect cap ~id =
     let record =
       Msg.{ rendering = Buffer.contents buf; warnings = "";
             out_start = 0; out_len = Capture.mark cap;
-            dropped = 0; ran = None; cost = None }
+            dropped = 0; ran = None; cost = None; watched = [] }
     in
     Msg.Stopped { id = p.Breakpoint.id; name = p.Breakpoint.name;
                   phrase_index = -1; bound; skipped; done_ = [ record ] }
