@@ -160,12 +160,41 @@ let reject_directives phrases =
    phrases that will actually run: an Lwt or Async expression is rewritten to
    run rather than to hand back a promise, which needs the typed tree and so
    happens here. See worker/autorun.ml. *)
+(* What a phrase came out of the typecheck pass as: the tree that will run,
+   the autorun rule that rewrote it, and the two things only this pass knows -
+   the signature it typed to, and the warnings typing it raised. The execute
+   pass re-derives both by running the phrase, so eval reads them from there
+   and ignores these; a check never runs and has nowhere else to read them. *)
+type typed = {
+  tree : Parsetree.toplevel_phrase;
+  fired : string option;
+  sg : Types.signature;
+  warns : string;
+}
+
+(* Warnings are raised by whoever is typing, through a global formatter, so
+   they can only be attributed to a phrase by swapping the formatter around
+   each one. Without this they went to the worker's stderr, where nobody sees
+   them, and the execute pass raised its own copy anyway. *)
+let capturing_warnings f =
+  let buf = Buffer.create 64 in
+  let ppf = Format.formatter_of_buffer buf in
+  let saved = !Location.formatter_for_warnings in
+  Location.formatter_for_warnings := ppf;
+  let finally () =
+    Format.pp_print_flush ppf ();
+    Location.formatter_for_warnings := saved
+  in
+  let r = Fun.protect ~finally f in
+  (r, Buffer.contents buf)
+
 let typecheck_all ~autorun phrases =
   let env0 = !Toploop.toplevel_env in
   let restore () = Toploop.toplevel_env := env0 in
   let rec go i acc = function
     | [] -> restore (); Ok (List.rev acc)
-    | (Parsetree.Ptop_dir _ as d) :: rest -> go (i + 1) ((d, None) :: acc) rest
+    | (Parsetree.Ptop_dir _ as d) :: rest ->
+      go (i + 1) ({ tree = d; fired = None; sg = []; warns = "" } :: acc) rest
     | Parsetree.Ptop_def str0 :: rest ->
       (* A marker cannot be typed as it stands, so it becomes a call with no
          locals first. What is in scope at it is only knowable from the typed
@@ -173,8 +202,17 @@ let typecheck_all ~autorun phrases =
       let breaking = Breakpoint.has_marker str0 in
       let str, marker_locs =
         if breaking then Breakpoint.rewrite_empty str0 else (str0, []) in
-      (match Typemod.type_toplevel_phrase !Toploop.toplevel_env str with
-       | (tstr, _, _, _, env) ->
+      (* The typing is wrapped so its warnings can be attributed to this
+         phrase. It answers with a result rather than raising through the
+         wrapper, so the failure path below is unchanged. *)
+      let typing, warns =
+        capturing_warnings (fun () ->
+            match Typemod.type_toplevel_phrase !Toploop.toplevel_env str with
+            | r -> Ok r
+            | exception exn -> Error exn)
+      in
+      (match typing with
+       | Ok (tstr, sg, _, _, env) ->
          let env_before = !Toploop.toplevel_env in
          let str', fired = Autorun.rewrite ~enabled:autorun env_before str tstr in
          if breaking && fired <> None then begin
@@ -211,17 +249,18 @@ let typecheck_all ~autorun phrases =
            (* A rewritten phrase has a different type - unit rather than a
               promise - so it has to be typed again for the environment the next
               phrase sees to be right. *)
-           let env =
-             if str' == str then env
+           let env, sg =
+             if str' == str then (env, sg)
              else
                match Typemod.type_toplevel_phrase env_before str' with
-               | (_, _, _, _, env) -> env
-               | exception _ -> env
+               | (_, sg, _, _, env) -> (env, sg)
+               | exception _ -> (env, sg)
            in
            Toploop.toplevel_env := env;
-           go (i + 1) ((Parsetree.Ptop_def str', fired) :: acc) rest
+           go (i + 1)
+             ({ tree = Parsetree.Ptop_def str'; fired; sg; warns } :: acc) rest
          end
-       | exception exn ->
+       | Error exn ->
          let message, spans, lines = Toplevel.describe_exn exn in
          restore ();
          Error Msg.{ phase = Typecheck; phrase_index = i; message; spans; lines;
@@ -330,7 +369,8 @@ let bind_locals (locals : Breakpoint.local list) =
 let rec execute_from cap ~acc ~pos start phrases =
   let go = execute_from cap ~acc ~pos in
   match phrases with
-  | [] -> Msg.Completed { phrases = List.rev !acc; autorun = Not_an_eval }
+  | [] -> Msg.Completed { phrases = List.rev !acc; autorun = Not_an_eval;
+                          checked = false }
   | (phrase, ran) :: rest ->
     let i = start in
       let buf = Buffer.create 256 and wbuf = Buffer.create 64 in
@@ -397,15 +437,36 @@ let execute_all cap phrases =
 (* Echo the session's rule list on the way out. A caller that just changed it,
    or that wants to know whether the change stuck, should not have to evaluate
    a probe expression to find out. *)
+(* A checked phrase's rendering: the signature it typed to, printed the way
+   the toplevel prints one, which is the same "val f : int -> int" a run would
+   show without the "= <fun>" that only running can supply. A phrase that binds
+   nothing - an evaluated expression is bound by then, so this is a directive -
+   has an empty signature and renders as nothing, which the result already
+   leaves out. *)
+let checked_phrase t ran =
+  let buf = Buffer.create 128 in
+  let ppf = Format.formatter_of_buffer buf in
+  (* The environment the phrase typed against is gone by now: typecheck_all
+     restores what it found. Printing against the current one is what the
+     toplevel does anyway, and a name it cannot see prints qualified rather
+     than wrongly. *)
+  Printtyp.wrap_printing_env ~error:false !Toploop.toplevel_env
+    (fun () -> Printtyp.signature ppf t.sg);
+  Format.pp_print_flush ppf ();
+  let rendering = match String.trim (Buffer.contents buf) with
+    | "" -> "" | s -> s ^ "\n" in
+  Msg.{ rendering; warnings = t.warns; out_start = 0; out_len = 0;
+        dropped = 0; ran }
+
 (* The rules the call ran under, echoed on the way out: a rewrite is otherwise
    invisible, and a caller should not have to probe to learn what was in
    force. *)
 let with_autorun rules = function
-  | Msg.Completed { phrases; _ } ->
-    Msg.Completed { phrases; autorun = Ran_under rules }
+  | Msg.Completed { phrases; checked; _ } ->
+    Msg.Completed { phrases; autorun = Ran_under rules; checked }
   | other -> other
 
-let eval cap ~autorun src =
+let eval cap ~autorun ~check src =
   Capture.reset cap;
   let rules =
     match autorun with
@@ -457,15 +518,26 @@ let eval cap ~autorun src =
       | Ok typed ->
         (* Which rule fired is known only from this first pass: by the second
            a bare expression has become a let, so nothing there matches. *)
-        let fired = List.map snd typed in
+        let fired = List.map (fun t -> t.fired) typed in
         let phrases, next =
-          bind_expressions !implicit_counter (List.map fst typed) in
+          bind_expressions !implicit_counter (List.map (fun t -> t.tree) typed) in
         (match typecheck_all ~autorun:rules phrases with
          | Error f -> Msg.Failed f
          | Ok typed ->
-           implicit_counter := next;
-           let phrases = List.combine (List.map fst typed) fired in
-           with_autorun rules (execute_all cap phrases))
+           if check then
+             (* The counter deliberately does not advance. A check that
+                consumed a name would make the numbering depend on calls that
+                ran nothing, and the _N a check reports is then the name the
+                same code would really get if it were run next. *)
+             with_autorun rules
+               (Msg.Completed { phrases = List.map2 checked_phrase typed fired;
+                                autorun = Not_an_eval; checked = true })
+           else begin
+             implicit_counter := next;
+             let phrases =
+               List.combine (List.map (fun t -> t.tree) typed) fired in
+             with_autorun rules (execute_all cap phrases)
+           end)
 
 (* Not the #require directive, and not UTop.require: both swallow findlib
    errors into printed text, so a missing package reported as success. Worse,
@@ -504,7 +576,7 @@ let ok_result cap rendering =
   Msg.Completed { phrases = [ { rendering; warnings = ""; out_start = 0;
                                 out_len = Capture.mark cap; dropped = 0;
                                 ran = None } ];
-                  autorun = Not_an_eval }
+                  autorun = Not_an_eval; checked = false }
 
 let fail_result message =
   Msg.Failed { phase = Msg.Execute; phrase_index = 0; message;

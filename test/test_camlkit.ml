@@ -121,8 +121,10 @@ let test_request_roundtrip () =
     Alcotest.(check bool) "request survives" true
       (Msg.decode_request (Msg.encode_request r) = r)
   in
-  check (Msg.Eval { source = "1 + 1;;"; autorun = Msg.Default_rules });
-  check (Msg.Eval { source = "1;;"; autorun = Msg.Rules [ "lwt" ] });
+  check (Msg.Eval { source = "1 + 1;;"; autorun = Msg.Default_rules;
+                    check = false });
+  check (Msg.Eval { source = "1;;"; autorun = Msg.Rules [ "lwt" ];
+                    check = true });
   check (Msg.Describe "List");
   check (Msg.Require [ "yojson"; "str" ])
 
@@ -135,12 +137,12 @@ let test_response_roundtrip () =
            { phrases = [ { rendering = "val x : int = 42"; warnings = "";
                            out_start = 0; out_len = 0; dropped = 0;
                            ran = None } ];
-             autorun = Msg.Not_an_eval });
+             autorun = Msg.Not_an_eval; checked = false });
   check (Msg.Completed
            { phrases = [ { rendering = "- : int = 42"; warnings = "";
                            out_start = 0; out_len = 0; dropped = 0;
                            ran = Some "lwt" } ];
-             autorun = Msg.Ran_under [ "lwt"; "async" ] });
+             autorun = Msg.Ran_under [ "lwt"; "async" ]; checked = true });
   check (Msg.Failed { phase = Msg.Typecheck; phrase_index = 1;
                       message = "Error: ..."; spans = [ (4, 8) ];
                       lines = [ (1, 1) ]; done_ = [] });
@@ -229,11 +231,12 @@ let ask s request =
      | Ok (response, output) -> (response, output))
 
 (* Most tests only care about the source, so name the common shape. *)
-let ev ?autorun source =
+let ev ?autorun ?(check = false) source =
   Msg.Eval { source;
              autorun = (match autorun with
                  | None -> Msg.Default_rules
-                 | Some rules -> Msg.Rules rules) }
+                 | Some rules -> Msg.Rules rules);
+             check }
 
 let has_substring needle hay =
   let re = Str.regexp_string needle in
@@ -320,6 +323,46 @@ let test_implicit_bindings () =
   let r, _ = ask s (ev "_0 + 1;;") in
   Alcotest.(check bool) "earlier results stay referenceable" true
     (has_substring "= 43" (render r))
+
+(* A check types against the session and stops. What makes it worth having is
+   everything it does not do: see docs/wayfinder/tickets/041. *)
+let test_check_runs_nothing () =
+  with_worker @@ fun s ->
+  let render r = (List.hd (phrases r)).Msg.rendering in
+  let r, out = ask s (ev ~check:true "let side = print_string \"RAN\"; 1;;") in
+  Alcotest.(check bool) "the type comes back" true
+    (has_substring "val side : int" (render r));
+  Alcotest.(check bool) "without a value, because nothing produced one" false
+    (has_substring "=" (render r));
+  Alcotest.(check string) "and the phrase printed nothing" "" out;
+  Alcotest.(check bool) "the result says it only checked" true
+    (match r with Msg.Completed { checked; _ } -> checked | _ -> false);
+  (* The binding was never made, so the session cannot see it. *)
+  (match ask s (ev "side;;") with
+   | Msg.Failed f, _ ->
+     Alcotest.(check bool) "a checked binding does not exist" true
+       (has_substring "Unbound value side" f.Msg.message)
+   | _ -> Alcotest.fail "a checked phrase must not bind anything");
+  (* The implicit counter is untouched, so the name a check reports is the one
+     the same code really gets when it is run. *)
+  let r, _ = ask s (ev ~check:true "40 + 2;;") in
+  Alcotest.(check bool) "a checked expression reports the next name" true
+    (has_substring "val _0 : int" (render r));
+  let r, _ = ask s (ev "40 + 2;;") in
+  Alcotest.(check bool) "which running then really uses" true
+    (has_substring "val _0 : int = 42" (render r));
+  (* A type error is the same failure it would be on the way to running. *)
+  (match ask s (ev ~check:true "1 + \"x\";;") with
+   | Msg.Failed f, _ ->
+     Alcotest.(check bool) "a check reports a type error as one" true
+       (f.Msg.phase = Msg.Typecheck)
+   | _ -> Alcotest.fail "expected a typecheck failure");
+  (* Warnings are the ones running would raise, from the same pass. *)
+  (match ask s (ev ~check:true "let f l = match l with [] -> 0;;") with
+   | Msg.Completed { phrases = [ p ]; _ }, _ ->
+     Alcotest.(check bool) "and carries the warnings typing raised" true
+       (has_substring "Warning 8" p.Msg.warnings)
+   | _ -> Alcotest.fail "expected one checked phrase")
 
 (* #require and UTop.require both swallow findlib errors into printed text, so
    a missing package used to come back as success. *)
@@ -475,7 +518,7 @@ let test_lwt_expressions_run () =
   Alcotest.(check string) "nothing else changes" "int" (typ "40 + 2;;");
   (* the caller can ask for the promise itself *)
   (match ask s (ev ~autorun:[] "Lwt.return 42;;") with
-   | Msg.Completed { phrases = [ p ]; autorun }, _ ->
+   | Msg.Completed { phrases = [ p ]; autorun; _ }, _ ->
      Alcotest.(check bool) "an empty list returns the promise" true
        (has_substring "Lwt.t" p.Msg.rendering);
      Alcotest.(check bool) "and the result says rewriting is off" true
@@ -485,7 +528,7 @@ let test_lwt_expressions_run () =
    | _ -> Alcotest.fail "expected a completed phrase");
   (* naming only async leaves lwt alone *)
   (match ask s (ev ~autorun:[ "async" ] "Lwt.return 42;;") with
-   | Msg.Completed { phrases = [ p ]; autorun }, _ ->
+   | Msg.Completed { phrases = [ p ]; autorun; _ }, _ ->
      Alcotest.(check bool) "async only does not run lwt" true
        (has_substring "Lwt.t" p.Msg.rendering);
      Alcotest.(check bool) "and the setting is reported back" true
@@ -497,7 +540,7 @@ let test_lwt_expressions_run () =
   (* a rewritten phrase says which rule rewrote it, and a call that mentions
      nothing gets the default rather than whatever a previous call asked for *)
   (match ask s (ev "Lwt.return 42;;") with
-   | Msg.Completed { phrases = [ p ]; autorun }, _ ->
+   | Msg.Completed { phrases = [ p ]; autorun; _ }, _ ->
      Alcotest.(check bool) "the phrase credits the rule that ran it" true
        (p.Msg.ran = Some "lwt");
      Alcotest.(check bool) "and the call reports the default it ran under"
@@ -704,6 +747,7 @@ let () =
          Alcotest.test_case "directives rejected" `Slow test_directives_rejected;
          Alcotest.test_case "describe" `Slow test_describe;
          Alcotest.test_case "implicit bindings" `Slow test_implicit_bindings;
+         Alcotest.test_case "check runs nothing" `Slow test_check_runs_nothing;
          Alcotest.test_case "require" `Slow test_require;
          Alcotest.test_case "hermetic" `Slow test_hermetic;
          Alcotest.test_case "error locations" `Slow test_error_locations;

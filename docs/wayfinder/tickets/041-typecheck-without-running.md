@@ -1,8 +1,8 @@
 ---
-status: open
+status: resolved
 type: research
 blocked-by: []
-assignee:
+assignee: lyh
 ---
 
 # Typecheck without running
@@ -30,6 +30,47 @@ snapshots `Toploop.toplevel_env` before typing and restores it afterwards, and
 precisely so nothing runs unless every phrase types. Stopping after it is a
 branch, not a mechanism.
 
+## Decided
+
+**An argument on `eval`, as the ticket leaned.** `check: true` stops after the
+typecheck pass. A separate tool would have duplicated autorun, multiple
+phrases, breakpoint rejection and every failure shape to change one thing.
+
+**The result says it checked.** `checked` in `structuredContent` and a first
+line in the text. The renderings differ from a run's only by the missing
+`= <fun>`, which is too quiet a difference to rest a "nothing ran" on, and
+this follows the precedent set for autorun, where a rewrite is reported
+because it is otherwise invisible.
+
+**What comes back is the signature the phrase typed to,** printed with
+`Printtyp.signature` inside `Printtyp.wrap_printing_env`, which is how the
+toplevel prints one. So `val f : int -> int` where a run says
+`val f : int -> int = <fun>`.
+
+**The implicit counter does not advance,** so the `_N` a check reports is the
+name the same code really gets if it is run next. Measured through the tool
+surface: a check reports `val _0 : int`, and the eval after it reports
+`val _0 : int = 42`.
+
+**Bare expressions are still bound before typing.** `Pstr_eval` has an empty
+signature, so without the existing `bind_expressions` rewrite a checked
+expression would report nothing at all, which is half the question the ticket
+asked. Measured in a session: `1 + 1;;` typed directly gives `""`.
+
+**Warnings come from the typecheck pass,** captured per phrase by swapping
+`Location.formatter_for_warnings` around each typing. A check raises the same
+`Warning 8` a run does.
+
+## Found on the way
+
+The typecheck passes were writing their warnings to the worker's stderr, which
+is the captured-output file, so a warning arrived in a result up to five times:
+once in `warnings` and four times in `output`. Capturing the two typecheck
+passes takes it to three. The remaining two copies come from the execute pass
+and are not understood yet;
+[A warning arrives several times over](050-a-warning-arrives-several-times-over.md)
+has the measurement.
+
 ## Open
 
 **An argument on `eval`, not a tool.** "A call says only what is unusual" says
@@ -53,3 +94,8 @@ the thing to get wrong.
 phrase that would run, or the check answers about different code than the
 caller would get. That means the rewrite happens and its rule is reported,
 which is what the first pass does already.
+
+Covered by "check runs nothing" in the worker suite, which checks the type
+comes back without a value, that the phrase printed nothing, that the binding
+does not exist afterwards, that the counter did not move, that a type error is
+still a typecheck failure, and that warnings survive.

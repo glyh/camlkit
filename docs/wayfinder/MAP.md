@@ -232,6 +232,16 @@ must evaluate it first. Tests are Alcotest.
   and `OPAM_SWITCH_PREFIX` only: `CAML_LD_LIBRARY_PATH` stays untouched so
   ticket 028's `Dll.add_path` decision stands. `CAMLKIT_SWITCH` overrides,
   soundly only for a switch of the same OCaml version.
+- [Typecheck without running](tickets/041-typecheck-without-running.md) —
+  **done.** `check: true` on `eval` stops after the typecheck pass: types back,
+  nothing runs, no implicit name consumed, the same warnings and the same
+  typecheck failures a run would give. An argument rather than a fifteenth tool,
+  because a separate one would duplicate autorun, several phrases and every
+  failure shape to change one thing; the result says `checked`, because a
+  checked rendering is a run's with the value missing and that is too quiet a
+  difference to rest on. It also found
+  [A warning arrives several times over](tickets/050-a-warning-arrives-several-times-over.md),
+  where one warning reached the caller five times, now three.
 - [Testing strategy](tickets/013-testing-strategy.md) — one tier, integration
   tests spawn a real worker and the real server in the default `dune test`.
 
@@ -319,13 +329,14 @@ it is also where `dune top` came from.
   `#trace` shows the boundary and never the interior, the debuggers cannot
   evaluate, and a breakpoint here would be an effect handler rather than
   either. Nothing is built; what is open is whether an agent ever asks for it.
-- **Two features an agent would use, specified and open.**
-  [Typecheck without running](tickets/041-typecheck-without-running.md), which
-  the two-pass evaluation almost already does, and
-  [Diagnostics without a build](tickets/042-diagnostics-without-a-build.md),
-  which is merlin answering about one file, including an edit that has not been
-  written, in tens of milliseconds. Neither is a build tool and neither
-  reverses ticket 025.
+- **Diagnostics without a build.** The remaining half of the pair that
+  [Typecheck without running](tickets/041-typecheck-without-running.md) was the
+  first of: [Diagnostics without a build](tickets/042-diagnostics-without-a-build.md)
+  is merlin answering about one file, including an edit that has not been
+  written, in tens of milliseconds. Not a build tool, and it does not reverse
+  ticket 025. Worth doing after 041 rather than before, since the two overlap on
+  what a type answer looks like and 041 answers from the session, which nothing
+  else can do.
 
 - **Two silences and a missing number.** Surveyed September 2026 against
   `mina-agent`, a sibling harness for the Mina monorepo, which reaches OCaml

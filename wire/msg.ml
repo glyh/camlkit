@@ -8,7 +8,10 @@
 type autorun = Default_rules | Rules of string list
 
 type request =
-  | Eval of { source : string; autorun : autorun }
+  (* [check] stops after the typecheck pass: the phrases are typed against the
+     session's real environment and nothing runs. The rewrites still happen, so
+     what is typed is what would have run. *)
+  | Eval of { source : string; autorun : autorun; check : bool }
   | Describe of string      (* a module path, answered via #show *)
   | Require of string list  (* findlib packages *)
   (* A dune build tree, whose private libraries findlib cannot see. *)
@@ -73,7 +76,12 @@ type failure = {
 type autorun_used = Not_an_eval | Ran_under of string list
 
 type response =
-  | Completed of { phrases : phrase list; autorun : autorun_used }
+  (* [checked] is a call that stopped after typechecking. Carried rather than
+     left to the caller's memory of what it asked: a checked rendering is a run
+     rendering with the value missing, and "val f : int -> int" against
+     "val f : int -> int = <fun>" is too quiet a difference to rest on. *)
+  | Completed of { phrases : phrase list; autorun : autorun_used;
+                   checked : bool }
   (* Loading is not a phrase result and should not pretend to be one: a caller
      wants the library names as data, not a sentence to parse. *)
   | Loaded of { loaded : string list; failed : (string * string) list }

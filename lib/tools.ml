@@ -47,7 +47,8 @@ let eval_tool =
        search path; put such a change in its own call. Directives such as \
        #require are not accepted: loading a library is the require and load \
        tools, and showing a signature is describe. Write [%break] in a phrase \
-       to stop there and inspect it, then continue.";
+       to stop there and inspect it, then continue. Pass check to typecheck \
+       without running.";
     "inputSchema", obj ~required:[ "code" ]
       [ session_arg;
         ("code", `Assoc [ "type", `String "string";
@@ -61,7 +62,16 @@ let eval_tool =
                 is run rather than returned, which is what the default \
                 [\"lwt\", \"async\"] does and what a session without those \
                 libraries is unaffected by. Pass [] to get the promise \
-                itself instead." ]) ];
+                itself instead." ]);
+        ("check", `Assoc
+           [ "type", `String "boolean";
+             "description", `String
+               "Typecheck against this session and stop there: report each \
+                phrase's type and nothing runs, so the session is unchanged \
+                and no implicit name is used up. Use it for a candidate \
+                rather than a step, or to ask what an expression's type would \
+                be here. A rendering then says val f : int -> int with no \
+                value, because there is no value without running it." ]) ];
     "outputSchema", obj [ ("phrases", `Assoc [ "type", `String "array";
                                                "items", phrase_schema ]);
                           ("autorun", `Assoc
@@ -71,7 +81,13 @@ let eval_tool =
                                  "The rules this call ran under, when they \
                                   were not the default. A rewritten phrase \
                                   credits its rule in the phrase's ran \
-                                  field." ]) ] ]
+                                  field." ]);
+                          ("checked", `Assoc
+                             [ "type", `String "boolean";
+                               "description", `String
+                                 "Present when the call only typechecked. \
+                                  Nothing ran and the session is \
+                                  unchanged." ]) ] ]
 
 let phrase_array =
   `Assoc [ "type", `String "array"; "items", phrase_schema ]

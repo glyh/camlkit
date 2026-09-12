@@ -70,11 +70,21 @@ let spans_json spans =
 
 let of_response (response : Msg.response) payload =
   match response with
-  | Msg.Completed { phrases; autorun } ->
-    { content = (match transcript payload phrases with "" -> "(no output)" | s -> s);
+  | Msg.Completed { phrases; autorun; checked } ->
+    let transcript = match transcript payload phrases with
+      | "" -> "(no output)" | s -> s in
+    { content =
+        (* Said rather than left to be inferred from an absent "= value": the
+           whole point of the call is that this is what would happen, not what
+           did. *)
+        if checked then
+          "Checked only; nothing ran and the session is unchanged.\n\n"
+          ^ transcript
+        else transcript;
       structured =
         `Assoc ([ "status", `String "ok";
                   "phrases", `List (List.map (json_phrase payload) phrases) ]
+                @ (if checked then [ "checked", `Bool true ] else [])
                 (* Only when it is not the default: a caller knows what it
                    passed, and a phrase that was rewritten says so itself. *)
                 @ (match autorun with
