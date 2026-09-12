@@ -81,6 +81,16 @@ when the types in `wire/msg.ml` change shape. Captured program output rides in
 the raw segment and is addressed by per-phrase offsets, so it is never encoded
 at all.
 
+Both binaries adopt their own switch at startup, in `Wire.Exe.adopt_switch`:
+a client launches them from a shell without `opam env`, and dune cannot
+resolve a project's packages without it. The switch is derived from where the
+binary is, because `opam env` would answer for the shell's switch rather than
+the one the worker was built in; `CAMLKIT_SWITCH` overrides it, and `CAMLKIT_SWITCH=none` (or empty) turns
+adoption off entirely, which is what a nix-built toolchain wants. Only `PATH`
+and `OPAM_SWITCH_PREFIX` are set, and `CAML_LD_LIBRARY_PATH` deliberately is
+not: ticket 028 reaches the same end through `Dll.add_path` rather than
+overwrite a variable the user may have set. See ticket 039.
+
 The worker is bytecode (`modes byte_complete`, `-linkall`) and the server is
 native. Bytecode is version-locked to the compiler, so a worker only loads
 artifacts from its own switch. The server finds the worker beside its own

@@ -648,6 +648,9 @@ let stop_all () = Hashtbl.iter (fun _ s -> Session.kill s "server exiting") sess
 let stdin_open = ref true
 
 let () =
+  (* Before any worker is spawned, so it inherits this, and before merlin or
+     dune is run. See ticket 039. *)
+  Exe.adopt_switch ();
   at_exit stop_all;
   List.iter (fun signal ->
       Sys.set_signal signal (Sys.Signal_handle (fun _ -> exit 0)))

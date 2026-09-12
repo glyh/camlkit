@@ -225,6 +225,13 @@ must evaluate it first. Tests are Alcotest.
   for speed: the saving is microseconds against a process round trip. Marshal
   casts blind, so the frame gained a magic and a build stamp and refuses a peer
   built from other source instead of reading a pointer as an integer.
+- [dune cannot see the switch a client did not pass on](tickets/039-dune-in-a-bare-environment.md)
+  — **fixed.** Both processes adopt their own switch at startup, derived from
+  where the binary is rather than from `opam env`, which would answer for the
+  shell's switch instead of the one the worker's bytecode was built in. `PATH`
+  and `OPAM_SWITCH_PREFIX` only: `CAML_LD_LIBRARY_PATH` stays untouched so
+  ticket 028's `Dll.add_path` decision stands. `CAMLKIT_SWITCH` overrides,
+  soundly only for a switch of the same OCaml version.
 - [Testing strategy](tickets/013-testing-strategy.md) — one tier, integration
   tests spawn a real worker and the real server in the default `dune test`.
 
@@ -320,14 +327,11 @@ it is also where `dune top` came from.
   written, in tens of milliseconds. Neither is a build tool and neither
   reverses ticket 025.
 
-- **The environment a client launches us in.** Two open defects, found through
-  a real MCP client rather than reasoned about:
-  [dune cannot see the switch a client did not pass on](tickets/039-dune-in-a-bare-environment.md)
-  and [A failed dune top degrades in silence](tickets/040-a-silent-fallback.md).
-  A client inherits a shell without `opam env`, so `dune top` cannot resolve a
-  project's externals, and `load` answers from a build-tree scan without saying
-  it did. merlin is unaffected, because it reads dune's cached configuration
-  rather than resolving packages.
+- **The environment a client launches us in.** The cause is fixed, see the
+  decision below; what remains open is
+  [A failed dune top degrades in silence](tickets/040-a-silent-fallback.md),
+  because removing the common cause of a fallback does not make the fallback
+  say it happened.
 
 - **Resource limits beyond time and heap.** Both are now bounded, see
   [A ceiling on a phrase's heap](tickets/030-heap-ceiling.md). File

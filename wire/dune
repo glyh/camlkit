@@ -1,3 +1,4 @@
 ; Shared by the native server and the bytecode worker, so it builds both ways.
 (library
- (name wire))
+ (name wire)
+ (libraries unix))

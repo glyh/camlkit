@@ -57,6 +57,36 @@ build.
 
 Requires OCaml 5.3.0 or newer. Everything else comes in as a dependency.
 
+### It is coupled to opam and to dune, on purpose
+
+This is not a general OCaml tool that happens to work with them. It assumes
+both, and it assumes a particular one of each.
+
+**opam.** The two binaries adopt the switch they were installed into, at
+startup: they put that switch's `bin` on `PATH` for themselves and for
+everything they run. That is what makes them work when your MCP client
+launches them from a shell with no `opam env`, which is the usual case. The
+switch is derived from where the binaries are, not from `opam env`, because
+`opam env` answers for your shell's switch and the one that matters is the one
+the worker's bytecode was built in. `CAMLKIT_SWITCH` points them at another
+switch if you need it, but only a switch with the same OCaml version will
+work, for that same reason.
+
+If your toolchain comes from nix rather than opam, set `CAMLKIT_SWITCH=none`
+and nothing is adopted: the environment your client gives us is used as it
+comes, which is what you want when the toolchain is already on `PATH` and
+lives in a store path rather than a switch. An empty value means the same
+thing.
+
+**dune.** `load` asks `dune top` for a project's archives, `uses` asks dune to
+build its index, and `context` reads the `-open` flags dune passes, through
+merlin. A project with no `dune-project` still works for evaluating,
+requiring installed packages and every merlin-backed query. What it loses is
+loading that project's own libraries and project-wide occurrences.
+
+There is no build tool: run `dune build` yourself. See
+`docs/wayfinder/tickets/025-build-from-a-tool.md`.
+
 ### From a clone, for development
 
 ```sh

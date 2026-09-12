@@ -32,6 +32,9 @@ let usage () =
   exit 2
 
 let () =
+  (* Before anything shells out: a client spawns us from a shell without
+     `opam env`, and dune cannot resolve a project's packages without it. *)
+  Wire.Exe.adopt_switch ();
   let capture_path = if Array.length Sys.argv = 2 then Sys.argv.(1) else usage () in
   (* Move the inherited pipes out of the way before anything else, so the
      capture redirection cannot clobber them and evaluated code cannot reach

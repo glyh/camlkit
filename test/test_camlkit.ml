@@ -67,6 +67,53 @@ let test_frame_rejects_a_foreign_build () =
     Alcotest.(check bool) "and names the magic" true (contains "magic" m)
   | _ -> Alcotest.fail "a frame without the magic must not parse"
 
+(* --- the switch these binaries live in ---------------------------------- *)
+
+(* A client spawns the server from a shell without `opam env`, so the switch is
+   adopted from our own path. The pure halves of that, see ticket 039. *)
+let test_path_prepends_once () =
+  let p = Wire.Exe.path_with ~bin:"/s/bin" in
+  Alcotest.(check string) "prepended, so this switch wins"
+    "/s/bin:/usr/bin" (p (Some "/usr/bin"));
+  Alcotest.(check string) "already there, so left alone"
+    "/usr/bin:/s/bin" (p (Some "/usr/bin:/s/bin"));
+  Alcotest.(check string) "an empty PATH is just the switch" "/s/bin" (p (Some ""));
+  Alcotest.(check string) "and so is none at all" "/s/bin" (p None)
+
+(* CAML_LD_LIBRARY_PATH is not among them on purpose: ticket 028 reached the
+   same end through Dll.add_path rather than overwrite a variable a user may
+   have set. *)
+let test_switch_vars_leave_the_stub_path_alone () =
+  let vars = Wire.Exe.switch_vars "/p" in
+  Alcotest.(check (list string)) "only the switch prefix"
+    [ "OPAM_SWITCH_PREFIX" ] (List.map fst vars);
+  Alcotest.(check string) "naming the prefix given" "/p" (List.assoc "OPAM_SWITCH_PREFIX" vars)
+
+(* nix builds an OCaml toolchain that is already on PATH and lives in a store
+   path, not a switch, so adoption has to be refusable. *)
+let test_adoption_is_refusable () =
+  let saved = Sys.getenv_opt "CAMLKIT_SWITCH" in
+  let restore () =
+    match saved with
+    | Some v -> Unix.putenv "CAMLKIT_SWITCH" v
+    | None -> (try Unix.putenv "CAMLKIT_SWITCH" "" with _ -> ()) in
+  Fun.protect ~finally:restore (fun () ->
+      List.iter
+        (fun v ->
+           Unix.putenv "CAMLKIT_SWITCH" v;
+           Alcotest.(check (option string))
+             (Printf.sprintf "%S adopts nothing" v) None (Wire.Exe.switch_prefix ()))
+        [ "none"; "" ])
+
+(* A dune build tree is not a switch, and adopting it would be nonsense. *)
+let test_a_build_tree_is_not_a_switch () =
+  let dir = Filename.temp_dir "camlkit-sw" "" in
+  Fun.protect
+    ~finally:(fun () -> try Unix.rmdir dir with Unix.Unix_error _ -> ())
+    (fun () ->
+       Alcotest.(check bool) "no stdlib under it, so not a switch" false
+         (Wire.Exe.is_switch dir))
+
 (* --- message encoding --------------------------------------------------- *)
 
 let test_request_roundtrip () =
@@ -621,6 +668,15 @@ let () =
          Alcotest.test_case "trailing bytes" `Quick test_frame_trailing_bytes;
          Alcotest.test_case "a foreign build is refused" `Quick
            test_frame_rejects_a_foreign_build ]);
+      ("switch",
+       [ Alcotest.test_case "PATH is prepended once" `Quick
+           test_path_prepends_once;
+         Alcotest.test_case "the stub path is left alone" `Quick
+           test_switch_vars_leave_the_stub_path_alone;
+         Alcotest.test_case "a build tree is not a switch" `Quick
+           test_a_build_tree_is_not_a_switch;
+         Alcotest.test_case "adoption is refusable" `Quick
+           test_adoption_is_refusable ]);
       ("msg",
        [ Alcotest.test_case "request" `Quick test_request_roundtrip;
          Alcotest.test_case "response" `Quick test_response_roundtrip ]);
