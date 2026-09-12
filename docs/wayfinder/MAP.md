@@ -217,11 +217,14 @@ it is also where `dune top` came from.
   project arguably wants to address modules, not paths. What that would mean
   for a tool surface here is not yet sharp.
 
-- **Package search and an opam index.** ocaml-mcp plans to process
+- **Package search and an opam index.** Declined. ocaml-mcp plans to process
   opam-repository into a cached index keyed by commit, to resolve package
-  versions and later to support semantic search over source. Large, and only
-  worth anything if exploration turns out to be limited by not knowing what
-  exists rather than by not being able to load it.
+  versions and later to support semantic search over source. Large, and it
+  would answer about packages that are not installed, which is the half of the
+  ladder that [Module signatures without loading](tickets/026-signatures-without-loading.md)
+  refused for the same reason the network rung was refused there: everything
+  here stays beside the person who launched it, and what is installed is what
+  a session can load anyway.
 
 - **Formatting.** Declined. ocamlformat as a tool, as ocaml-mcp exposes, but
   formatting belongs to whatever writes the file and this server never writes
