@@ -107,7 +107,11 @@ type response =
      [skipped] are what became of the locals in scope at the stop; a local
      whose type cannot be written down outside the phrase is skipped with the
      compiler's own reason rather than silently missing. *)
-  | Stopped of { id : int; phrase_index : int;
+  | Stopped of { id : int;
+                 (* The marker's name. The id says which hit; this says which
+                    marker, which is what a caller disarms by. *)
+                 name : string;
+                 phrase_index : int;
                  bound : binding list;
                  skipped : (string * string) list;
                  done_ : phrase list }

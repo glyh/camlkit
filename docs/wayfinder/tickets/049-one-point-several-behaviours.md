@@ -57,21 +57,74 @@ park, and the cutoff the map already proposes for stickers, recording only
 when the value differs while still counting every hit, is a behaviour in the
 check list rather than a special case of a separate feature.
 
+## Decided
+
+Grilled through, September 2026. The factoring this ticket proposed is
+**declined**, and the sticker it was factoring for is **accepted**.
+
+**Two markers, not one point with a behaviour list.** `[%break "name"]` and
+`[%watch "name" expr]`. The premise that both want the same typed-tree rewrite
+turned out to be half true: a break *replaces* an expression in unit position
+and types as `unit`, while a watch must *wrap* a subexpression and give back its
+value, so it is `'a -> 'a`. What they genuinely share is the site addressing and
+the location-matching typed-tree walk, where a break takes `exp_env` at the node
+and a watch takes `exp_type`. That is fifteen lines, not an abstraction.
+
+**Every marker is named, and a bare `[%break]` becomes a compile error.** This
+is a breaking change to [Breakpoints in a session](035-breakpoints.md) and to
+every example in it and in
+[Stopping inside a running phrase](033-breakpoints-are-an-effect.md). Taken
+deliberately: a name is what makes a marker disarmable, and without one the
+uniformity has a hole exactly where the trap is.
+
+**A site lives as long as the definition holding it, which is what breakpoints
+already do.** Measured rather than assumed:
+
+    let f x = let doubled = x * 2 in [%break]; doubled;;   val f : int -> int
+    f 21;;   Stopped at [%break] in phrase 1, id 1
+    f 5;;    Stopped at [%break] in phrase 1, id 2
+
+The marker compiles into the function body, so the server has nothing to delete
+and a single-call lifetime is not available to choose. A fresh park id is issued
+per hit, so a name identifies the site and an id identifies one hit of it.
+
+**Destroying a marker means disarming it,** a flag the compiled hook consults,
+not code removal. This closes a gap that predates stickers: nothing today stops
+a breakpoint firing short of redefining its function, so a marker in a hot
+function is a trap.
+
+**An eval result carries this call's recordings; `inspect` carries the full
+trail.** The hit count is the site's lifetime total, because "this has fired
+4000 times" is what a caller wants before reading any values. Accumulating the
+values in the result would need a cap and an eviction rule, and a value from
+three calls ago is context nobody asked for.
+
+**A new tool, `markers`, lists and disarms.** It answers what markers exist,
+whether each is armed and how often it has fired, and disarms by name. Listing
+is the half a caller needs before disarming, and neither belongs on `eval`,
+which requires code to run, nor on `inspect`, which exists because looking is
+not resuming and by the same reasoning is not disarming.
+
+**Values are printed by the worker after the phrase,** with
+`Toploop.print_value : Env.t -> Obj.t -> formatter -> Types.type_expr -> unit`.
+The type and environment are stashed at typecheck time from the site's typed
+node; the hook stores only `Obj.repr v`. This is the locals harvest's trick
+without its temporary bindings.
+
 ## Open
 
-**Whether more than one behaviour is ever asked for.** This is a factoring
-argument, and a factoring argument for code that does not exist is
-speculation. The lazy reading is that stickers should be built as a second
-marker, and only if a third arrives should the list appear. The reading
-against it is that the second is the cheap moment to factor and the third is
-not.
+**What a recording table costs.** Holding `Obj.repr v` keeps every recorded
+value alive, so a watch in a hot loop is a leak with a printer attached. The
+cutoff the map proposes - record only when the value differs from the last,
+while counting every hit - bounds it by distinct consecutive values rather than
+by iterations, and a hard cap is still needed above that.
 
-**What the payload is.** An attribute on an extension point has to parse and
-typecheck, and a condition is an expression in the scope at the marker, which
-is exactly the scope 035 already harvests. A count is a literal. A script is
-an expression evaluated for its effect. None of these is new machinery, but
-the syntax is a decision and there is no obvious precedent in OCaml to copy.
+**A value printed after the fact may have changed.** The table holds the value,
+not a copy, so a mutable one reads as it is at print time rather than at record
+time. Printing at record time would mean generating printing code in the phrase,
+which is the machinery this design avoids.
 
-**Against the whole thing.** Nothing here is asked for by a caller yet. The
-map's sticker entry is open on "whether an agent wants this", and this ticket
-is open on the same question one level up.
+**What Pharo's other behaviours would cost here.** `ChainBehavior` and
+`OnceBehavior` have no counterpart on this surface and are not built. `once` is
+the common case and is currently a condition the caller writes plus a disarm it
+remembers - which the `markers` tool at least makes possible.

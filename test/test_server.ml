@@ -796,7 +796,7 @@ let test_a_phrase_stops_and_resumes () =
   with_server @@ fun c ->
   let args code = `Assoc [ "session", `String "bp"; "code", `String code ] in
   let r = call c ~id:1 ~tool:"eval"
-      ~args:(args "let f n =\n  let x = n * 2 in\n  [%break];\n  x + 1\nin f 20;;") in
+      ~args:(args "let f n =\n  let x = n * 2 in\n  [%break \"m1\"];\n  x + 1\nin f 20;;") in
   let structured = Yojson.Safe.Util.member "structuredContent" r in
   Alcotest.(check string) "stopped rather than completed" "stopped"
     Yojson.Safe.Util.(member "status" structured |> to_string);
@@ -820,7 +820,7 @@ let test_resuming_finishes_the_rest_of_the_call () =
   let r = call c ~id:1 ~tool:"eval"
       ~args:(`Assoc [ "session", `String "bp7"; "code", `String
                         "let total = ref 0;;\n\
-                         for i = 1 to 2 do [%break]; total := !total + i done;;\n\
+                         for i = 1 to 2 do [%break \"m2\"]; total := !total + i done;;\n\
                          print_endline \"the tail of the call\";;" ]) in
   Alcotest.(check bool) "stopped in the loop" true (has "Stopped" (text r));
   ignore (call c ~id:2 ~tool:"continue" ~args:(`Assoc [ "session", `String "bp7" ]));
@@ -839,7 +839,7 @@ let test_output_and_bindings_split_across_the_stop () =
   let r = call c ~id:1 ~tool:"eval"
       ~args:(`Assoc [ "session", `String "bp10"; "code", `String
                         "print_string \"before\\n\";;\n\
-                         let a = (let b = 6 in [%break]; \
+                         let a = (let b = 6 in [%break \"m3\"]; \
                          print_string \"after\\n\"; b * 7);;" ]) in
   Alcotest.(check bool) "what it printed first" true (has "before" (text r));
   Alcotest.(check bool) "and not what it has not printed yet" false
@@ -855,7 +855,7 @@ let test_a_lazy_parked_mid_force () =
   with_server @@ fun c ->
   let args code = `Assoc [ "session", `String "bp11"; "code", `String code ] in
   ignore (call c ~id:1 ~tool:"eval"
-            ~args:(args "let l = lazy (let seed = 6 in [%break]; seed * 7);;"));
+            ~args:(args "let l = lazy (let seed = 6 in [%break \"m4\"]; seed * 7);;"));
   ignore (call c ~id:2 ~tool:"eval" ~args:(args "Lazy.force l;;"));
   let r = call c ~id:3 ~tool:"eval"
       ~args:(args "(try `Forced (Lazy.force l) with e -> `Raised (Printexc.to_string e));;") in
@@ -873,7 +873,7 @@ let test_a_local_that_cannot_be_bound_is_named () =
   let r = call c ~id:1 ~tool:"eval"
       ~args:(`Assoc [ "session", `String "bp2";
                       "code", `String
-                        "let f (type a) (x : a) (y : int) = [%break]; y in f \"s\" 3;;" ]) in
+                        "let f (type a) (x : a) (y : int) = [%break \"m5\"]; y in f \"s\" 3;;" ]) in
   let structured = Yojson.Safe.Util.member "structuredContent" r in
   let skipped = Yojson.Safe.Util.(member "skipped" structured |> to_list) in
   Alcotest.(check bool) "the typed local is still bound" true
@@ -893,7 +893,7 @@ let test_a_polymorphic_local_is_not_bound () =
       ~args:(`Assoc [ "session", `String "bp6";
                       "code", `String
                         "let f x =\n  let n = String.length \"ab\" in\n  \
-                         [%break];\n  (x, n)\nin f 42;;" ]) in
+                         [%break \"m6\"];\n  (x, n)\nin f 42;;" ]) in
   let structured = Yojson.Safe.Util.member "structuredContent" r in
   let named key =
     Yojson.Safe.Util.(member key structured |> to_list
@@ -916,7 +916,7 @@ let test_abandon_runs_the_cleanup () =
   ignore (call c ~id:1 ~tool:"eval"
             ~args:(`Assoc [ "session", `String "bp3"; "code", `String
                               "Fun.protect ~finally:(fun () -> print_endline \"released\") \
-                               (fun () -> [%break]; 7);;" ]));
+                               (fun () -> [%break \"m7\"]; 7);;" ]));
   let r = call c ~id:2 ~tool:"continue"
       ~args:(`Assoc [ "session", `String "bp3"; "abandon", `Bool true ]) in
   Alcotest.(check bool) "the finaliser ran" true (has "released" (text r));
@@ -927,8 +927,8 @@ let test_abandon_runs_the_cleanup () =
 let test_two_parked_phrases_need_an_id () =
   with_server @@ fun c ->
   let args code = `Assoc [ "session", `String "bp4"; "code", `String code ] in
-  ignore (call c ~id:1 ~tool:"eval" ~args:(args "let a = 1 in [%break]; a;;"));
-  ignore (call c ~id:2 ~tool:"eval" ~args:(args "let b = 2 in [%break]; b;;"));
+  ignore (call c ~id:1 ~tool:"eval" ~args:(args "let a = 1 in [%break \"m8\"]; a;;"));
+  ignore (call c ~id:2 ~tool:"eval" ~args:(args "let b = 2 in [%break \"m9\"]; b;;"));
   let r = call c ~id:3 ~tool:"continue" ~args:(`Assoc [ "session", `String "bp4" ]) in
   Alcotest.(check bool) "it asks which, and lists them" true
     (has "1, 2" (text r));
@@ -946,22 +946,26 @@ let test_a_breakpoint_under_autorun_is_refused () =
                             "packages", `List [ `String "lwt.unix" ] ]));
   let r = call c ~id:2 ~tool:"eval"
       ~args:(`Assoc [ "session", `String "bp5"; "code", `String
-                        "let h () = [%break]; Lwt.return 5 in h ();;" ]) in
+                        "let h () = [%break \"m10\"]; Lwt.return 5 in h ();;" ]) in
   Alcotest.(check bool) "refused, saying why" true
     (has "autorun will run as a promise" (text r));
   Alcotest.(check bool) "and nothing ran" true (has "Nothing was executed" (text r))
 
-(* A marker that is not a bare expression is not a breakpoint. The compiler
-   would call it an uninterpreted extension, which does not say what the right
-   form is, so it is refused before typing with a message that does. *)
+(* A marker that is not [%break "name"] is not a breakpoint. The compiler would
+   call it an uninterpreted extension, which does not say what the right form
+   is, so it is refused before typing with a message that does. The name is
+   required because it is what the markers tool disarms by; see tickets/049. *)
 let test_a_malformed_marker_says_the_right_form () =
   with_server @@ fun c ->
   let refused code =
     let r = call c ~id:1 ~tool:"eval"
         ~args:(`Assoc [ "session", `String "bp8"; "code", `String code ]) in
-    has "written [%break]" (text r)
+    has "written [%break" (text r) && has "naming it" (text r)
   in
-  Alcotest.(check bool) "a payload is refused" true (refused "[%break 1];;");
+  Alcotest.(check bool) "an unnamed marker is refused" true
+    (refused "let f () = [%break] in f ();;");
+  Alcotest.(check bool) "a name that is not a string literal is refused" true
+    (refused "[%break 1];;");
   Alcotest.(check bool) "a structure item is refused" true
     (refused "module M = struct [%%break] end;;")
 
@@ -976,7 +980,7 @@ let test_a_breakpoint_the_runtime_cannot_reach_says_so () =
                             "packages", `List [ `String "unix" ] ]));
   ignore (call c ~id:2 ~tool:"eval"
             ~args:(args "Sys.set_signal Sys.sigusr1 \
-                         (Sys.Signal_handle (fun _ -> [%break]));;"));
+                         (Sys.Signal_handle (fun _ -> [%break \"m12\"]));;"));
   let r = call c ~id:3 ~tool:"eval"
       ~args:(args "Unix.kill (Unix.getpid ()) Sys.sigusr1;\n\
                    for _ = 1 to 1_000_000 do ignore (Sys.opaque_identity 1) done;\n\

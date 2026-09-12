@@ -202,6 +202,13 @@ let typecheck_all ~autorun phrases =
       let breaking = Breakpoint.has_marker str0 in
       let str, marker_locs =
         if breaking then Breakpoint.rewrite_empty str0 else (str0, []) in
+      (* Registered at typing rather than at the first hit, so a caller can
+         list a marker it has just defined and disarm it before running the
+         code that reaches it. *)
+      List.iter
+        (fun (_, name) ->
+           ignore (Breakpoint.register ~kind:Breakpoint.Break name))
+        marker_locs;
       (* The typing is wrapped so its warnings can be attributed to this
          phrase. It answers with a result rather than raising through the
          wrapper, so the failure path below is unchanged. *)
@@ -239,7 +246,7 @@ let typecheck_all ~autorun phrases =
                    (function
                      | None -> []
                      | Some env -> Breakpoint.locals_at ~before env)
-                   (Breakpoint.marker_envs tstr marker_locs)
+                   (Breakpoint.marker_envs tstr (List.map fst marker_locs))
                in
                (* The markers are gone from [str], which is the tree that was
                   typed; the second rewrite starts again from the caller's
@@ -318,9 +325,9 @@ let run_phrase ppf buf phrase =
         exnc = (fun e -> raise e);
         effc = (fun (type c) (eff : c Effect.t) ->
             match eff with
-            | Breakpoint.Stop locals ->
+            | Breakpoint.Stop (name, locals) ->
               Some (fun (k : (c, Breakpoint.step) Effect.Deep.continuation) ->
-                  Breakpoint.Broke (locals, k))
+                  Breakpoint.Broke (name, locals, k))
             | _ -> None) }
   with exn -> Buffer.add_string buf (message_of_exn exn); Breakpoint.Ran false
 
@@ -436,12 +443,12 @@ let rec execute_from cap ~acc ~pos ~measure start phrases =
       pos := stop;
       acc := record :: !acc;
       match step with
-      | Breakpoint.Broke (locals, k) ->
+      | Breakpoint.Broke (name, locals, k) ->
         let bound, skipped = bind_locals locals in
         let id = Breakpoint.fresh_id () in
-        Breakpoint.park { Breakpoint.id; k; locals; buf; wbuf;
+        Breakpoint.park { Breakpoint.id; name; k; locals; buf; wbuf;
                           seen = Buffer.length buf; rest; index = i };
-        Msg.Stopped { id; phrase_index = i; bound; skipped;
+        Msg.Stopped { id; name; phrase_index = i; bound; skipped;
                       done_ = List.rev !acc }
       | Breakpoint.Ran _ ->
       if !interrupted then
@@ -516,10 +523,12 @@ let eval cap ~autorun ~check ~cost src =
     with
     | _ :: _ ->
       Msg.Rejected
-        "A breakpoint is written [%break], with no payload, where an \
-         expression belongs. As a structure item ([%%break]) or with a \
-         payload it is not a breakpoint, and the compiler reports it as an \
-         uninterpreted extension."
+        "A breakpoint is written [%break \"name\"], with a string literal \
+         naming it, where an expression belongs. The name is how the markers \
+         tool lists and disarms it, so it is required. Without one, with a \
+         payload that is not a string literal, or as a structure item \
+         ([%%break]), it is not a breakpoint, and the compiler reports it as \
+         an uninterpreted extension."
     | [] ->
     match reject_directives phrases with
     | Some d ->
@@ -704,15 +713,15 @@ let continue_ cap ~id ~abandon =
           call that asked for the measurement was a different one. *)
        execute_from cap ~acc:(ref [ record ]) ~pos:(ref (Capture.mark cap))
          ~measure:false (p.Breakpoint.index + 1) p.Breakpoint.rest
-     | Breakpoint.Broke (locals, k) ->
+     | Breakpoint.Broke (name, locals, k) ->
        (* Stopped again: the same phrase, a later marker, a new id. *)
        let record = record_of_parked cap p in
        let bound, skipped = bind_locals locals in
        let id = Breakpoint.fresh_id () in
-       Breakpoint.park { p with Breakpoint.id; k; locals;
+       Breakpoint.park { p with Breakpoint.id; name; k; locals;
                                 seen = Buffer.length p.Breakpoint.buf };
-       Msg.Stopped { id; phrase_index = p.Breakpoint.index; bound; skipped;
-                     done_ = [ record ] })
+       Msg.Stopped { id; name; phrase_index = p.Breakpoint.index; bound;
+                     skipped; done_ = [ record ] })
 
 (* Looking is not resuming. Binding again is what makes an older stop
    reachable after a later one overwrote the names, and rendering is done by
@@ -743,8 +752,8 @@ let inspect cap ~id =
             out_start = 0; out_len = Capture.mark cap;
             dropped = 0; ran = None; cost = None }
     in
-    Msg.Stopped { id = p.Breakpoint.id; phrase_index = -1; bound; skipped;
-                  done_ = [ record ] }
+    Msg.Stopped { id = p.Breakpoint.id; name = p.Breakpoint.name;
+                  phrase_index = -1; bound; skipped; done_ = [ record ] }
 
 (* Directive-backed operations. These bypass the typing pass by design:
    directives are not typeable, which is why they are not allowed in eval. *)

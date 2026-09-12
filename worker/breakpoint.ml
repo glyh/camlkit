@@ -23,7 +23,9 @@
    signature the worker touches is identical across them. A sequence of
    applications keeps that true. *)
 let hook_name = "__camlkit_break"
-let hook_type = "unit -> unit"
+(* The site's name crosses into the hook, because that is what a registry can
+   count, arm and disarm. See docs/wayfinder/tickets/049. *)
+let hook_type = "string -> unit"
 let local_hook_name = "__camlkit_break_local"
 let local_hook_type = "string -> string -> Obj.t -> unit"
 
@@ -32,12 +34,60 @@ let local_hook_type = "string -> string -> Obj.t -> unit"
    handed back at all. *)
 type local = { name : string; ty : string; value : Obj.t }
 
-type _ Effect.t += Stop : local list -> unit Effect.t
+(* The site's name travels with the stop: a parked phrase is reported by the
+   marker it stopped at, and an id alone says which hit rather than which
+   marker. *)
+type _ Effect.t += Stop : string * local list -> unit Effect.t
 
 (* Filled by the calls the rewrite puts before the stop, drained by it. A
    phrase is evaluated sequentially and a stop is reached at most once at a
    time, so one buffer is enough. *)
 let pending : local list ref = ref []
+
+(* --- the registry ------------------------------------------------------- *)
+
+(* Every marker is named, and the name is what outlives the call: the marker
+   compiles into the code holding it, so a site fires whenever that code runs
+   and the server has nothing to delete. What it can do is disarm - a flag this
+   table holds and the hook reads - which is the only way to stop a marker in a
+   hot function short of redefining the function. See tickets/049. *)
+type kind = Break
+
+type site = {
+  site_name : string;
+  kind : kind;
+  mutable armed : bool;
+  mutable hits : int;            (* lifetime, not this call's *)
+}
+
+let sites : (string, site) Hashtbl.t = Hashtbl.create 8
+
+(* Registered when a phrase carrying the marker is typed, so a site is listable
+   before it has ever fired. Re-registering keeps the arming and the count: a
+   caller that disarms a site and then re-evaluates its definition means to
+   leave it disarmed. *)
+let register ~kind name =
+  match Hashtbl.find_opt sites name with
+  | Some s -> s
+  | None ->
+    let s = { site_name = name; kind; armed = true; hits = 0 } in
+    Hashtbl.replace sites name s; s
+
+let known () =
+  List.sort (fun a b -> compare a.site_name b.site_name)
+    (Hashtbl.fold (fun _ s acc -> s :: acc) sites [])
+
+let disarm name =
+  match Hashtbl.find_opt sites name with
+  | None -> false
+  | Some s -> s.armed <- false; true
+
+let arm name =
+  match Hashtbl.find_opt sites name with
+  | None -> false
+  | Some s -> s.armed <- true; true
+
+let forget_sites () = Hashtbl.reset sites
 
 (* What a continue with abandon raises inside the parked phrase. The toplevel
    prints an exception by the name it was defined with, which for a worker
@@ -53,10 +103,11 @@ let abandoned_binding = "__camlkit_abandoned"
    continuation returns a step of its own. *)
 type step =
   | Ran of bool
-  | Broke of local list * (unit, step) Effect.Deep.continuation
+  | Broke of string * local list * (unit, step) Effect.Deep.continuation
 
 type parked = {
   id : int;
+  name : string;
   k : (unit, step) Effect.Deep.continuation;
   locals : local list;
   (* The phrases of the same call that have not run yet, and the index of the
@@ -93,14 +144,22 @@ let the_only_one () = match ids () with [ id ] -> Some id | _ -> None
    one declared above and nothing else of ours is reachable from a session. *)
 let local_hook name ty value = pending := { name; ty; value } :: !pending
 
-let hook () : unit =
+let hook name : unit =
   let locals = List.rev !pending in
   pending := [];
+  let site = register ~kind:Break name in
+  site.hits <- site.hits + 1;
+  (* A disarmed marker is still compiled into the code and still reached; it
+     just does nothing, which is the whole of what disarming can mean when the
+     call is in the caller's own function body. The locals are dropped with it,
+     since nothing will read them. *)
+  if not site.armed then ()
+  else
   (* An effect cannot be performed in a frame the runtime entered: a signal
      handler, or a callback arriving from C. The raw Unhandled exception names
      this worker's internals and tells a caller nothing, so it is turned into
      a sentence here, at the only place that knows what was being attempted. *)
-  try Effect.perform (Stop locals)
+  try Effect.perform (Stop (name, locals))
   with Effect.Unhandled _ ->
     failwith
       "a breakpoint was reached in a frame the runtime entered, such as a \
@@ -110,17 +169,32 @@ let hook () : unit =
 
 (* --- the rewrite ------------------------------------------------------- *)
 
-(* [%break] is an extension point so that a stray one is a compile error we
-   can explain, and so nothing a session defines can be mistaken for it. *)
-let is_marker (e : Parsetree.expression) =
+(* [%break "name"] is an extension point so that a stray one is a compile error
+   we can explain, and so nothing a session defines can be mistaken for it. The
+   name is required: it is the handle the markers tool disarms by, and a marker
+   that cannot be named cannot be turned off without redefining the function
+   holding it. See tickets/049. *)
+let marker_name (e : Parsetree.expression) =
   match e.pexp_desc with
-  | Parsetree.Pexp_extension ({ txt = "break"; _ }, Parsetree.PStr []) -> true
-  | _ -> false
+  | Parsetree.Pexp_extension
+      ({ txt = "break"; _ },
+       Parsetree.PStr
+         [ { pstr_desc =
+               Parsetree.Pstr_eval
+                 ({ pexp_desc =
+                      Parsetree.Pexp_constant
+                        { pconst_desc = Parsetree.Pconst_string (name, _, _);
+                          _ };
+                    _ }, _);
+             _ } ]) -> Some name
+  | _ -> None
 
-(* A break extension that is not a bare [%break] expression: one with a
-   payload, or one in structure-item position. The compiler calls it an
-   uninterpreted extension, which is true and does not say what the right
-   form is. *)
+let is_marker e = marker_name e <> None
+
+(* A break extension that is not [%break "name"]: one with no name, a name that
+   is not a string literal, or one in structure-item position. The compiler
+   calls it an uninterpreted extension, which is true and does not say what the
+   right form is. *)
 let malformed_marker str =
   let found = ref None in
   let note loc = if !found = None then found := Some loc in
@@ -128,8 +202,8 @@ let malformed_marker str =
     { Ast_iterator.default_iterator with
       expr = (fun self (e : Parsetree.expression) ->
           (match e.pexp_desc with
-           | Parsetree.Pexp_extension ({ txt = "break"; _ }, payload)
-             when payload <> Parsetree.PStr [] -> note e.pexp_loc
+           | Parsetree.Pexp_extension ({ txt = "break"; _ }, _)
+             when marker_name e = None -> note e.pexp_loc
            | _ -> ());
           Ast_iterator.default_iterator.expr self e);
       structure_item = (fun self (i : Parsetree.structure_item) ->
@@ -159,17 +233,20 @@ let unit_expr ~loc =
   Ast_helper.Exp.construct ~loc
     { Location.txt = Longident.Lident "()"; loc } None
 
-let to_empty_call (e : Parsetree.expression) =
+let string_expr ~loc s =
+  Ast_helper.Exp.constant ~loc (Ast_helper.Const.string s)
+
+let to_empty_call ~name (e : Parsetree.expression) =
   let loc = ghost e.pexp_loc in
   Ast_helper.Exp.apply ~loc (ident ~loc hook_name)
-    [ (Asttypes.Nolabel, unit_expr ~loc) ]
+    [ (Asttypes.Nolabel, string_expr ~loc name) ]
 
 (* Second pass: the same call, now carrying the locals harvested for it. The
    list is built here rather than in the worker because the values have to be
    read where they are in scope, which is only inside the phrase. *)
-let to_call ~loc locals =
+let to_call ~loc ~name locals =
   let loc = ghost loc in
-  let str s = Ast_helper.Exp.constant ~loc (Ast_helper.Const.string s) in
+  let str s = string_expr ~loc s in
   let announce (name, ty) =
     Ast_helper.Exp.apply ~loc (ident ~loc local_hook_name)
       [ (Asttypes.Nolabel, str name);
@@ -183,7 +260,7 @@ let to_call ~loc locals =
     (fun local rest -> Ast_helper.Exp.sequence ~loc (announce local) rest)
     locals
     (Ast_helper.Exp.apply ~loc (ident ~loc hook_name)
-       [ (Asttypes.Nolabel, unit_expr ~loc) ])
+       [ (Asttypes.Nolabel, string_expr ~loc name) ])
 
 (* Nothing is printed back to source: the tree is mapped and everything
    inserted carries a ghost location, so the caller's own text keeps its line
@@ -193,12 +270,13 @@ let to_call ~loc locals =
 let mapper ~replace =
   { Ast_mapper.default_mapper with
     expr = (fun self e ->
-        if is_marker e then replace e
-        else Ast_mapper.default_mapper.expr self e) }
+        match marker_name e with
+        | Some name -> replace ~name e
+        | None -> Ast_mapper.default_mapper.expr self e) }
 
 let count_markers str =
   let n = ref 0 in
-  let m = mapper ~replace:(fun e -> incr n; e) in
+  let m = mapper ~replace:(fun ~name:_ e -> incr n; e) in
   ignore (m.Ast_mapper.structure m str);
   !n
 
@@ -208,24 +286,30 @@ let has_marker str = count_markers str > 0
    the second pass finds what the first pass inserted: a typedtree
    constructor's arity differs across the compiler versions this supports,
    while a location does not. *)
+(* The marker locations paired with their names, in order. Both are how the
+   second pass finds what the first pass inserted, and the name is what the
+   registry and the hook are keyed by. *)
 let rewrite_empty str =
-  let locs = ref [] in
+  let found = ref [] in
   let m =
-    mapper ~replace:(fun e -> locs := e.Parsetree.pexp_loc :: !locs;
-                      to_empty_call e)
+    mapper ~replace:(fun ~name e ->
+        found := (e.Parsetree.pexp_loc, name) :: !found;
+        to_empty_call ~name e)
   in
   let str = m.Ast_mapper.structure m str in
-  (str, List.rev !locs)
+  (str, List.rev !found)
 
 (* Locals are taken in order of appearance, which is the order the markers are
    met in both trees, so the two passes line up without matching locations. *)
 let rewrite_with locals_per_marker str =
   let remaining = ref locals_per_marker in
   let m =
-    mapper ~replace:(fun e ->
+    mapper ~replace:(fun ~name e ->
         match !remaining with
-        | [] -> to_empty_call e
-        | locals :: rest -> remaining := rest; to_call ~loc:e.pexp_loc locals)
+        | [] -> to_empty_call ~name e
+        | locals :: rest ->
+          remaining := rest;
+          to_call ~loc:e.pexp_loc ~name locals)
   in
   m.Ast_mapper.structure m str
 
