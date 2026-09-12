@@ -149,13 +149,31 @@ let source_query id name args =
           | Ok () -> value
           | Error why -> `Assoc [ "incomplete", `String why; "value", value ])
     | "document" ->
-      (match Yojson.Safe.Util.member "identifier" args with
-       | `String identifier ->
+      (* Two ways to ask, and the schema cannot say they are exclusive, so the
+         check is here: both would silently ignore the position, and neither
+         would complain about a missing line rather than about the real
+         mistake. *)
+      let named = Yojson.Safe.Util.member "identifier" args <> `Null in
+      let positioned =
+        Yojson.Safe.Util.member "line" args <> `Null
+        || Yojson.Safe.Util.member "col" args <> `Null
+      in
+      (match named, positioned with
+       | true, true ->
+         Error
+           "give identifier, or line and col, not both: an identifier is \
+            looked up in the file's environment and needs no position"
+       | false, false ->
+         Error
+           "give identifier for a name in scope in that file, or line and col \
+            for whatever is at that position"
+       | true, false ->
+         let* identifier = arg_string args "identifier" in
          (* Not the caller's position: see Merlin.neutral_position. *)
          Merlin.query ~command:"document"
            ~args:[ "-position"; Merlin.neutral_position;
                    "-identifier"; identifier ] ~file
-       | _ ->
+       | false, true ->
          let* pos = at () in
          Merlin.query ~command:"document" ~args:pos ~file)
     | "search_type" ->

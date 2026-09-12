@@ -79,15 +79,19 @@ let rules =
    inert in a session that has loaded neither library, so that is the default.
    Emptying the list is how a caller keeps the promise itself, which is a
    legitimate thing to want in code that manipulates them. *)
-let enabled = ref [ "lwt"; "async" ]
+(* Per call, not per session. It was a session setting, which made one
+   argument mean three things - leave it alone, set it, turn it off - and made
+   the answer to "will this run my promise" depend on a call the caller may
+   not remember making. A call says what it wants or takes the default; see
+   docs/wayfinder/tickets/019. *)
+let default = [ "lwt"; "async" ]
 let available = List.map (fun r -> r.name) rules
-let current () = !enabled
 
 (* Unknown names are refused rather than ignored: a caller that asks for a
    rewrite this does not have should hear so, not silently get nothing. *)
-let set names =
+let check names =
   match List.filter (fun n -> not (List.mem n available)) names with
-  | [] -> enabled := names; Ok ()
+  | [] -> Ok ()
   | unknown ->
     Error
       (Printf.sprintf "no such autorun rule: %s. Known rules: %s"
@@ -109,13 +113,13 @@ let head_constructor env ty =
   | Types.Tconstr (path, _, _) -> Some path
   | _ -> None
 
-let rule_for env ty =
+let rule_for ~enabled env ty =
   match head_constructor env ty with
   | None -> None
   | Some path ->
     List.find_opt
       (fun rule ->
-         List.mem rule.name !enabled
+         List.mem rule.name enabled
          &&
          match type_path env rule.type_name with
          | Some p -> Path.same path p && runner_available env rule.runner
@@ -126,14 +130,14 @@ let rule_for env ty =
    the typed structure to know what those types are. Also reports which rule
    fired, if any, because the rewrite is otherwise invisible in the result:
    a run promise renders exactly like the value it produced. *)
-let rewrite env (pstr : Parsetree.structure) (tstr : Typedtree.structure) =
-  if !enabled = [] then (pstr, None) else
+let rewrite ~enabled env (pstr : Parsetree.structure) (tstr : Typedtree.structure) =
+  if enabled = [] then (pstr, None) else
   let fired = ref None in
   let rewrite_item item titem =
     match item.Parsetree.pstr_desc, titem.Typedtree.str_desc with
     | ( Parsetree.Pstr_eval (e, attrs)
       , Typedtree.Tstr_eval ({ Typedtree.exp_type; _ }, _) ) ->
-      (match rule_for env exp_type with
+      (match rule_for ~enabled env exp_type with
        | None -> item
        | Some rule ->
          if !fired = None then fired := Some rule.name;

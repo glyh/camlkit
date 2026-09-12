@@ -143,8 +143,11 @@ let test_autorun_is_visible_in_the_result () =
   Alcotest.(check bool) "and so is an empty one, which omitting cannot say"
     true (autorun_of r = `List []);
   let r = eval "1;;" in
-  Alcotest.(check bool) "which persists without being repeated" true
-    (autorun_of r = `List []);
+  (* Per call, not per session: the next call is back to the default, so the
+     answer to "will this run my promise" does not depend on a call the
+     caller may not remember making. *)
+  Alcotest.(check bool) "and the next call is back to the default" true
+    (autorun_of r = `List [ `String "lwt"; `String "async" ]);
   (* a rewritten phrase says so, in the structure and in the transcript *)
   let r = call c ~id:2 ~tool:"require"
       ~args:(`Assoc [ "session", `String "s";
@@ -801,6 +804,19 @@ let test_a_breakpoint_the_runtime_cannot_reach_says_so () =
   let r = call c ~id:4 ~tool:"eval" ~args:(args "1 + 1;;") in
   Alcotest.(check bool) "and the session survives" true (has "2" (text r))
 
+(* Two ways to ask, and the schema cannot express that exactly one is
+   required, so the tool says which mistake was made. *)
+let test_document_wants_one_way_of_asking () =
+  with_server @@ fun c ->
+  with_source @@ fun path ->
+  let r = call c ~id:1 ~tool:"document"
+      ~args:(`Assoc [ "file", `String path ]) in
+  Alcotest.(check bool) "neither is refused" true (has "or line and col" (text r));
+  let r = call c ~id:2 ~tool:"document"
+      ~args:(`Assoc [ "file", `String path; "identifier", `String "String.concat";
+                      "line", `Int 1; "col", `Int 4 ]) in
+  Alcotest.(check bool) "both is refused" true (has "not both" (text r))
+
 (* Documentation by name rather than by position. Merlin infers the namespace
    to search from the node under the cursor even when the name is given, so a
    position inside a module path would answer "Not in environment" about a
@@ -967,6 +983,8 @@ let () =
            test_enclosings_are_not_repeated;
          Alcotest.test_case "search_type fills its limit" `Slow
            test_search_type_fills_its_limit;
+         Alcotest.test_case "document wants one way of asking" `Slow
+           test_document_wants_one_way_of_asking;
          Alcotest.test_case "document by identifier" `Slow
            test_document_by_identifier;
          Alcotest.test_case "document a name not in scope" `Slow

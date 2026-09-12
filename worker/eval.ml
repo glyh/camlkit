@@ -158,7 +158,7 @@ let reject_directives phrases =
    phrases that will actually run: an Lwt or Async expression is rewritten to
    run rather than to hand back a promise, which needs the typed tree and so
    happens here. See worker/autorun.ml. *)
-let typecheck_all phrases =
+let typecheck_all ~autorun phrases =
   let env0 = !Toploop.toplevel_env in
   let restore () = Toploop.toplevel_env := env0 in
   let rec go i acc = function
@@ -174,7 +174,7 @@ let typecheck_all phrases =
       (match Typemod.type_toplevel_phrase !Toploop.toplevel_env str with
        | (tstr, _, _, _, env) ->
          let env_before = !Toploop.toplevel_env in
-         let str', fired = Autorun.rewrite env_before str tstr in
+         let str', fired = Autorun.rewrite ~enabled:autorun env_before str tstr in
          if breaking && fired <> None then begin
            restore ();
            (* Escaping a blocking run leaves the scheduler unable to start
@@ -396,27 +396,22 @@ let execute_all cap phrases =
 (* Echo the session's rule list on the way out. A caller that just changed it,
    or that wants to know whether the change stuck, should not have to evaluate
    a probe expression to find out. *)
-let with_autorun = function
+(* The rules the call ran under, echoed on the way out: a rewrite is otherwise
+   invisible, and a caller should not have to probe to learn what was in
+   force. *)
+let with_autorun rules = function
   | Msg.Completed { phrases; _ } ->
-    Msg.Completed { phrases; autorun = Some (Autorun.current ()) }
+    Msg.Completed { phrases; autorun = Some rules }
   | other -> other
 
 let eval cap ?autorun src =
   Capture.reset cap;
-  match
-    match autorun with
-    | None -> Ok ()
-    | Some names -> Autorun.set names
-  with
+  let rules = Option.value autorun ~default:Autorun.default in
+  match Autorun.check rules with
   (* A bad rule name is a rejected argument, not a failed phrase: nothing
      parsed, nothing ran, and Failed would name a phrase that is not at
-     fault. The message carries the rules still in force, since set is all or
-     nothing and a refusal leaves the session as it was. *)
-  | Error message ->
-    Msg.Rejected
-      (Printf.sprintf "%s. The session is still set to: %s" message
-         (match Autorun.current () with
-          | [] -> "no rules" | rs -> String.concat ", " rs))
+     fault. *)
+  | Error message -> Msg.Rejected message
   | Ok () ->
   match parse src with
   | Error f -> Msg.Failed f
@@ -452,7 +447,7 @@ let eval cap ?autorun src =
          rejected request leaves no gap in the numbering. *)
       (* Auto-run first, then implicit names: after a bare expression becomes
          "let _N = ...", it is no longer an expression to rewrite. *)
-      match typecheck_all phrases with
+      match typecheck_all ~autorun:rules phrases with
       | Error f -> Msg.Failed f
       | Ok typed ->
         (* Which rule fired is known only from this first pass: by the second
@@ -460,12 +455,12 @@ let eval cap ?autorun src =
         let fired = List.map snd typed in
         let phrases, next =
           bind_expressions !implicit_counter (List.map fst typed) in
-        (match typecheck_all phrases with
+        (match typecheck_all ~autorun:rules phrases with
          | Error f -> Msg.Failed f
          | Ok typed ->
            implicit_counter := next;
            let phrases = List.combine (List.map fst typed) fired in
-           with_autorun (execute_all cap phrases))
+           with_autorun rules (execute_all cap phrases))
 
 (* Not the #require directive, and not UTop.require: both swallow findlib
    errors into printed text, so a missing package reported as success. Worse,

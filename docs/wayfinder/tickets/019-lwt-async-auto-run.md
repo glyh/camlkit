@@ -98,3 +98,24 @@ alone" for a session setting, and the alternative is a second argument for
 turning it off, which is more surface for the same thing. The description now
 names all three cases explicitly instead of mentioning the empty list in
 passing.
+
+## Revised: per call, not per session
+
+**The setting was a session setting and is now a per-call argument.**
+Superseded because of what it did to the tool surface: one argument meant
+three things - omit to leave it alone, pass a list to set it, pass an empty
+list to turn it off - and the answer to "will this run my promise" depended on
+a call the caller might not remember making. A call now says what it wants or
+takes the default, and the description is one sentence instead of an
+enumeration of cases.
+
+What survives unchanged: the rules, the self-gating that makes them inert
+without the library, the refusal of an unknown rule name, and the reporting.
+Every result still names the rules the call ran under and every rewritten
+phrase still credits the rule that ran it, which is the observability this
+ticket argued for and which the change does not touch.
+
+What is lost: setting it once for a whole session. A caller that wants the
+promise rather than the run has to say so on each call. That is a sentence per
+call against a session whose behaviour cannot be read off the call, and the
+surface is worth more than the saving.

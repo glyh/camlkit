@@ -37,15 +37,13 @@ let eval_tool =
     "name", `String "eval";
     "description", `String
       "Evaluate OCaml phrases in a session. Accepts several phrases in one \
-       call. Nothing is executed unless every phrase parses and typechecks, \
-       so a failure never leaves partial state behind. One consequence worth \
-       knowing: a phrase that changes the search path, such as one calling \
-       Topdirs.dir_directory, cannot be used by a later phrase in the same \
-       call, because that later phrase is typechecked before anything runs. \
-       Put the path change in its own call. Directives such as #require are \
-       not accepted here, and none of them are part of the tool surface: \
-       loading a library is the require and load tools, and showing a \
-       signature is describe.";
+       call, and nothing runs unless every one of them parses and typechecks, \
+       so a failure leaves no partial state behind. That also means a phrase \
+       cannot use something an earlier phrase in the same call put on the \
+       search path; put such a change in its own call. Directives such as \
+       #require are not accepted: loading a library is the require and load \
+       tools, and showing a signature is describe. Write [%break] in a phrase \
+       to stop there and inspect it, then continue.";
     "inputSchema", obj ~required:[ "session"; "code" ]
       [ session_arg;
         ("code", `Assoc [ "type", `String "string";
@@ -55,22 +53,20 @@ let eval_tool =
            [ "type", `String "array";
              "items", `Assoc [ "type", `String "string" ];
              "description", `String
-               "Which promise types a bare expression should run rather than \
-                return, by name: lwt, async. Applies to this session from now \
-                on, not just this call, and every result reports the list in \
-                force as its autorun field. Three distinct cases: omit the \
-                argument to leave the setting alone; pass [\"lwt\", \"async\"], \
-                the default, to run both, which does nothing in a session \
-                that has loaded neither; pass [] to turn rewriting off and \
-                get the promise itself." ]) ];
+               "For this call only. A bare expression whose type is a promise \
+                is run rather than returned, which is what the default \
+                [\"lwt\", \"async\"] does and what a session without those \
+                libraries is unaffected by. Pass [] to get the promise \
+                itself instead." ]) ];
     "outputSchema", obj [ ("phrases", `Assoc [ "type", `String "array";
                                                "items", phrase_schema ]);
                           ("autorun", `Assoc
                              [ "type", `String "array";
                                "items", `Assoc [ "type", `String "string" ];
                                "description", `String
-                                 "The autorun rules in force for this session \
-                                  after the call." ]) ] ]
+                                 "The rules this call ran under. A rewrite is \
+                                  otherwise invisible, since a run promise \
+                                  renders like any value." ]) ] ]
 
 let phrase_array =
   `Assoc [ "type", `String "array"; "items", phrase_schema ]
@@ -308,19 +304,21 @@ let document_tool =
     "name", `String "document";
     "description", `String
       "The documentation comment on a name, as its author wrote it. Answers \
-       from source, so nothing needs to be built or loaded. Name the \
-       identifier to ask about anything in scope in that file, including its \
-       dependencies; give a line and column instead to ask about whatever is \
-       at that position, which is how to reach a name defined in the file \
-       itself. The text comes back as odoc markup, unrendered: braces such as \
-       {!Bytes.t} and {b bold} are the comment's own syntax.";
+       from source, so nothing needs to be built or loaded. Ask in exactly \
+       one of two ways: give identifier for anything in scope in that file, \
+       including its dependencies, which is usually what you want; or give \
+       line and column for whatever is at that position, which is how to \
+       reach a name defined in the file itself. Passing both, or neither, is \
+       refused. The text comes back as odoc markup, unrendered: braces such \
+       as {!Bytes.t} and {b bold} are the comment's own syntax.";
     "inputSchema", obj ~required:[ "file" ]
       [ file_arg;
         ("identifier", `Assoc [ "type", `String "string";
                                 "description", `String "A name in scope in \
                                   that file, such as List.map or \
                                   Yojson.Safe.t. The file supplies the \
-                                  environment; the position is not used." ]);
+                                  environment, and no position is needed or \
+                                  accepted with it." ]);
         line_arg; col_arg ];
     "outputSchema", obj
       [ ("documentation", `Assoc [ "type", `String "string";

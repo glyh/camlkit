@@ -134,10 +134,11 @@ must evaluate it first. Tests are Alcotest.
   client with no shell. The analysis of what driving dune costs still holds up
   the `dune top` call in `load` and the index call in `uses`.
 - [Should Lwt and Async expressions auto-run](tickets/019-lwt-async-auto-run.md)
-  — yes, as utop does, rewriting bare expressions only; configurable per session
-  as a list of rule names, and self-gating so it is inert without the library.
-  Every eval reports the list in force, and a rewritten phrase names the rule
-  that ran it, since neither was observable without a probe.
+  — yes, as utop does, rewriting bare expressions only, self-gating so it is
+  inert without the library. **The setting is now per call, not per session:**
+  it meant three things in one argument and made a session's behaviour depend
+  on a call nobody remembers. Every result names the rules the call ran under
+  and a rewritten phrase credits the rule that ran it.
 - [Toplevel directives are not part of the tool surface](tickets/029-directives-are-not-the-surface.md)
   — none of them get exposed: `#require` reports failure as prose where the
   tool reports fields, `load` is not expressible as directives at all, and a

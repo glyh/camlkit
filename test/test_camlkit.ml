@@ -451,14 +451,14 @@ let test_lwt_expressions_run () =
   (* and turning it back on works *)
   Alcotest.(check string) "re-enabling runs it again" "int"
     (typ ~autorun:[ "lwt" ] "Lwt.return 42;;");
-  (* a rewritten phrase says which rule rewrote it, and the setting is sticky
-     across calls that do not mention it *)
+  (* a rewritten phrase says which rule rewrote it, and a call that mentions
+     nothing gets the default rather than whatever a previous call asked for *)
   (match ask s (ev "Lwt.return 42;;") with
    | Msg.Completed { phrases = [ p ]; autorun }, _ ->
      Alcotest.(check bool) "the phrase credits the rule that ran it" true
        (p.Msg.ran = Some "lwt");
-     Alcotest.(check bool) "and the setting persisted without being repeated"
-       true (autorun = Some [ "lwt" ])
+     Alcotest.(check bool) "and the call reports the default it ran under"
+       true (autorun = Some [ "lwt"; "async" ])
    | _ -> Alcotest.fail "expected a completed phrase");
   (* ordinary code credits nothing *)
   (match ask s (ev "40 + 2;;") with
@@ -466,18 +466,18 @@ let test_lwt_expressions_run () =
      Alcotest.(check bool) "a plain expression was not rewritten" true
        (p.Msg.ran = None)
    | _ -> Alcotest.fail "expected a completed phrase");
-  (* an unknown rule is refused rather than ignored, and leaves the previous
-     setting standing rather than clearing it *)
+  (* an unknown rule is refused rather than ignored, and nothing runs *)
   (match ask s (ev ~autorun:[ "nonsense" ] "1;;") with
    | Msg.Rejected why, _ ->
      Alcotest.(check bool) "and says what it knows" true
        (has_substring "no such autorun rule" why
-        && has_substring "still set to: lwt" why)
+        && has_substring "Known rules" why)
    | _ -> Alcotest.fail "an unknown autorun rule should be refused");
+  (* a refusal is per call, so the next call is unaffected *)
   (match ask s (ev "Lwt.return 42;;") with
    | Msg.Completed { autorun; _ }, _ ->
-     Alcotest.(check bool) "a refused setting leaves the old one intact" true
-       (autorun = Some [ "lwt" ])
+     Alcotest.(check bool) "the next call is the default" true
+       (autorun = Some [ "lwt"; "async" ])
    | _ -> Alcotest.fail "expected a completed phrase")
 
 (* Reported from a session driving a real project: loading its code died with
