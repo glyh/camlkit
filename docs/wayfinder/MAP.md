@@ -232,6 +232,17 @@ must evaluate it first. Tests are Alcotest.
   and `OPAM_SWITCH_PREFIX` only: `CAML_LD_LIBRARY_PATH` stays untouched so
   ticket 028's `Dll.add_path` decision stands. `CAMLKIT_SWITCH` overrides,
   soundly only for a switch of the same OCaml version.
+- [What a phrase cost](tickets/045-what-a-phrase-cost.md) — **done.**
+  `cost: true` on `eval` reports each phrase's wall clock and bytes allocated.
+  Opt-in rather than reported above a threshold, because no threshold suits
+  every caller and a caller who is not measuring should not pay two numbers per
+  line. The first implementation was wrong in a way that looked right:
+  `Gc.quick_stat` alone measured `Array.make 1000` as 3.2 MB and
+  `String.make 10000` as nothing, because its `minor_words` lags the young
+  region and a large allocation skips the minor heap. A minor collection before
+  each reading fixes it, and is paid for only when asked. The reading still
+  covers compiling, running and printing the phrase, so there is a floor of 70
+  to 300 kB that the description names.
 - [Diagnostics without a build](tickets/042-diagnostics-without-a-build.md) —
   **done.** The `diagnostics` tool: merlin's errors for one file, warnings kept
   apart from errors, in 12 ms standalone and 43 ms on a real project file. It

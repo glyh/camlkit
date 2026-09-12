@@ -1,8 +1,8 @@
 ---
-status: open
+status: resolved
 type: research
 blocked-by: []
-assignee:
+assignee: lyh
 ---
 
 # What a phrase cost
@@ -41,30 +41,70 @@ and peak RSS from `/usr/bin/time`. That route exists because it measures a
 whole process it does not link. Inside the worker the same counters are a
 function call, and there is no process exit to wait for.
 
+## Decided
+
+**Opt-in, not reported when notable.** The ticket's first open question was
+whether to report always above a threshold. `cost: true` on `eval` instead, the
+way `check` is: most phrases cost nothing worth a number, a threshold is a
+constant nobody can pick for every caller, and a caller that is not measuring
+should not pay two numbers per line.
+
+**Wall clock and allocated bytes, nothing else.** `top_heap_words` is left out:
+it is cumulative for the process, so it says what the session has ever reached
+rather than what this phrase needed, and a field that has to be explained away
+is not worth its bytes.
+
+**A resumed phrase is not measured.** It already ran up to its stop, so a
+reading would cover the remainder rather than the phrase, and the call that
+asked was a different one.
+
+## Measured, and the first attempt was wrong
+
+`Gc.quick_stat` alone gives numbers that look plausible and are not.
+`Array.make 1000` measured as 3.2 MB and `String.make 10000` as nothing at all:
+`quick_stat`'s `minor_words` lags the young region, so a small allocation reads
+as zero until a minor collection, and a large allocation skips the minor heap
+entirely while `major_words` only settles at a major slice.
+
+A minor collection before each reading fixes both. Against a standalone program
+with known answers:
+
+| phrase | measured | expected |
+| --- | --- | --- |
+| `Array.make 1000` | 1303 words | 1001 |
+| `String.make 10000` | 1278 words | 1252 |
+| `List.init 1000` | 3026 words | 3000 |
+| `1 + 1` | 26 words | 0 |
+
+The collection is only paid for when the call asked, and the clock starts after
+it, so it does not land in the timing.
+
+**The floor is real and is in the description.** The reading covers compiling,
+running and printing the phrase, because `Toploop.execute_phrase` does all three
+and there is no seam between them. An empty phrase measures 70 to 300 kB and a
+fraction of a millisecond, and printing a large value costs far more than that:
+`Array.make 1000` through the tool reads 2.7 MB, nearly all of it printing a
+thousand elements.
+
+Put the work in a loop and the floor stops mattering, which is what the
+description points at. 100000 refs measured 1.61 MB against 1.6 MB expected,
+within 0.6%, and the same loop over an unboxed int measured 72 kB, which is the
+floor.
+
 ## Open
 
-**Whether it is reported at all, or only when notable.** The conventions say
-a field with nothing to say is absent, and most phrases cost nothing worth a
-number: a `let` of a constant, an `open`, a definition. A threshold - report
-above some milliseconds or some words - keeps a transcript from growing two
-numbers per line it does not need. What the threshold is, and whether a
-caller can ask for the numbers unconditionally, is the decision.
+**Whether the floor should be subtracted.** It could be measured once per
+session and taken off, which would make small phrases readable. Not done: the
+floor is not constant, since it depends on what the phrase compiles to and what
+its value prints as, so subtracting a single number would replace a visible
+overhead with an invisible error.
 
-**Whether it is honest.** A single run of a phrase in a toplevel is not a
-benchmark: the first call pays for lazy initialisation, the code is not the
-code a `dune build --profile release` would produce, and nothing is repeated.
-Allocation is the sound half, because words allocated is a count rather than
-a timing and barely varies between runs. Wall clock is the half that invites
-a wrong conclusion, and the description has to say so or the tool becomes a
-benchmark that lies - the same objection
-[Diagnostics without a build](042-diagnostics-without-a-build.md) has to
-answer about not being a build.
+**Whether the wall clock earns its place at all.** Allocation is a count and
+barely moves between runs; the clock is one un-repeated run of code the toplevel
+compiled, and it invites the conclusion that a release build would behave the
+same way. It is reported because it is the question people ask, and the
+description says plainly what it is not.
 
-**Peak heap.** `top_heap_words` is cumulative for the process, not for the
-phrase, so it says what the session has ever reached rather than what this
-phrase needed. Either it is reported as that, or it is left out.
-
-**Against the whole thing.** An agent that wants a real measurement can
-write the loop itself in a phrase, and gets to choose the repetition count
-while it does. What this buys is the cheap case: noticing that something cost
-far more than expected without having decided in advance to measure it.
+Covered by "cost is opt-in" in the worker suite: nothing is measured unless
+asked, a loop allocating a known 1.6 MB measures as that, and a loop allocating
+nothing stays at the floor.

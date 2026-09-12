@@ -122,9 +122,9 @@ let test_request_roundtrip () =
       (Msg.decode_request (Msg.encode_request r) = r)
   in
   check (Msg.Eval { source = "1 + 1;;"; autorun = Msg.Default_rules;
-                    check = false });
+                    check = false; cost = false });
   check (Msg.Eval { source = "1;;"; autorun = Msg.Rules [ "lwt" ];
-                    check = true });
+                    check = true; cost = true });
   check (Msg.Describe "List");
   check (Msg.Require [ "yojson"; "str" ])
 
@@ -136,12 +136,14 @@ let test_response_roundtrip () =
   check (Msg.Completed
            { phrases = [ { rendering = "val x : int = 42"; warnings = "";
                            out_start = 0; out_len = 0; dropped = 0;
-                           ran = None } ];
+                           ran = None; cost = None } ];
              autorun = Msg.Not_an_eval; checked = false });
   check (Msg.Completed
            { phrases = [ { rendering = "- : int = 42"; warnings = "";
                            out_start = 0; out_len = 0; dropped = 0;
-                           ran = Some "lwt" } ];
+                           ran = Some "lwt";
+                           cost = Some { wall_ms = 1.5;
+                                         allocated_bytes = 4096 } } ];
              autorun = Msg.Ran_under [ "lwt"; "async" ]; checked = true });
   check (Msg.Failed { phase = Msg.Typecheck; phrase_index = 1;
                       message = "Error: ..."; spans = [ (4, 8) ];
@@ -155,7 +157,7 @@ let test_response_roundtrip () =
 let test_clamp () =
   let p start len =
     Msg.{ rendering = ""; warnings = ""; out_start = start; out_len = len;
-          dropped = 0; ran = None } in
+          dropped = 0; ran = None; cost = None } in
   let ps, any = Msg.clamp ~limit:100 [ p 0 50; p 50 50 ] in
   Alcotest.(check bool) "nothing under the limit is touched" false any;
   Alcotest.(check bool) "nothing is recorded as lost" true
@@ -231,12 +233,12 @@ let ask s request =
      | Ok (response, output) -> (response, output))
 
 (* Most tests only care about the source, so name the common shape. *)
-let ev ?autorun ?(check = false) source =
+let ev ?autorun ?(check = false) ?(cost = false) source =
   Msg.Eval { source;
              autorun = (match autorun with
                  | None -> Msg.Default_rules
                  | Some rules -> Msg.Rules rules);
-             check }
+             check; cost }
 
 let has_substring needle hay =
   let re = Str.regexp_string needle in
@@ -401,6 +403,44 @@ let test_check_runs_nothing () =
      Alcotest.(check bool) "and carries the warnings typing raised" true
        (has_substring "Warning 8" p.Msg.warnings)
    | _ -> Alcotest.fail "expected one checked phrase")
+
+(* Opt-in, and only worth having if the number means something. See
+   docs/wayfinder/tickets/045. *)
+let test_cost_is_opt_in () =
+  with_worker @@ fun s ->
+  let cost_of r =
+    match phrases r with
+    | [ p ] -> p.Msg.cost
+    | _ -> Alcotest.fail "expected one phrase record"
+  in
+  let r, _ = ask s (ev "1 + 1;;") in
+  Alcotest.(check bool) "nothing is measured unless the call asks" true
+    (cost_of r = None);
+  (* Work chosen so it dwarfs the floor and its allocation is known: 100000
+     refs is two words each, so 1.6 MB on a 64-bit runtime. Printing nothing,
+     so the toplevel's own printing is not in the reading. *)
+  let r, _ =
+    ask s (ev ~cost:true
+             "let () = for _ = 1 to 100000 do \
+              ignore (Sys.opaque_identity (ref 0)) done;;") in
+  (match cost_of r with
+   | None -> Alcotest.fail "cost was asked for and not reported"
+   | Some c ->
+     let mb = float_of_int c.Msg.allocated_bytes /. 1e6 in
+     Alcotest.(check bool)
+       (Printf.sprintf "1.6 MB of refs measures as about that, got %.2f MB" mb)
+       true (mb > 1.4 && mb < 2.2);
+     Alcotest.(check bool) "and the clock moved" true (c.Msg.wall_ms > 0.));
+  (* A phrase that allocates nothing beyond the floor stays well under it. *)
+  let r, _ =
+    ask s (ev ~cost:true
+             "let () = for _ = 1 to 100000 do \
+              ignore (Sys.opaque_identity 0) done;;") in
+  (match cost_of r with
+   | None -> Alcotest.fail "cost was asked for and not reported"
+   | Some c ->
+     Alcotest.(check bool) "a phrase that allocates nothing says so" true
+       (c.Msg.allocated_bytes < 500_000))
 
 (* #require and UTop.require both swallow findlib errors into printed text, so
    a missing package used to come back as success. *)
@@ -816,6 +856,7 @@ let () =
          Alcotest.test_case "describe" `Slow test_describe;
          Alcotest.test_case "implicit bindings" `Slow test_implicit_bindings;
          Alcotest.test_case "check runs nothing" `Slow test_check_runs_nothing;
+         Alcotest.test_case "cost is opt-in" `Slow test_cost_is_opt_in;
          Alcotest.test_case "require" `Slow test_require;
          Alcotest.test_case "hermetic" `Slow test_hermetic;
          Alcotest.test_case "error locations" `Slow test_error_locations;

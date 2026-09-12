@@ -27,6 +27,20 @@ let slice payload (p : Msg.phrase) =
    output it qualifies rather than carried as a flag beside it. *)
 let field name = function "" -> [] | s -> [ (name, `String s) ]
 
+(* Readable rather than exact: three significant figures is more than a single
+   un-repeated run in a toplevel can honestly support. *)
+let millis ms =
+  if ms >= 100. then Printf.sprintf "%.0f ms" ms
+  else if ms >= 1. then Printf.sprintf "%.1f ms" ms
+  else Printf.sprintf "%.2f ms" ms
+
+let bytes n =
+  let f = float_of_int n in
+  if n >= 1_000_000_000 then Printf.sprintf "%.1f GB" (f /. 1e9)
+  else if n >= 1_000_000 then Printf.sprintf "%.1f MB" (f /. 1e6)
+  else if n >= 1_000 then Printf.sprintf "%.1f kB" (f /. 1e3)
+  else Printf.sprintf "%d B" n
+
 let json_phrase payload (p : Msg.phrase) =
   let out = slice payload p in
   let out =
@@ -39,7 +53,13 @@ let json_phrase payload (p : Msg.phrase) =
     (field "rendering" p.rendering
      @ field "warnings" p.warnings
      @ field "output" out
-     @ (match p.ran with None -> [] | Some r -> [ ("ran", `String r) ]))
+     @ (match p.ran with None -> [] | Some r -> [ ("ran", `String r) ])
+     @ (match p.cost with
+         | None -> []
+         | Some c ->
+           [ ("cost",
+              `Assoc [ ("wall_ms", `Float (Float.round (c.wall_ms *. 1000.) /. 1000.));
+                       ("allocated_bytes", `Int c.allocated_bytes) ]) ]))
 
 (* A transcript, in the order a terminal would show it: warnings, then what
    the phrase printed, then what the toplevel made of it. *)
@@ -56,12 +76,21 @@ let transcript payload phrases =
       if p.rendering <> "" then Buffer.add_string buf (String.trim p.rendering ^ "\n");
       (* The rewrite is otherwise invisible here: the transcript of a promise
          that was run looks exactly like one of a plain value. *)
-      match p.ran with
+      (match p.ran with
+       | None -> ()
+       | Some rule ->
+         Buffer.add_string buf
+           (Printf.sprintf "[autorun %s: the expression was run, not returned \
+                            as a promise]\n" rule));
+      (* Only when the call asked. A phrase that allocated nothing still says
+         so, because zero is the answer to "did this allocate" and absence
+         would read as the measurement having been skipped. *)
+      match p.cost with
       | None -> ()
-      | Some rule ->
+      | Some c ->
         Buffer.add_string buf
-          (Printf.sprintf "[autorun %s: the expression was run, not returned \
-                           as a promise]\n" rule))
+          (Printf.sprintf "[%s, %s allocated]\n" (millis c.wall_ms)
+             (bytes c.allocated_bytes)))
     phrases;
   Buffer.contents buf
 

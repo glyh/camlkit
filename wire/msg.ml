@@ -11,7 +11,10 @@ type request =
   (* [check] stops after the typecheck pass: the phrases are typed against the
      session's real environment and nothing runs. The rewrites still happen, so
      what is typed is what would have run. *)
-  | Eval of { source : string; autorun : autorun; check : bool }
+  (* [cost] asks for each phrase's wall clock and allocation. Opt-in rather
+     than reported when notable: most phrases cost nothing worth a number, and
+     a caller that is not measuring should not pay for two of them per line. *)
+  | Eval of { source : string; autorun : autorun; check : bool; cost : bool }
   | Describe of string      (* a module path, answered via #show *)
   | Require of string list  (* findlib packages *)
   (* A dune build tree, whose private libraries findlib cannot see. *)
@@ -41,6 +44,16 @@ type binding = {
   bound_type : string;  (* its type, or the whole declaration for a type or module *)
 }
 
+(* What running a phrase cost, when the call asked. Wall clock is the half that
+   invites a wrong conclusion - a first call pays for lazy initialisation, a
+   toplevel is not a release build, and nothing is repeated - so the tool says
+   so and the honest half is the allocation, which is a count rather than a
+   timing and barely moves between runs. *)
+type cost = {
+  wall_ms : float;
+  allocated_bytes : int;
+}
+
 type phrase = {
   rendering : string;
   warnings : string;
@@ -54,6 +67,8 @@ type phrase = {
      rewrite is invisible: a run promise and a plain value render the same way,
      and only the type hints that anything happened. *)
   ran : string option;
+  (* Absent unless the call asked to be told. *)
+  cost : cost option;
 }
 
 type phase = Parse | Typecheck | Execute

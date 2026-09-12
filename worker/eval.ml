@@ -366,8 +366,8 @@ let bind_locals (locals : Breakpoint.local list) =
 
 (* Runs phrases from a given point, so a call that stopped can be finished
    later from where it left off. execute_all is this from the beginning. *)
-let rec execute_from cap ~acc ~pos start phrases =
-  let go = execute_from cap ~acc ~pos in
+let rec execute_from cap ~acc ~pos ~measure start phrases =
+  let go = execute_from cap ~acc ~pos ~measure in
   match phrases with
   | [] -> Msg.Completed { phrases = List.rev !acc; autorun = Not_an_eval;
                           checked = false }
@@ -382,7 +382,25 @@ let rec execute_from cap ~acc ~pos start phrases =
       (* Scan before and after, as utop does: a phrase may itself load the
          cmis carrying the printers it then wants to use. *)
       Printers.scan ppf;
+      (* Around the phrase itself, not around the printer scans or the record
+         building. A minor collection precedes each reading, because without
+         one the counters are quantised beyond use: `Array.make 1000` measured
+         as 3.2 MB and `String.make 10000` as nothing at all, since
+         quick_stat's minor_words lags the young region and a large allocation
+         skips the minor heap altogether. With it, the same two measure 1303
+         and 1278 words against 1001 and 1252 expected. The collection is only
+         paid for when the call asked to be measured, and the clock starts
+         after it, so it does not land in the timing. See tickets/045. *)
+      let read () =
+        Gc.minor ();
+        let s = Gc.quick_stat () in
+        Gc.(s.minor_words +. s.major_words -. s.promoted_words)
+      in
+      let before = if measure then read () else 0. in
+      let started = Unix.gettimeofday () in
       let step = run_phrase ppf buf phrase in
+      let elapsed = Unix.gettimeofday () -. started in
+      let after = if measure then read () else 0. in
       let ok =
         match step with Breakpoint.Ran ok -> ok | Breakpoint.Broke _ -> true in
       let ok =
@@ -404,10 +422,17 @@ let rec execute_from cap ~acc ~pos start phrases =
       Printers.scan ppf;
       Format.pp_print_flush ppf (); Format.pp_print_flush wppf ();
       let stop = Capture.mark cap in
+      let cost =
+        if not measure then None
+        else
+          Some Msg.{ wall_ms = elapsed *. 1000.;
+                     allocated_bytes =
+                       int_of_float (after -. before) * (Sys.word_size / 8) }
+      in
       let record = Msg.{ rendering = Buffer.contents buf;
                          warnings = Buffer.contents wbuf;
                          out_start = !pos; out_len = stop - !pos;
-                         dropped = 0; ran } in
+                         dropped = 0; ran; cost } in
       pos := stop;
       acc := record :: !acc;
       match step with
@@ -431,8 +456,8 @@ let rec execute_from cap ~acc ~pos start phrases =
                         is already the message *)
                      done_ = List.rev (List.tl !acc) }
 
-let execute_all cap phrases =
-  execute_from cap ~acc:(ref []) ~pos:(ref 0) 0 phrases
+let execute_all cap ~measure phrases =
+  execute_from cap ~acc:(ref []) ~pos:(ref 0) ~measure 0 phrases
 
 (* Echo the session's rule list on the way out. A caller that just changed it,
    or that wants to know whether the change stuck, should not have to evaluate
@@ -456,7 +481,7 @@ let checked_phrase t ran =
   let rendering = match String.trim (Buffer.contents buf) with
     | "" -> "" | s -> s ^ "\n" in
   Msg.{ rendering; warnings = t.warns; out_start = 0; out_len = 0;
-        dropped = 0; ran }
+        dropped = 0; ran; cost = None }
 
 (* The rules the call ran under, echoed on the way out: a rewrite is otherwise
    invisible, and a caller should not have to probe to learn what was in
@@ -466,7 +491,7 @@ let with_autorun rules = function
     Msg.Completed { phrases; autorun = Ran_under rules; checked }
   | other -> other
 
-let eval cap ~autorun ~check src =
+let eval cap ~autorun ~check ~cost src =
   Capture.reset cap;
   let rules =
     match autorun with
@@ -546,7 +571,7 @@ let eval cap ~autorun ~check src =
              Capture.reset cap;
              let phrases =
                List.combine (List.map (fun t -> t.tree) typed) fired in
-             with_autorun rules (execute_all cap phrases)
+             with_autorun rules (execute_all cap ~measure:cost phrases)
            end)
 
 (* Not the #require directive, and not UTop.require: both swallow findlib
@@ -585,7 +610,7 @@ let require_packages cap packages =
 let ok_result cap rendering =
   Msg.Completed { phrases = [ { rendering; warnings = ""; out_start = 0;
                                 out_len = Capture.mark cap; dropped = 0;
-                                ran = None } ];
+                                ran = None; cost = None } ];
                   autorun = Not_an_eval; checked = false }
 
 let fail_result message =
@@ -644,7 +669,7 @@ let record_of_parked cap (p : Breakpoint.parked) =
   in
   Msg.{ rendering; warnings = Buffer.contents p.Breakpoint.wbuf;
         out_start = 0; out_len = Capture.mark cap;
-        dropped = 0; ran = None }
+        dropped = 0; ran = None; cost = None }
 
 let continue_ cap ~id ~abandon =
   Capture.reset cap;
@@ -674,8 +699,11 @@ let continue_ cap ~id ~abandon =
        (* The phrase is done, and so is the part of the call that was waiting
           behind it: a stop suspends the call, not only the phrase. *)
        let record = record_of_parked cap p in
+       (* Not measured. A resumed phrase already ran up to its stop, so a
+          reading here would be the remainder rather than the phrase, and the
+          call that asked for the measurement was a different one. *)
        execute_from cap ~acc:(ref [ record ]) ~pos:(ref (Capture.mark cap))
-         (p.Breakpoint.index + 1) p.Breakpoint.rest
+         ~measure:false (p.Breakpoint.index + 1) p.Breakpoint.rest
      | Breakpoint.Broke (locals, k) ->
        (* Stopped again: the same phrase, a later marker, a new id. *)
        let record = record_of_parked cap p in
@@ -713,7 +741,7 @@ let inspect cap ~id =
     let record =
       Msg.{ rendering = Buffer.contents buf; warnings = "";
             out_start = 0; out_len = Capture.mark cap;
-            dropped = 0; ran = None }
+            dropped = 0; ran = None; cost = None }
     in
     Msg.Stopped { id = p.Breakpoint.id; phrase_index = -1; bound; skipped;
                   done_ = [ record ] }
@@ -724,7 +752,8 @@ let directive cap src =
   Capture.reset cap;
   match parse src with
   | Error f -> Msg.Failed f
-  | Ok phrases -> execute_all cap (List.map (fun p -> (p, None)) phrases)
+  | Ok phrases ->
+    execute_all cap ~measure:false (List.map (fun p -> (p, None)) phrases)
 
 (* Directives print to stdout, not to the formatter passed to execute_phrase,
    so the answer arrives in the captured output with an empty rendering. *)

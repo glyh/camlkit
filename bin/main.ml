@@ -398,9 +398,10 @@ let request_of_call name args =
       | _ -> Msg.Default_rules
     in
     let check = Yojson.Safe.Util.member "check" args = `Bool true in
+    let cost = Yojson.Safe.Util.member "cost" args = `Bool true in
     (match arg_string args "code" with
      | Error _ as e -> e
-     | Ok source -> Ok (Msg.Eval { source; autorun; check }))
+     | Ok source -> Ok (Msg.Eval { source; autorun; check; cost }))
   | "describe" -> Result.map (fun p -> Msg.Describe p) (arg_string args "path")
   | "continue" ->
     let id = match Yojson.Safe.Util.member "id" args with
@@ -545,7 +546,8 @@ let handle_call id params =
                "Session %S was reset; what follows is the code the reset \
                 carried, evaluated in the empty toplevel." session_name
            in
-           (match Session.send s (Msg.Eval { source = code; autorun = Msg.Default_rules; check = false })
+           (match Session.send s (Msg.Eval { source = code; autorun = Msg.Default_rules; check = false;
+                          cost = false })
                     ~timeout:eval_timeout with
             | Error e -> reply id (Render.infrastructure_failure e)
             | Ok () -> Hashtbl.replace pending session_name (id, Some note)))

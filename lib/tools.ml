@@ -34,7 +34,10 @@ let phrase_schema =
              "ran", `Assoc [ "type", `String "string";
                "description", `String "The autorun rule that rewrote this \
                  phrase, if one did: the expression was a promise and was run \
-                 rather than returned. Absent when nothing was rewritten." ] ] ]
+                 rather than returned. Absent when nothing was rewritten." ];
+             "cost", `Assoc [ "type", `String "object";
+               "description", `String "wall_ms and allocated_bytes for this \
+                 phrase. Present only when the call asked for it." ] ] ]
 
 let eval_tool =
   `Assoc [
@@ -71,7 +74,23 @@ let eval_tool =
                 and no implicit name is used up. Use it for a candidate \
                 rather than a step, or to ask what an expression's type would \
                 be here. A rendering then says val f : int -> int with no \
-                value, because there is no value without running it." ]) ];
+                value, because there is no value without running it." ]);
+        ("cost", `Assoc
+           [ "type", `String "boolean";
+             "description", `String
+               "Report what each phrase cost: wall clock, and bytes allocated \
+                from the runtime's own counters. Ask for it when you are \
+                comparing two implementations, not by habit. The reading \
+                covers compiling, running and printing the phrase, so there is \
+                a floor of roughly 70 kB and a fraction of a millisecond that \
+                is the toplevel's own work, and printing a large value costs \
+                far more than that. Put the work in a loop inside the phrase \
+                and the floor stops mattering: a phrase allocating 100000 \
+                refs measures 1.61 MB against 1.6 MB expected. The allocation \
+                is the sound half, being a count rather than a timing; the \
+                wall clock is one un-repeated run of code the toplevel \
+                compiled, which pays for any lazy initialisation it triggers \
+                and is not what a release build would cost." ]) ];
     "outputSchema", obj [ ("phrases", `Assoc [ "type", `String "array";
                                                "items", phrase_schema ]);
                           ("autorun", `Assoc
