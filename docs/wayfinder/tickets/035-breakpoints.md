@@ -49,6 +49,14 @@ when a session holds exactly one, which is the ordinary case. Two stops are
 independent phrases, neither continuation contains the other, so refusing the
 second or letting it overwrite the first would both strand a computation.
 
+**A stop suspends the call, not only the phrase.** The phrases sent behind the
+one that stopped are parked with the continuation and run when it resumes.
+They were dropped silently at first, which the loop test caught: the loop
+finished, the phrase after it never ran, and nothing in the result said so.
+Executing them later is sound because they typechecked in the original call
+and toplevel code resolves a global when it is compiled, so a redefinition
+made while parked cannot change what they refer to.
+
 **Two tools.** `continue` resumes, or abandons with a flag, and returns an
 ordinary evaluation result, or another stop if the phrase breaks again.
 `inspect` binds a stop's locals again and prints them, which is how an earlier
@@ -92,6 +100,19 @@ announces it, then the stop is performed. The path to `Obj.repr` is built with
 constructor's arity differs across versions; a location does not. The inserted
 call carries the marker's own location as a ghost, so the environments are
 found by matching those.
+
+**Tail calls survive.** The marker sits in statement position, so replacing it
+with a sequence of announcements leaves the call after it in tail position,
+and a deep handler adds no frame per call. Measured: two million tail calls
+before the stop, and the loop completed to the right sum afterwards. A stop at
+the bottom of two hundred thousand non-tail frames suspends and resumes
+correctly too, so the shadow stack's tail-call problem recorded in
+[Stopping inside a running phrase](033-breakpoints-are-an-effect.md) belongs
+to the shadow stack alone, not to stopping.
+
+**Values are the real ones.** A parked `int ref` mutated from another call,
+and a `Buffer.t` appended to, were both seen by the phrase when it resumed,
+which is what the marshalling route in ticket 033 could not have given.
 
 **Nothing is printed back to source.** Inserted nodes carry ghost locations
 and existing nodes keep theirs, so the caller's line and character numbers

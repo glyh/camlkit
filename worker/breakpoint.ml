@@ -59,6 +59,14 @@ type parked = {
   id : int;
   k : (unit, step) Effect.Deep.continuation;
   locals : local list;
+  (* The phrases of the same call that have not run yet, and the index of the
+     one that stopped. A call is the unit of work: a stop suspends the call,
+     not only the phrase, so resuming finishes what was sent rather than
+     dropping the tail of it. They typechecked in the original call, and
+     toplevel code resolves a global when it is compiled, so a redefinition
+     made while parked cannot change what they refer to. *)
+  rest : (Parsetree.toplevel_phrase * string option) list;
+  index : int;
   (* The rest of the phrase prints into the buffers the original call gave
      execute_phrase, which is inside the continuation and cannot be swapped.
      They are held here so the call that resumes can read what was added. *)

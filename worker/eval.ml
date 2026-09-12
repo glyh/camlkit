@@ -323,11 +323,14 @@ let bind_locals (locals : Breakpoint.local list) =
     locals;
   (List.rev !bound, List.rev !skipped)
 
-let execute_all cap phrases =
-  let acc = ref [] and pos = ref 0 in
-  let rec go i = function
-    | [] -> Msg.Completed { phrases = List.rev !acc; autorun = None }
-    | (phrase, ran) :: rest ->
+(* Runs phrases from a given point, so a call that stopped can be finished
+   later from where it left off. execute_all is this from the beginning. *)
+let rec execute_from cap ~acc ~pos start phrases =
+  let go = execute_from cap ~acc ~pos in
+  match phrases with
+  | [] -> Msg.Completed { phrases = List.rev !acc; autorun = None }
+  | (phrase, ran) :: rest ->
+    let i = start in
       let buf = Buffer.create 256 and wbuf = Buffer.create 64 in
       let ppf = Format.formatter_of_buffer buf in
       let wppf = Format.formatter_of_buffer wbuf in
@@ -371,7 +374,7 @@ let execute_all cap phrases =
         let bound, skipped = bind_locals locals in
         let id = Breakpoint.fresh_id () in
         Breakpoint.park { Breakpoint.id; k; locals; buf; wbuf;
-                          seen = Buffer.length buf };
+                          seen = Buffer.length buf; rest; index = i };
         Msg.Stopped { id; phrase_index = i; bound; skipped;
                       done_ = List.rev !acc }
       | Breakpoint.Ran _ ->
@@ -386,8 +389,9 @@ let execute_all cap phrases =
                      (* everything except the failing phrase, whose rendering
                         is already the message *)
                      done_ = List.rev (List.tl !acc) }
-  in
-  go 0 phrases
+
+let execute_all cap phrases =
+  execute_from cap ~acc:(ref []) ~pos:(ref 0) 0 phrases
 
 (* Echo the session's rule list on the way out. A caller that just changed it,
    or that wants to know whether the change stuck, should not have to evaluate
@@ -572,7 +576,11 @@ let continue_ cap ~id ~abandon =
     in
     (match step with
      | Breakpoint.Ran _ ->
-       Msg.Completed { phrases = [ record_of_parked cap p ]; autorun = None }
+       (* The phrase is done, and so is the part of the call that was waiting
+          behind it: a stop suspends the call, not only the phrase. *)
+       let record = record_of_parked cap p in
+       execute_from cap ~acc:(ref [ record ]) ~pos:(ref (Capture.mark cap))
+         (p.Breakpoint.index + 1) p.Breakpoint.rest
      | Breakpoint.Broke (locals, k) ->
        (* Stopped again: the same phrase, a later marker, a new id. *)
        let record = record_of_parked cap p in
@@ -580,7 +588,8 @@ let continue_ cap ~id ~abandon =
        let id = Breakpoint.fresh_id () in
        Breakpoint.park { p with Breakpoint.id; k; locals;
                                 seen = Buffer.length p.Breakpoint.buf };
-       Msg.Stopped { id; phrase_index = -1; bound; skipped; done_ = [ record ] })
+       Msg.Stopped { id; phrase_index = p.Breakpoint.index; bound; skipped;
+                     done_ = [ record ] })
 
 (* Looking is not resuming. Binding again is what makes an older stop
    reachable after a later one overwrote the names, and rendering is done by

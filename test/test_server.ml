@@ -626,6 +626,25 @@ let test_a_phrase_stops_and_resumes () =
       ~args:(`Assoc [ "session", `String "bp" ]) in
   Alcotest.(check bool) "the rest of the phrase ran" true (has "41" (text r))
 
+(* A stop suspends the call, not only the phrase that stopped. The phrases
+   waiting behind it were dropped silently before this: the loop finished, the
+   phrase after it never ran, and nothing said so. *)
+let test_resuming_finishes_the_rest_of_the_call () =
+  with_server @@ fun c ->
+  let r = call c ~id:1 ~tool:"eval"
+      ~args:(`Assoc [ "session", `String "bp7"; "code", `String
+                        "let total = ref 0;;\n\
+                         for i = 1 to 2 do [%break]; total := !total + i done;;\n\
+                         print_endline \"the tail of the call\";;" ]) in
+  Alcotest.(check bool) "stopped in the loop" true (has "Stopped" (text r));
+  ignore (call c ~id:2 ~tool:"continue" ~args:(`Assoc [ "session", `String "bp7" ]));
+  let r = call c ~id:3 ~tool:"continue" ~args:(`Assoc [ "session", `String "bp7" ]) in
+  Alcotest.(check bool) "the phrase behind the stop ran too" true
+    (has "the tail of the call" (text r));
+  let r = call c ~id:4 ~tool:"eval"
+      ~args:(`Assoc [ "session", `String "bp7"; "code", `String "!total;;" ]) in
+  Alcotest.(check bool) "and the loop itself completed" true (has "3" (text r))
+
 (* A local whose type is not expressible outside the phrase cannot be bound.
    The compiler's own refusal is the reason reported, rather than the local
    going silently missing. *)
@@ -846,6 +865,8 @@ let () =
       ("breakpoints",
        [ Alcotest.test_case "a phrase stops and resumes" `Slow
            test_a_phrase_stops_and_resumes;
+         Alcotest.test_case "resuming finishes the rest of the call" `Slow
+           test_resuming_finishes_the_rest_of_the_call;
          Alcotest.test_case "a local that cannot be bound is named" `Slow
            test_a_local_that_cannot_be_bound_is_named;
          Alcotest.test_case "a polymorphic local is not bound" `Slow
