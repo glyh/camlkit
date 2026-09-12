@@ -54,7 +54,7 @@ let () =
       watching ();
       let response =
         match Msg.decode_request meta with
-        | Msg.Eval { source; autorun } -> Eval.eval cap ?autorun source
+        | Msg.Eval { source; autorun } -> Eval.eval cap ~autorun source
         | Msg.Describe path -> Eval.describe cap path
         | Msg.Continue { id; abandon } -> Eval.continue_ cap ~id ~abandon
         | Msg.Inspect { id } -> Eval.inspect cap ~id

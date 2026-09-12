@@ -2,10 +2,13 @@
    Metadata rides in the first segment, marshalled; captured program output is
    the raw segment, addressed by per-phrase offsets. *)
 
+(* What a call asks of the autorun rewrites. Saying nothing is not the same
+   as saying none: [] turns the rewrites off, and the default is a rule list
+   of its own, so the two need separate forms. *)
+type autorun = Default_rules | Rules of string list
+
 type request =
-  (* [autorun] names the rewrites this session performs, if the caller wants
-     to change them. Absent leaves the session as it was. *)
-  | Eval of { source : string; autorun : string list option }
+  | Eval of { source : string; autorun : autorun }
   | Describe of string      (* a module path, answered via #show *)
   | Require of string list  (* findlib packages *)
   (* A dune build tree, whose private libraries findlib cannot see. *)
@@ -64,11 +67,13 @@ type failure = {
   done_ : phrase list;
 }
 
+(* Which rules an answer ran under, echoed on every eval so a caller can see
+   what was in force without probing for it. Require and load also answer
+   Completed, and have no rules to report. *)
+type autorun_used = Not_an_eval | Ran_under of string list
+
 type response =
-  (* [autorun] is the session's rule list as it now stands, echoed on every
-     eval so a caller can see what the setting is without probing for it. None
-     for the answers that are not an eval. *)
-  | Completed of { phrases : phrase list; autorun : string list option }
+  | Completed of { phrases : phrase list; autorun : autorun_used }
   (* Loading is not a phrase result and should not pretend to be one: a caller
      wants the library names as data, not a sentence to parse. *)
   | Loaded of { loaded : string list; failed : (string * string) list }

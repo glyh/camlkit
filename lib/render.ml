@@ -78,7 +78,7 @@ let of_response (response : Msg.response) payload =
                 (* Only when it is not the default: a caller knows what it
                    passed, and a phrase that was rewritten says so itself. *)
                 @ (match autorun with
-                    | Some names when names <> Msg.autorun_default ->
+                    | Msg.Ran_under names when names <> Msg.autorun_default ->
                       [ "autorun", `List (List.map (fun n -> `String n) names) ]
                     | _ -> []));
       is_error = false }

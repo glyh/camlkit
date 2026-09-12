@@ -121,8 +121,8 @@ let test_request_roundtrip () =
     Alcotest.(check bool) "request survives" true
       (Msg.decode_request (Msg.encode_request r) = r)
   in
-  check (Msg.Eval { source = "1 + 1;;"; autorun = None });
-  check (Msg.Eval { source = "1;;"; autorun = Some [ "lwt" ] });
+  check (Msg.Eval { source = "1 + 1;;"; autorun = Msg.Default_rules });
+  check (Msg.Eval { source = "1;;"; autorun = Msg.Rules [ "lwt" ] });
   check (Msg.Describe "List");
   check (Msg.Require [ "yojson"; "str" ])
 
@@ -135,12 +135,12 @@ let test_response_roundtrip () =
            { phrases = [ { rendering = "val x : int = 42"; warnings = "";
                            out_start = 0; out_len = 0; dropped = 0;
                            ran = None } ];
-             autorun = None });
+             autorun = Msg.Not_an_eval });
   check (Msg.Completed
            { phrases = [ { rendering = "- : int = 42"; warnings = "";
                            out_start = 0; out_len = 0; dropped = 0;
                            ran = Some "lwt" } ];
-             autorun = Some [ "lwt"; "async" ] });
+             autorun = Msg.Ran_under [ "lwt"; "async" ] });
   check (Msg.Failed { phase = Msg.Typecheck; phrase_index = 1;
                       message = "Error: ..."; spans = [ (4, 8) ];
                       lines = [ (1, 1) ]; done_ = [] });
@@ -229,7 +229,11 @@ let ask s request =
      | Ok (response, output) -> (response, output))
 
 (* Most tests only care about the source, so name the common shape. *)
-let ev ?autorun source = Msg.Eval { source; autorun }
+let ev ?autorun source =
+  Msg.Eval { source;
+             autorun = (match autorun with
+                 | None -> Msg.Default_rules
+                 | Some rules -> Msg.Rules rules) }
 
 let has_substring needle hay =
   let re = Str.regexp_string needle in
@@ -475,7 +479,7 @@ let test_lwt_expressions_run () =
      Alcotest.(check bool) "an empty list returns the promise" true
        (has_substring "Lwt.t" p.Msg.rendering);
      Alcotest.(check bool) "and the result says rewriting is off" true
-       (autorun = Some []);
+       (autorun = Msg.Ran_under []);
      Alcotest.(check bool) "with no rule credited for the phrase" true
        (p.Msg.ran = None)
    | _ -> Alcotest.fail "expected a completed phrase");
@@ -485,7 +489,7 @@ let test_lwt_expressions_run () =
      Alcotest.(check bool) "async only does not run lwt" true
        (has_substring "Lwt.t" p.Msg.rendering);
      Alcotest.(check bool) "and the setting is reported back" true
-       (autorun = Some [ "async" ])
+       (autorun = Msg.Ran_under [ "async" ])
    | _ -> Alcotest.fail "expected a completed phrase");
   (* and turning it back on works *)
   Alcotest.(check string) "re-enabling runs it again" "int"
@@ -497,7 +501,7 @@ let test_lwt_expressions_run () =
      Alcotest.(check bool) "the phrase credits the rule that ran it" true
        (p.Msg.ran = Some "lwt");
      Alcotest.(check bool) "and the call reports the default it ran under"
-       true (autorun = Some [ "lwt"; "async" ])
+       true (autorun = Msg.Ran_under [ "lwt"; "async" ])
    | _ -> Alcotest.fail "expected a completed phrase");
   (* ordinary code credits nothing *)
   (match ask s (ev "40 + 2;;") with
@@ -516,7 +520,7 @@ let test_lwt_expressions_run () =
   (match ask s (ev "Lwt.return 42;;") with
    | Msg.Completed { autorun; _ }, _ ->
      Alcotest.(check bool) "the next call is the default" true
-       (autorun = Some [ "lwt"; "async" ])
+       (autorun = Msg.Ran_under [ "lwt"; "async" ])
    | _ -> Alcotest.fail "expected a completed phrase")
 
 (* Reported from a session driving a real project: loading its code died with

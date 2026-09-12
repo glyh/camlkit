@@ -318,8 +318,9 @@ let request_of_call name args =
   | "eval" ->
     let autorun =
       match Yojson.Safe.Util.member "autorun" args with
-      | `List l -> Some (List.filter_map (function `String s -> Some s | _ -> None) l)
-      | _ -> None
+      | `List l ->
+        Msg.Rules (List.filter_map (function `String s -> Some s | _ -> None) l)
+      | _ -> Msg.Default_rules
     in
     (match arg_string args "code" with
      | Error _ as e -> e
@@ -468,7 +469,7 @@ let handle_call id params =
                "Session %S was reset; what follows is the code the reset \
                 carried, evaluated in the empty toplevel." session_name
            in
-           (match Session.send s (Msg.Eval { source = code; autorun = None })
+           (match Session.send s (Msg.Eval { source = code; autorun = Msg.Default_rules })
                     ~timeout:eval_timeout with
             | Error e -> reply id (Render.infrastructure_failure e)
             | Ok () -> Hashtbl.replace pending session_name (id, Some note)))

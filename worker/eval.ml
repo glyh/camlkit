@@ -330,7 +330,7 @@ let bind_locals (locals : Breakpoint.local list) =
 let rec execute_from cap ~acc ~pos start phrases =
   let go = execute_from cap ~acc ~pos in
   match phrases with
-  | [] -> Msg.Completed { phrases = List.rev !acc; autorun = None }
+  | [] -> Msg.Completed { phrases = List.rev !acc; autorun = Not_an_eval }
   | (phrase, ran) :: rest ->
     let i = start in
       let buf = Buffer.create 256 and wbuf = Buffer.create 64 in
@@ -402,12 +402,16 @@ let execute_all cap phrases =
    force. *)
 let with_autorun rules = function
   | Msg.Completed { phrases; _ } ->
-    Msg.Completed { phrases; autorun = Some rules }
+    Msg.Completed { phrases; autorun = Ran_under rules }
   | other -> other
 
-let eval cap ?autorun src =
+let eval cap ~autorun src =
   Capture.reset cap;
-  let rules = Option.value autorun ~default:Autorun.default in
+  let rules =
+    match autorun with
+    | Msg.Default_rules -> Autorun.default
+    | Msg.Rules rules -> rules
+  in
   match Autorun.check rules with
   (* A bad rule name is a rejected argument, not a failed phrase: nothing
      parsed, nothing ran, and Failed would name a phrase that is not at
@@ -500,7 +504,7 @@ let ok_result cap rendering =
   Msg.Completed { phrases = [ { rendering; warnings = ""; out_start = 0;
                                 out_len = Capture.mark cap; dropped = 0;
                                 ran = None } ];
-                  autorun = None }
+                  autorun = Not_an_eval }
 
 let fail_result message =
   Msg.Failed { phase = Msg.Execute; phrase_index = 0; message;
