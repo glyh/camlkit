@@ -304,6 +304,16 @@ it is also where `dune top` came from.
   `#trace` shows the boundary and never the interior, the debuggers cannot
   evaluate, and a breakpoint here would be an effect handler rather than
   either. Nothing is built; what is open is whether an agent ever asks for it.
+- **Marshal for the worker IPC.**
+  [Marshal instead of JSON metadata](tickets/043-marshal-for-worker-ipc.md),
+  open. Absent from ticket 017's survey because it is stdlib rather than a
+  library. Measured: it works across bytecode and native, is five to twelve
+  times faster at under a third the size, and the whole saving is microseconds
+  against a process round trip. What it would delete is about 168 lines of
+  hand-written codec; what it costs is that a mismatched binary reads silent
+  garbage instead of failing. The frame has no magic or version to guard that
+  with, which is worth fixing either way.
+
 - **Two features an agent would use, specified and open.**
   [Typecheck without running](tickets/041-typecheck-without-running.md), which
   the two-pass evaluation almost already does, and
