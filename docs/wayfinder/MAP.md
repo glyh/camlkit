@@ -297,3 +297,72 @@ it is also where `dune top` came from.
 - **Publishing.** Installing and client registration are done. What remains
   is whether this is worth releasing to opam, and what a version-1 promise
   about the tool surface would be.
+
+### From the conversational-dev clients
+
+Surveyed September 2026: [sly](https://github.com/joaotavora/sly) and its
+slynk backend, [CIDER](https://github.com/clojure-emacs/cider) with the nREPL
+op surface it drives, and [conjure](https://github.com/Olical/conjure).
+Comparison was against every `defslyfun` in slynk, CIDER's lisp modules, and
+conjure's mapping documentation, and against merlin's own command list, where
+several of the same ideas turned out to be sitting unused. Two are settled
+rather than fog. A last-value binding, CL's `*` and CIDER's `*1`, is already
+here as the `_N` implicit names. Conjure has nothing architectural to take: it
+is a thin editor client and its log buffer is the transcript an agent's
+conversation already is, which History below declined.
+
+- **Stickers.** From `sly-stickers`, and the best fit of anything surveyed. A
+  marked expression records the value that flowed through it on every hit and
+  the phrase runs to completion; sly keeps a hit count, the recorded values,
+  and whether the site exited non-locally instead of returning. Against
+  [Breakpoints in a session](tickets/035-breakpoints.md) it is the complement:
+  a breakpoint stops once and shows locals, a sticker watches a loop body a
+  thousand times and never stops. Most of the cost is already paid, since the
+  typed-tree rewrite injects a hook and prints a local's type at compile time,
+  which is what a sticker needs to print its value at record time. Open:
+  whether an agent wants this, and what a recording table costs to keep.
+
+- **Type-directed construction.** Merlin's `construct` and `holes`, reachable
+  through the shell-out that [Merlin-backed source queries](tickets/027-merlin-source-queries.md)
+  already owns. `holes` lists every `_` in a file and `construct` returns the
+  expressions that could fill one at its inferred type, with a depth knob;
+  `case-analysis` turns an expression into a match with a branch per
+  constructor. Not from the Lisps, but the same family, and an agent writing
+  OCaml has no way to ask for it today.
+
+- **Macroexpansion.** Core to both CIDER and SLY, and the OCaml equivalent is
+  ppx, currently invisible. Merlin's `expand-ppx` expands at a position, which
+  is cheaper than `dune describe pp`, which builds the file and prints the
+  whole preprocessed source.
+
+- **Tracing, again.** `sly-trace-dialog` builds a real call tree with
+  arguments and return values per frame, which is more than `#trace` gives and
+  more than [Stopping inside a running phrase](tickets/033-breakpoints-are-an-effect.md)
+  found reachable. Weaker now than it looks, because stickers would cover most
+  of what a caller actually wants from a trace at less cost.
+
+- **Evaluating a form at a source position.** Conjure evaluates the form or
+  root form under the cursor rather than pasted code. Here that would be
+  `file` and `line` instead of `code`, saving the round trip and pointing
+  error spans at real file lines; `outline` already knows the ranges. Against
+  it: a second way to say what `eval` says, on a surface that is fourteen
+  tools already.
+
+- **The namespace an evaluation happens in.** Both CIDER's ns and SLY's
+  `set-package` evaluate inside an ambient namespace, so a snippet lifted out
+  of a file resolves the way the file does. OCaml has no such thing, and a
+  session evaluating code from a project file sees none of that file's opens.
+  Merlin could supply them and `eval` could prepend them. The real impedance
+  mismatch of the three, and the least lazy item here.
+
+- **The inspector.** Declined. The most-used feature in both CIDER and SLY,
+  and it does not transfer: it exists because a Lisp value carries its own
+  structure at runtime, an OCaml value does not, and an agent that wants a
+  field evaluates the projection. Frame locals and restarts are settled by
+  [Stopping inside a running phrase](tickets/033-breakpoints-are-an-effect.md).
+  Session cloning, completion, apropos and the test runner are covered,
+  human-facing, or belong in the caller's shell.
+
+- **Print limits per call.** Declined as stated. nREPL's `print-length` and
+  `print-level` have a counterpart already: Toploop caps at
+  `max_printer_steps`. What is missing is only a per-call knob, not a bound.
