@@ -232,6 +232,15 @@ must evaluate it first. Tests are Alcotest.
   and `OPAM_SWITCH_PREFIX` only: `CAML_LD_LIBRARY_PATH` stays untouched so
   ticket 028's `Dll.add_path` decision stands. `CAMLKIT_SWITCH` overrides,
   soundly only for a switch of the same OCaml version.
+- [context lost the wrapper](tickets/051-context-lost-the-wrapper.md) —
+  **fixed.** A relative `file` argument silently cost every merlin query the
+  project's configuration: the query runs in the file's own directory so merlin
+  can find that configuration, and the path no longer resolved after the `cd`.
+  merlin answered without it rather than refusing, so `context` lost dune's
+  `-open` and the file's own module, the two a reader cannot guess. One
+  resolution in `lib/merlin.ml`, shared by every merlin-backed tool. The ticket
+  had guessed a regression in how the reply was read; the reading was correct
+  all along and the caller's spelling was the trigger.
 - [A failed dune top degrades in silence](tickets/040-a-silent-fallback.md) —
   **fixed.** `dune top` failing was indistinguishable from a directory that is
   not a dune project, and both fell through to scanning `_build` for archives.
@@ -364,13 +373,9 @@ it is also where `dune top` came from.
   that no longer writes the file, and its hand-written `compiler-libs`
   occurrence walker serves a 4.14 tree this server cannot start a session for.
 
-- **A file's context is missing its wrapper.** New, and the one open defect on
-  a tool that is otherwise done:
-  [context lost the wrapper](tickets/051-context-lost-the-wrapper.md). `context`
-  on a file in this project's own wrapped library answers with the file's own
-  `open` and neither dune's `-open` nor the file's own module, which is the
-  half a reader cannot guess. merlin is answering correctly; the reading of its
-  reply is not. Found by `scripts/load-check.py`, which had been failing.
+- **The environment a client launches us in.** No longer fog. The cause is
+  fixed, see ticket 039 below, and the fallback it used to trigger now says so:
+  [A failed dune top degrades in silence](tickets/040-a-silent-fallback.md).
 
 - **Resource limits beyond time and heap.** Both are now bounded, see
   [A ceiling on a phrase's heap](tickets/030-heap-ceiling.md). File

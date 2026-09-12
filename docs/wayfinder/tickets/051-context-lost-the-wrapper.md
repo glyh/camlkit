@@ -1,8 +1,8 @@
 ---
-status: open
+status: resolved
 type: defect
 blocked-by: [036]
-assignee:
+assignee: lyh
 ---
 
 # context lost the wrapper
@@ -25,6 +25,42 @@ tool exists at all. Without it a session evaluating in that "context" cannot
 see any sibling module by its short name, and the failure is an `Unbound
 value` that looks like the caller's mistake.
 
+## Cause, which is not where this ticket first looked
+
+Not `context`, and not its reading of merlin's reply. Both are correct. The
+trigger is how the caller spelled the path.
+
+Every merlin query runs in the file's own directory, because that is how
+merlin finds a project's configuration. A relative path does not survive that
+`cd`: merlin is then asked about a filename that no longer resolves from where
+it now stands. It does not refuse. It answers without the project's
+configuration, so `dump-configuration` comes back with no `open_modules` at
+all and `context` correctly reports the nothing it was given.
+
+The same file, three spellings, before the fix:
+
+    ./lib/render.ml                 opens: Wire
+    lib/render.ml                   opens: Wire
+    /home/.../lib/render.ml         opens: Camlkit, Wire, Camlkit.Render
+
+`scripts/load-check.py` passes `.` as the project and joins from it, so it had
+been asking with a relative path all along. It is left that way deliberately:
+it is what caught this.
+
+Commands needing only the source on stdin were unaffected, which is what kept
+it quiet. `outline` on a relative path answers correctly, so the surface did
+not look broken.
+
+## The fix
+
+One resolution in `lib/merlin.ml`, applied in `query`, `read_file` and
+`ensure_index`, so the `cd`, the `-filename` and the source all refer to the
+same file however a caller spelled it. Resolved there rather than at the tool
+boundary because every merlin-backed tool shares those three, and fixing the
+two that were visibly wrong would have left the rest waiting.
+
+## What the ticket guessed, and did not find
+
 ## Not merlin
 
 merlin has the answer and is being asked correctly. `ocamlmerlin single
@@ -45,13 +81,20 @@ load half is. It has been failing. Noticed while resolving
 unrelated to it; the failure predates that work, confirmed against the build
 before it.
 
-## Open
+**It never broke, so there was nothing to bisect.** The ticket assumed a
+regression because the script encodes the expected answer and the script was
+failing. The answer was always right for an absolutely-spelled path, which is
+how the tool is normally called.
 
-**Whether the reading of `open_modules` broke or never worked for this shape.**
-The script encodes the expected answer, so it presumably worked when 036
-landed. Bisecting it is the first move, not re-deriving the logic.
+**The two missing opens did share a cause after all,** which the ticket
+doubted. `open Camlkit` comes from merlin's configuration and
+`open Camlkit.Render` is computed from the wrapper name, but the second is
+derived from the first, so losing the configuration loses both.
 
-**Whether the file's own module is a separate loss.** Two things are missing
-and they have different sources: `open Camlkit` comes from merlin's
-configuration, `open Camlkit.Render` is computed from the file's own path and
-its library's wrapper name. They may not share a cause.
+## No test in the suite
+
+The regression stays in `scripts/load-check.py`. Catching it needs a real dune
+project with a wrapped library, and `test/fixtures/mylib` is a findlib
+directory with a `META` rather than one. A temp file in no project would
+exercise the path handling and could not fail on this bug, which is worse than
+not testing it.

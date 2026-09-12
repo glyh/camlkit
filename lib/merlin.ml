@@ -17,6 +17,22 @@
 
 let binary = lazy (Wire.Exe.find "ocamlmerlin")
 
+(* Every query runs merlin in the file's own directory, because that is how
+   merlin finds a project's configuration. A relative path does not survive
+   that `cd`: merlin is then asked about a filename that no longer resolves,
+   and it answers without the project's configuration rather than refusing.
+   `dump-configuration` came back with no `open_modules` at all, so `context`
+   silently lost the wrapper - the one open a reader cannot guess. Commands
+   that need only the source on stdin, `outline` among them, were unaffected,
+   which is what kept this quiet.
+
+   Resolved here rather than at the tool boundary so that the `cd`, the
+   `-filename` and the source all refer to the same file however a caller
+   spelled it. See docs/wayfinder/tickets/051. *)
+let absolute path =
+  if Filename.is_relative path then Filename.concat (Sys.getcwd ()) path
+  else path
+
 (* Project-wide occurrences need dune's index, and merlin says nothing when it
    is missing: it quietly answers from the current buffer alone and reports
    `class: return` with no notification. A caller then reads a complete-looking
@@ -26,7 +42,7 @@ let binary = lazy (Wire.Exe.find "ocamlmerlin")
    measured at 0.2 s - and correctness here is worth a build, because a wrong
    answer that looks complete is worse than a slow one. *)
 let ensure_index file =
-  match Wire.Exe.project_root_of file with
+  match Wire.Exe.project_root_of (absolute file) with
   | None -> Error "not inside a dune project"
   | Some root ->
     let cmd =
@@ -42,7 +58,9 @@ let ensure_index file =
      | Unix.WEXITED 0 -> Ok ()
      | _ -> Error (String.trim (Buffer.contents buf)))
 
+
 let read_file path =
+  let path = absolute path in
   match open_in_bin path with
   | ic ->
     let n = in_channel_length ic in
@@ -53,6 +71,7 @@ let read_file path =
 (* Merlin locates a project's configuration by walking up from the file, so it
    is run in the file's own directory. *)
 let query ~command ~args ~file =
+  let file = absolute file in
   match read_file file with
   | Error e -> Error e
   | Ok source ->
