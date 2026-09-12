@@ -327,6 +327,23 @@ it is also where `dune top` came from.
   written, in tens of milliseconds. Neither is a build tool and neither
   reverses ticket 025.
 
+- **Two silences and a missing number.** Surveyed September 2026 against
+  `mina-agent`, a sibling harness for the Mina monorepo, which reaches OCaml
+  through dune from Python and has met several of the same walls.
+  [A tree built by another compiler](tickets/044-a-tree-built-by-another-compiler.md)
+  is a `load` that reports "not a bytecode object file", once per archive,
+  naming no version and no cause, where twelve bytes against
+  `Config.cma_magic_number` would say it outright.
+  [A built index is not a populated one](tickets/046-a-built-index-is-not-a-populated-one.md)
+  is `uses` trusting the exit status of the index build rather than whether an
+  index was written, which is the same silence the index build exists to
+  prevent. [What a phrase cost](tickets/045-what-a-phrase-cost.md) asks whether
+  `eval` should report allocation and wall clock, which the heap ceiling's
+  `Gc.quick_stat` already has in hand. What did not transfer from that harness,
+  and why, is in each ticket: its `_build/log` provenance read is tied to a dune
+  that no longer writes the file, and its hand-written `compiler-libs`
+  occurrence walker serves a 4.14 tree this server cannot start a session for.
+
 - **The environment a client launches us in.** The cause is fixed, see the
   decision below; what remains open is
   [A failed dune top degrades in silence](tickets/040-a-silent-fallback.md),
@@ -367,6 +384,31 @@ conversation already is, which History below declined.
   typed-tree rewrite injects a hook and prints a local's type at compile time,
   which is what a sticker needs to print its value at record time. Open:
   whether an agent wants this, and what a recording table costs to keep.
+  Whether it is a second marker or a behaviour on the first is
+  [One point, several behaviours](tickets/049-one-point-several-behaviours.md).
+
+  On that last one, the idea worth borrowing is a cutoff, from Jane Street's
+  [incremental](https://github.com/janestreet/incremental), whose `Cutoff` is a
+  function of a node's old and new value saying whether the change is worth
+  propagating at all, with `of_equal` and `phys_equal` ready-made. A sticker
+  that records only when the value differs from the last one it saw, while
+  still counting every hit, is bounded by the number of distinct values rather
+  than by the iteration count, which is what makes a sticker in a hot loop
+  affordable. sly already keeps the hit count apart from the recorded values,
+  so half the shape is in the prior art.
+
+  The library itself is declined twice over. It instruments its own dataflow
+  graph, where `Observer` and `on_update` fire per stabilization on nodes the
+  author built with `map` and `bind`, so reaching a sticker's actual target - an
+  expression in code the caller wrote and never designed as a graph - would mean
+  rewriting the phrase into an incremental computation and changing what it
+  means. The typed-tree rewrite from
+  [Breakpoints in a session](tickets/035-breakpoints.md) already reaches
+  arbitrary code, which is the harder half and is paid for. And it depends on
+  core, core_kernel, ppx_jane, ppx_optcomp, janestreet_lru_cache and
+  textutils_kernel: [Removing the utop dependency](tickets/022-drop-utop.md)
+  took this project from 22 packages to 2, and six back for an introspection
+  shape buys less than utop did.
 
 - **Type-directed construction.** Merlin's `construct` and `holes`, reachable
   through the shell-out that [Merlin-backed source queries](tickets/027-merlin-source-queries.md)
@@ -406,3 +448,67 @@ conversation already is, which History below declined.
 - **Print limits per call.** Declined as stated. nREPL's `print-length` and
   `print-level` have a counterpart already: Toploop caps at
   `max_printer_steps`. What is missing is only a per-call knob, not a bound.
+
+### From the live-image systems
+
+Surveyed September 2026: [SBCL](https://github.com/sbcl/sbcl) itself rather
+than the slynk backend already surveyed above, and
+[Pharo](https://github.com/pharo-project/pharo), which was not surveyed at all
+before. Comparison was against `sb-introspect`'s exports, `sb-cover`,
+`sb-sprof` and the condition system, and against Pharo's `DebugPoints`,
+`Reflectivity` and `Calypso-NavigationModel` packages. Three things came out of
+it as tickets and the rest is below.
+
+- **Stopping where it raised.** From SBCL, and the largest gap anything
+  surveyed has found. A condition is signalled before the stack unwinds, so
+  the debugger runs on top of the frame that failed and the values that
+  produced the failure are still there.
+  [A raise in a phrase had no position](tickets/034-locating-a-raise.md) gives
+  a span read after every frame is gone. Specified in
+  [Stopping where it raised](tickets/047-stopping-where-it-raised.md), open,
+  and open on a real obstacle: an OCaml exception unwinds where an effect does
+  not, so the trigger is cheap and the harvest is not.
+
+- **A breakpoint in code the caller did not write.** From Pharo's
+  Reflectivity, which installs a link on a node of an already-compiled method
+  and removes it again without touching source.
+  [Breakpoints in a session](tickets/035-breakpoints.md) deleted positional
+  breakpoints on the argument that the agent writes the phrase, which is true
+  of a phrase and false of a project loaded into the session. Specified in
+  [A breakpoint in code the caller did not write](tickets/048-a-breakpoint-in-code-the-caller-did-not-write.md),
+  open, and open on whether the module can be reached without a recompile that
+  invalidates the session's existing values.
+
+- **Reference queries split by kind.** `sb-introspect` exports `who-calls`,
+  `who-references`, `who-binds`, `who-sets`, `who-macroexpands` and
+  `who-specializes` as six questions where `uses` here asks one. The OCaml
+  analogue is narrower than the Lisp one, because there is no `setf` and no
+  method specialisation, but "who calls this" and "who mentions this type" are
+  different questions asked for different reasons, and merlin's occurrence
+  index does not distinguish them either. Fog, not a ticket: nothing says yet
+  that a caller wants the split badly enough to pay for it.
+
+- **Coverage and a profiler.** `sb-cover` records per-form coverage from the
+  compiler and `sb-sprof` is a statistical profiler with call counting and a
+  call graph, both driven from the REPL. These are the larger siblings of
+  [What a phrase cost](tickets/045-what-a-phrase-cost.md): two numbers say what
+  a phrase cost, a profile says where it went, and coverage says which branches
+  a run reached. Against them, hard: `dune test --instrument-with bisect_ppx`
+  and a profiler both exist outside this server and belong in the caller's
+  shell, which is where the test runner was already sent.
+
+- **Epicea.** Pharo records every change as a replayable log that survives a
+  crashed image. This looks like the History that the map declines above and is
+  not the same thing: its purpose is not recall but rebuilding. A camlkit
+  worker that dies loses every binding, and a log of the phrases a session
+  accepted would restore it. Fog, because it is unclear whether a session dying
+  is common enough to be worth a log, and because a replay of a session that
+  loaded a file which has since changed rebuilds something else.
+
+- **The rest of Pharo, declined.** Senders and implementors are `uses` and
+  `locate`. The method finder, which finds a selector from an example input and
+  output, is `search_type` reached from the other end. Spotter is completion,
+  which the map has already covered. The refactoring engine, the test runner
+  and the quality rules belong in the caller's shell for the same reason the
+  build tool does, see
+  [Building the project from a tool](tickets/025-build-from-a-tool.md).
