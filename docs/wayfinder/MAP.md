@@ -171,8 +171,9 @@ must evaluate it first. Tests are Alcotest.
   earlybird has no evaluate at all and did not complete a handshake here, and
   the runtime patch that would fix all of it is a compiler fork. Nothing built;
   the limits are measured in the ticket, including which one turned out not to
-  be a limit: a caller's locals come back through a shadow stack, at the cost
-  of tail calls.
+  be a limit: a caller's locals come back through a shadow stack, which
+  replaces its top frame at a tail call rather than pushing, so space stays
+  constant and a ring buffer keeps the trail a debugger cannot.
 - [Trust boundary](tickets/012-trust-boundary.md) — trusted local developer
   tool, deliberately not sandboxed; stdio implies a local parent and that
   assumption is load-bearing.

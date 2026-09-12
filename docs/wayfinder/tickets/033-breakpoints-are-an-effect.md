@@ -88,10 +88,25 @@ read `[("advance", ["cursor = 2"]); ("lex", ["input = let x = 1"; "start =
 closure rather than a rendered string, and nothing is formatted unless it is
 looked at.
 
-The ceiling is tail calls: popping after the call makes every instrumented
-call non-tail, so a tail-recursive function under instrumentation goes from
-constant space to linear, in the real stack and in the shadow stack both. That
-is why a debug mode has to be opt-in per phrase rather than a session setting.
+**Tail calls are modelled, not ignored.** The naive shape, push on entry and
+pop on return, makes every instrumented call non-tail, so a tail-recursive
+function goes from constant space to linear in the real stack and in the
+shadow stack both. That is not acceptable as a default and it is avoidable:
+instrumentation knows whether a call sits in tail position, so for one it
+replaces the top shadow frame rather than pushing a new one. That is what the
+machine does - `bytegen` emits `Kappterm` for a tail call, which drops the
+caller's frame before the callee runs - so space stays constant and the shadow
+stack matches the real one. Keeping a small ring buffer of the frames that
+were replaced then gives a bounded trail of recent tail calls, which is
+strictly more than a debugger can show: the frames it would need are gone from
+the real stack, and its only answer is to rewind past the call.
+
+This is where ocamldebug is genuinely better and it is worth saying plainly:
+it patches an instruction in place and reads the real stack, so it costs the
+program nothing, while any instrumentation changes the code being inspected.
+The trade is information against fidelity, and the tail-call modelling is what
+keeps the cost bounded rather than unbounded.
+
 The rest of the cost is that captured thunks hold values alive while a frame
 is live, and that a raise which skips the pop leaves the stack drifting until
 something resynchronises it. What is shown is a reconstruction: an
