@@ -28,4 +28,10 @@
   (yojson (>= 2.0))
   (alcotest (and (>= 1.7) :with-test))
   ; Only to exercise the Lwt half of auto-run; nothing links against it.
-  (lwt :with-test)))
+  (lwt :with-test)
+  ; A real deriver for the expand tool's test, built into a standalone driver
+  ; the suite names in a .merlin. Test-only: neither the server nor the worker
+  ; links either of these, and the tool itself needs no ppx at all - it asks
+  ; merlin about whichever ppx the file being examined is configured with.
+  (ppxlib :with-test)
+  (ppx_deriving :with-test)))

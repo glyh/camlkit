@@ -488,8 +488,8 @@ conversation already is, which History below declined.
   [What a ppx generated](tickets/037-ppx-expansion.md): the `expand` tool.
   Merlin's `expand-ppx` answers at a position without a build, where
   `dune describe pp` builds the file and prints the whole preprocessed source.
-  What remains open is only whether a real deriver's output is worth reading at
-  scale, which needs a ppx package this switch does not have.
+  What remains open is only whether a structure-level extension such as
+  `let%test_module` ever expands, measured once against one ppx and not a rule.
 
 - **Tracing, again.** `sly-trace-dialog` builds a real call tree with
   arguments and return values per frame, which is more than `#trace` gives and

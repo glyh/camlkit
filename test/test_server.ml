@@ -539,11 +539,17 @@ let with_source f =
    wrapped library, so what this reaches is the file's own opens and the
    decision not to offer a module a session could not name; the wrapper half
    needs a dune project and lives in scripts/load-check.py. *)
-(* A file whose ppx is named in a .merlin rather than by dune. dune's `pps`
-   refuses a plain Ast_mapper rewriter - "No ppx driver were found" - and no
-   ppx package is installed in this switch, so the fixture rewriter is reached
-   through the -ppx protocol the compiler itself uses. merlin still reads
-   .merlin, which is what makes an expansion testable here at all. *)
+(* A real deriver, ppx_deriving.show, reached through a .merlin rather than
+   through dune. dune would be the ordinary way a file gets its ppx, but merlin
+   would then have to ask dune for the configuration and dune will not run
+   inside dune, which is the wall `load` is behind too. So the fixture ppx is a
+   standalone ppxlib driver, run under --as-ppx, which is the compiler's own
+   preprocessing protocol and something a .merlin can name outright. The
+   command is quoted because --as-ppx has to be the driver's first argument
+   rather than a flag to the compiler.
+
+   Nothing here configures the tool: it asks merlin about whichever ppx the
+   file in front of it uses. This only gives the suite a file that has one. *)
 let with_ppx_source f =
   let ppx = Filename.concat (Sys.getcwd ()) "fixtures/ppx/demo_ppx.bc.exe" in
   let dir = Filename.temp_dir "camlkit-ppx" "" in
@@ -551,8 +557,9 @@ let with_ppx_source f =
     let oc = open_out (Filename.concat dir name) in
     output_string oc contents; close_out oc
   in
-  write "thing.ml" "let greeting = [%demo]\nlet plain = 1\n";
-  write ".merlin" (Printf.sprintf "FLG -ppx %s\n" ppx);
+  write "thing.ml"
+    "type point = { x : int; y : string } [@@deriving show]\nlet plain = 1\n";
+  write ".merlin" (Printf.sprintf "FLG -ppx \"%s --as-ppx\"\n" ppx);
   Fun.protect
     ~finally:(fun () ->
         List.iter
@@ -609,15 +616,19 @@ let test_context_of_a_missing_file () =
 let test_expand () =
   with_server @@ fun c ->
   with_ppx_source @@ fun path ->
+  (* On the deriver name inside [@@deriving show], which is where merlin wants
+     the position; the attribute spans columns 37 to 54 of that line. *)
   let r = call c ~id:1 ~tool:"expand"
-      ~args:(`Assoc [ "file", `String path; "line", `Int 1; "col", `Int 17 ]) in
+      ~args:(`Assoc [ "file", `String path; "line", `Int 1; "col", `Int 49 ]) in
   Alcotest.(check bool) "not an error" false (is_error r);
   let sc = Yojson.Safe.Util.member "structuredContent" r in
   let code = Yojson.Safe.Util.(member "code" sc |> to_string) in
-  Alcotest.(check bool) "the generated name, which the call site does not show"
-    true (has "demo_generated_name" code);
+  (* Neither name appears in the source, which is the whole question: nothing
+     in [@@deriving show] says it gives you pp_point and show_point. *)
+  Alcotest.(check bool) "the names the deriver invented" true
+    (has "pp_point" code && has "show_point" code);
   Alcotest.(check bool) "the text half is source, not JSON with escapes" true
-    (has "demo_generated_name" (text r) && not (has "\\n" (text r)));
+    (has "show_point" (text r) && not (has "\\n" (text r)));
   Alcotest.(check bool) "and the node it came from is located" true
     (Yojson.Safe.Util.(member "deriver" sc |> member "start" |> member "line")
      = `Int 1);

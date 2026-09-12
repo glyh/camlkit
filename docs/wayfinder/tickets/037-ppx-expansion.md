@@ -69,30 +69,38 @@ like a name with no documentation on it.
 
 ## Verified
 
-Not against a real deriver: no ppx package is installed in this switch. Rather
-than install one, the suite grew its own rewriter,
-`test/fixtures/ppx/demo_ppx.ml`, over compiler-libs alone, so it adds no
-dependency.
+Against `ppx_deriving.show`, which is the case the question is about: nothing in
+`[@@deriving show]` tells a reader it produces `pp_point` and `show_point`.
+`ppx_deriving` and `ppxlib` are test-only dependencies; neither the server nor
+the worker links either, and the tool needs no ppx of its own - it asks merlin
+about whichever ppx the file in front of it is configured with.
 
-Two things were learned getting there. dune's `(preprocess (pps ...))` refuses a
-plain `Ast_mapper` rewriter outright - "No ppx driver were found. It seems that
-demo_ppx is not compatible with Dune" - because it wants a ppxlib-style driver.
-And merlin still reads a `.merlin` file, so `FLG -ppx <exe>` names the rewriter
-without dune, without ppxlib and without a package. That is what makes an
-expansion testable here at all: the test writes a two-line `.merlin` beside a
-temp source file and the tool answers through its ordinary path.
+Getting there passed through a rewriter written over compiler-libs alone, which
+is no longer in the tree. It was abandoned for a real one, and what it taught is
+worth keeping. dune's `(preprocess (pps ...))` refuses a plain `Ast_mapper`
+rewriter outright - "No ppx driver were found. It seems that demo_ppx is not
+compatible with Dune" - because it wants a ppxlib-style driver.
 
-`[%demo]` expands to a `let` of `demo_generated_name`, which is exactly the case
-the question is about: a name the call site does not show.
+And dune is not the route anyway. A file that gets its ppx from dune makes
+merlin ask dune for the configuration, and dune will not run inside dune, which
+is the wall `load` is behind. What works is that merlin still reads a `.merlin`,
+so `FLG -ppx "<driver> --as-ppx"` names a ppxlib driver through the compiler's
+own preprocessing protocol. Quoted, because `--as-ppx` has to be the driver's
+first argument rather than a flag to the compiler; unquoted it is passed on to
+the compiler and the driver reports "too many input files".
+
+**Size, measured.** `[@@deriving show]` on a two-field record expands to 1174
+bytes over 25 lines. That is the answer for the un-trimmed decision above: a few
+hundred tokens for a question nothing else can answer. A large variant will be
+larger, and a caller who only wants the names has `describe`.
 
 ## Open
 
-**Still unverified against a real deriver.** The fixture rewriter proves the
-plumbing, the decoding and the rendering against a genuine merlin reply, and
-says nothing about how a real deriver behaves at scale: whether
-`[@@deriving yojson]` on a large variant returns something worth reading, and
-whether the structure-extension gap measured in this ticket holds for other
-ppxes. Installing one into the switch would settle it.
+**The structure-extension gap.** Measured once, against `ppx_expect`:
+`let%test_module` and `let%expect_test` returned the sentinel at every column
+tried, where an expression extension expanded. `ppx_deriving` has no structure
+extension to check it against, so this is still one ppx's behaviour rather than
+a rule, and the tool description promises nothing about `let%`.
 
 **The whole-file alternative.** `dune describe pp FILE` prints the entire
 preprocessed source. It builds the file first and returns everything, so it is
