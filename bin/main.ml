@@ -72,7 +72,7 @@ let arg_int args name =
 
 let is_source_query = function
   | "locate" | "type_at" | "outline" | "uses" | "search_type" | "document"
-  | "expand" ->
+  | "expand" | "diagnostics" ->
     true
   | _ -> false
 
@@ -153,16 +153,23 @@ let source_query id name args =
   let run () =
     let* file = arg_string args "file" in
     match name with
-    | "outline" -> Merlin.query ~command:"outline" ~args:[] ~file
+    | "outline" -> Merlin.query ~command:"outline" ~args:[] ~file ()
     | "locate" ->
       let* pos = at () in
-      Merlin.query ~command:"locate" ~args:pos ~file
+      Merlin.query ~command:"locate" ~args:pos ~file ()
     | "type_at" ->
       let* pos = at () in
-      Merlin.query ~command:"type-enclosing" ~args:pos ~file
+      Merlin.query ~command:"type-enclosing" ~args:pos ~file ()
     | "expand" ->
       let* pos = at () in
-      Merlin.query ~command:"expand-ppx" ~args:pos ~file
+      Merlin.query ~command:"expand-ppx" ~args:pos ~file ()
+    | "diagnostics" ->
+      (* The edit, when there is one, instead of what the file holds. The file
+         is still named, because that is how merlin finds the configuration
+         this has to be typed against. *)
+      let source = match Yojson.Safe.Util.member "source" args with
+        | `String s -> Some s | _ -> None in
+      Merlin.query ?source ~command:"errors" ~args:[] ~file ()
     | "uses" ->
       let* line = arg_int args "line" in
       let* col = arg_int args "col" in
@@ -175,7 +182,7 @@ let source_query id name args =
       let* value =
         Merlin.query ~command:"occurrences"
           ~args:[ "-identifier-at"; Merlin.position line col; "-scope"; scope ]
-          ~file
+          ~file ()
       in
       Ok (match index with
           | Ok () -> value
@@ -204,10 +211,10 @@ let source_query id name args =
          (* Not the caller's position: see Merlin.neutral_position. *)
          Merlin.query ~command:"document"
            ~args:[ "-position"; Merlin.neutral_position;
-                   "-identifier"; identifier ] ~file
+                   "-identifier"; identifier ] ~file ()
        | false, true ->
          let* pos = at () in
-         Merlin.query ~command:"document" ~args:pos ~file)
+         Merlin.query ~command:"document" ~args:pos ~file ())
     | "search_type" ->
       let* pos = at () in
       let* query = arg_string args "query" in
@@ -217,7 +224,7 @@ let source_query id name args =
       let limit = match requested_limit with
         | Some n -> [ "-limit"; string_of_int (n * 2) ] | None -> [] in
       Merlin.query ~command:"search-by-type"
-        ~args:(pos @ [ "-query"; query ] @ limit) ~file
+        ~args:(pos @ [ "-query"; query ] @ limit) ~file ()
     | other -> Error ("no such source query: " ^ other)
   in
   (* HACK: papering over duplicate entries from merlin. The bug is upstream,
@@ -263,6 +270,50 @@ let source_query id name args =
   (* Expanded code is source to read, so it goes in the text half as it came
      rather than through the JSON pretty-printer, which would escape every
      newline in it. The deriver's span rides alongside as data. *)
+  (* Errors and warnings apart, each absent when empty, as an eval result keeps
+     them apart rather than interleaving. *)
+  | Ok value when name = "diagnostics" ->
+    (match Merlin.diagnostics value with
+     | Error why -> reply id (Render.infrastructure_failure why)
+     | Ok (errors, warnings) ->
+       let n = List.length errors and w = List.length warnings in
+       let plural k = if k = 1 then "" else "s" in
+       let summary =
+         if n = 0 && w = 0 then "no errors or warnings"
+         else
+           String.concat ", "
+             ((if n > 0 then [ Printf.sprintf "%d error%s" n (plural n) ] else [])
+              @ (if w > 0 then [ Printf.sprintf "%d warning%s" w (plural w) ]
+                 else []))
+       in
+       (* Read, not parsed: the structure beside this carries the same thing
+          as fields, so the text half is for a person's eye and pretty-printed
+          JSON is the wrong shape for that. *)
+       let render items =
+         String.concat "\n"
+           (List.map
+              (fun item ->
+                 let open Yojson.Safe.Util in
+                 let at k f =
+                   match member k item |> member f with `Int n -> n | _ -> 0 in
+                 let message =
+                   match member "message" item with `String m -> m | _ -> "" in
+                 let indented =
+                   String.concat "\n    " (String.split_on_char '\n' message) in
+                 Printf.sprintf "  %d:%d-%d:%d\n    %s"
+                   (at "start" "line") (at "start" "col")
+                   (at "end" "line") (at "end" "col") indented)
+              items)
+       in
+       let section label = function
+         | [] -> ""
+         | items -> Printf.sprintf "\n\n%s:\n%s" label (render items) in
+       let body = section "errors" errors ^ section "warnings" warnings in
+       let field k = function [] -> [] | l -> [ (k, `List l) ] in
+       reply id { Render.content = summary ^ body;
+                  structured = `Assoc (field "errors" errors
+                                       @ field "warnings" warnings);
+                  is_error = false })
   | Ok value when name = "expand" ->
     (match Merlin.expansion value with
      | Ok (code, deriver) ->

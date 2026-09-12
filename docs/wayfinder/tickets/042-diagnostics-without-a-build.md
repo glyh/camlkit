@@ -1,8 +1,8 @@
 ---
-status: open
+status: resolved
 type: research
 blocked-by: [027]
-assignee:
+assignee: lyh
 ---
 
 # Diagnostics without a build
@@ -48,18 +48,58 @@ surface, and it costs nothing extra: merlin reads the source from stdin, which
 `Merlin.query` already does, so the only new thing is where that source comes
 from.
 
+## Decided
+
+**It takes the edited source, which was the question the ticket turned on.**
+`source` is optional and replaces what the file holds; the file is still named,
+because that is how merlin finds the configuration to type against. Reproduced
+on `lib/context.ml` with an edit never written to disk: the same error at
+67:71 the ticket measured.
+
+The argument against was that an agent could write the file first. True, and
+it would also mean writing a broken file to ask whether it is broken. Every
+merlin tool here already sends the file's contents down the pipe, so this
+changes only where they come from - three lines in `Merlin.query`.
+
+**Warnings come back apart from errors.** merlin answers one list with a
+`type` on each entry, "warning" among "typer", "parser" and the rest. The
+split happens in `Merlin.diagnostics` rather than in the caller's head, the
+way an eval result keeps the two apart.
+
+**The entries are trimmed.** `valid` is true on everything returned, `type` is
+said by which list an entry is in, and `sub` is almost always empty. What
+survives is the message and the range.
+
+**The text half is lines, not JSON.** The structure beside it carries the same
+thing as fields, so pretty-printed JSON in the text would be the same content
+twice in the shape a reader wants least.
+
+**Both fields are absent when empty,** so a clean file costs a sentence.
+
+## Measured again, on this switch
+
+Timing, median of five: 12 ms for a standalone file, 43 ms for a real project
+file with its configuration. The ticket's original 26 ms was on other hardware
+and a different project; the order of magnitude holds.
+
+The hint is still inside the message rather than in `sub` on merlin 5.5
+- `Unbound value List.mapp\nHint: Did you mean map, map2 or mapi?` - so
+passing the message through keeps it, and nothing has to flatten `sub`.
+
 ## Open
 
-**Whether it takes the edited source at all.** Every merlin tool here reads
-the file from disk and sends it. Accepting a `source` argument instead is what
-makes this answer about an edit that has not been written, which is the
-interesting half. Against: nothing else on the surface takes code that is not
-in a file, and an agent that has not written the file yet could write it.
+**Not a build, and the description says so** in two sentences: it types one
+file against what is already compiled around it, so it cannot report that a
+dependency needs rebuilding, and a clean answer here is not a passing build.
+That wording is the whole defence against this becoming a build tool that
+lies, and it should not be shortened.
 
-**Warnings.** merlin reports them through the same list with a different
-class. A caller wants them separated, the way `eval` separates warnings from
-errors rather than interleaving them.
+**Whether a caller will pass a stale `source`.** Nothing stops an agent
+sending text that no longer matches its own buffer, and the answer's positions
+would then point into text nobody has. Not defended against: the same is true
+of every tool that takes a path and reads the file a moment later.
 
-**Not a build.** This answers about one file against what is already compiled.
-It will not notice that a dependency needs rebuilding, and it must not claim
-to. The description has to say so, or it becomes a build tool that lies.
+Covered by "diagnostics without a build" in the server suite: a clean file
+carries neither field, an unsaved edit with one error and one warning comes
+back with them apart and positions into the edit, and the file on disk is
+unchanged by having been asked about.

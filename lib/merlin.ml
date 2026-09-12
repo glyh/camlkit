@@ -102,9 +102,14 @@ let read_file path =
 
 (* Merlin locates a project's configuration by walking up from the file, so it
    is run in the file's own directory. *)
-let query ~command ~args ~file =
+(* [source] answers about text that is not on disk: merlin is told the file's
+   name, so it still finds the project's configuration, and handed the edit to
+   typecheck instead of what the file holds. Everything else here already sent
+   the file's contents down the same pipe, so this only changes where they come
+   from. See docs/wayfinder/tickets/042. *)
+let query ?source ~command ~args ~file () =
   let file = absolute file in
-  match read_file file with
+  match (match source with Some s -> Ok s | None -> read_file file) with
   | Error e -> Error e
   | Ok source ->
     let argv =
@@ -212,6 +217,37 @@ let expansion value =
      | `String code -> Ok (code, Yojson.Safe.Util.member "deriver" v)
      | _ -> Error "merlin answered expand-ppx without any expanded code")
   | _ -> Error "merlin answered expand-ppx with neither code nor a reason"
+
+(* Errors and warnings for one file, split apart.
+
+   merlin answers with one list and a `type` on each entry - "typer",
+   "parser", "env" and so on, with "warning" among them. A caller wants the two
+   apart, the way an eval result keeps warnings out of its errors rather than
+   interleaving them, so the split happens here rather than in the caller's
+   head. `sub` carries nested messages and is usually empty; it is passed
+   through when it is not. See docs/wayfinder/tickets/042. *)
+let diagnostics value =
+  match value with
+  | `List items ->
+    let kind item = Yojson.Safe.Util.member "type" item in
+    let is_warning item = kind item = `String "warning" in
+    let trim item =
+      (* `valid` is true on everything merlin returns here, and the kind is
+         already said by which list an entry is in. *)
+      match item with
+      | `Assoc fields ->
+        `Assoc (List.filter
+                  (fun (k, v) ->
+                     match k, v with
+                     | ("valid" | "type"), _ -> false
+                     | "sub", `List [] -> false
+                     | _ -> true)
+                  fields)
+      | other -> other
+    in
+    Ok (List.map trim (List.filter (fun i -> not (is_warning i)) items),
+        List.map trim (List.filter is_warning items))
+  | _ -> Error "merlin answered errors with something other than a list"
 
 (* Merlin infers which namespace to search from the node under the cursor, even
    when the name is given outright: src/analysis/locate.ml infers a context

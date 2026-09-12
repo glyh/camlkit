@@ -98,16 +98,16 @@ let test_tools_listed () =
     Yojson.Safe.Util.(member "tools" r |> to_list
                       |> List.map (fun t -> member "name" t |> to_string)) in
   Alcotest.(check (slist string compare)) "the tools"
-    [ "context"; "continue"; "describe"; "document"; "eval"; "expand";
-      "inspect"; "load"; "locate"; "outline"; "require"; "reset";
+    [ "context"; "continue"; "describe"; "diagnostics"; "document"; "eval";
+      "expand"; "inspect"; "load"; "locate"; "outline"; "require"; "reset";
       "search_type"; "signature"; "type_at"; "uses" ] names;
   let schemas =
     Yojson.Safe.Util.(member "tools" r |> to_list
                       |> List.filter (fun t -> member "outputSchema" t <> `Null)
                       |> List.map (fun t -> member "name" t |> to_string)) in
   Alcotest.(check (slist string compare)) "every tool declares an output schema"
-    [ "context"; "continue"; "describe"; "document"; "eval"; "expand";
-      "inspect"; "load"; "locate"; "outline"; "require"; "reset";
+    [ "context"; "continue"; "describe"; "diagnostics"; "document"; "eval";
+      "expand"; "inspect"; "load"; "locate"; "outline"; "require"; "reset";
       "search_type"; "signature"; "type_at"; "uses" ] schemas
 
 let test_eval_through_the_loop () =
@@ -613,6 +613,49 @@ let test_context_of_a_missing_file () =
 
 (* An agent cannot read a generated name off the source in front of it, which
    is the whole reason for this tool. See docs/wayfinder/tickets/037. *)
+(* The half no other tool here can do: an answer about text that was never
+   written to disk. See docs/wayfinder/tickets/042. *)
+let test_diagnostics () =
+  with_server @@ fun c ->
+  with_source @@ fun path ->
+  let ask ?source () =
+    let args = [ "file", `String path ] in
+    let args = match source with
+      | None -> args | Some s -> ("source", `String s) :: args in
+    call c ~id:1 ~tool:"diagnostics" ~args:(`Assoc args)
+  in
+  let sc r = Yojson.Safe.Util.member "structuredContent" r in
+  let count r k =
+    match Yojson.Safe.Util.(member k (sc r)) with
+    | `List l -> List.length l
+    | _ -> 0
+  in
+  (* The fixture compiles, so both fields are absent rather than empty. *)
+  let r = ask () in
+  Alcotest.(check bool) "not an error" false (is_error r);
+  Alcotest.(check bool) "a clean file says so" true
+    (has "no errors" (text r));
+  Alcotest.(check bool) "with nothing carried for either" true
+    (Yojson.Safe.Util.(member "errors" (sc r)) = `Null
+     && Yojson.Safe.Util.(member "warnings" (sc r)) = `Null);
+  (* An edit that is not on disk, with one of each kind in it. *)
+  let edited =
+    "let greet (name : int) = \"hello \" ^ name\n\
+     let first l = match l with x :: _ -> x\n" in
+  let r = ask ~source:edited () in
+  Alcotest.(check int) "the error in the edit" 1 (count r "errors");
+  Alcotest.(check int) "and the warning, kept apart from it" 1
+    (count r "warnings");
+  Alcotest.(check bool) "positions are into the edit, not the file" true
+    (Yojson.Safe.Util.(member "errors" (sc r) |> to_list |> List.hd
+                       |> member "start" |> member "line") = `Int 1);
+  Alcotest.(check bool) "the text half reads as text, not as JSON" true
+    (has "errors:" (text r) && has "warnings:" (text r));
+  (* And the file on disk is untouched by having asked about an edit. *)
+  let r = ask () in
+  Alcotest.(check bool) "the file itself still compiles" true
+    (has "no errors" (text r))
+
 let test_expand () =
   with_server @@ fun c ->
   with_ppx_source @@ fun path ->
@@ -1116,6 +1159,8 @@ let () =
       ("source",
        [ Alcotest.test_case "outline" `Slow test_outline;
          Alcotest.test_case "expand a ppx" `Slow test_expand;
+         Alcotest.test_case "diagnostics without a build" `Slow
+           test_diagnostics;
          Alcotest.test_case "type at a position" `Slow test_type_at;
          Alcotest.test_case "locate a definition" `Slow test_locate;
          Alcotest.test_case "a missing file fails cleanly" `Slow

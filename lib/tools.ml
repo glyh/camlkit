@@ -278,6 +278,42 @@ let type_at_tool =
 (* An agent cannot read a generated name off the source in front of it:
    whether [@@deriving yojson] gives to_yojson or yojson_of_t is the deriver's
    choice, and guessing it reads as confident. See tickets/037. *)
+(* Not a build, and the description has to say so or it becomes one that lies:
+   this types one file against what is already compiled around it, so it will
+   not notice that a dependency needs rebuilding. What it can do that nothing
+   else here can is answer about an edit that was never written. See
+   tickets/042. *)
+let diagnostics_tool =
+  `Assoc [
+    "name", `String "diagnostics";
+    "description", `String
+      "Errors and warnings for one file, from merlin, in milliseconds and \
+       without building anything. Pass source to ask about an edit you have \
+       not written to disk yet; the file still has to be named, because that \
+       is how the project configuration this is typed against is found. This \
+       is not a build: it types one file against what is already compiled \
+       around it, so it cannot tell you that a dependency needs rebuilding, \
+       and a clean answer here is not a passing build. Warnings come back \
+       apart from errors.";
+    "inputSchema", obj ~required:[ "file" ]
+      [ file_arg;
+        ("source", `Assoc
+           [ "type", `String "string";
+             "description", `String
+               "The file's contents as you would write them, typed instead of \
+                what is on disk. Positions in the answer are into this text." ]) ];
+    "outputSchema", obj
+      [ ("errors", `Assoc
+           [ "type", `String "array";
+             "description", `String
+               "Each with its message and the range it covers. Absent when \
+                there are none." ]);
+        ("warnings", `Assoc
+           [ "type", `String "array";
+             "description", `String
+               "The same shape, kept apart from the errors. Absent when there \
+                are none." ]) ] ]
+
 let expand_tool =
   `Assoc [
     "name", `String "expand";
@@ -442,5 +478,5 @@ let all =
   [ eval_tool; describe_tool; require_tool; load_tool; reset_tool;
     continue_tool; inspect_tool;
     locate_tool; type_at_tool; outline_tool; uses_tool; search_type_tool;
-    expand_tool;
+    expand_tool; diagnostics_tool;
     document_tool; signature_tool; context_tool ]

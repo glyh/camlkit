@@ -16,7 +16,7 @@
    cannot guess. merlin already knows it: its configuration carries the same
    flags, so it is asked rather than derived from the project layout. *)
 let wrappers ~file =
-  match Merlin.query ~command:"dump-configuration" ~args:[] ~file with
+  match Merlin.query ~command:"dump-configuration" ~args:[] ~file () with
   | Error e -> Error e
   | Ok value ->
     let open Yojson.Safe.Util in

@@ -232,6 +232,14 @@ must evaluate it first. Tests are Alcotest.
   and `OPAM_SWITCH_PREFIX` only: `CAML_LD_LIBRARY_PATH` stays untouched so
   ticket 028's `Dll.add_path` decision stands. `CAMLKIT_SWITCH` overrides,
   soundly only for a switch of the same OCaml version.
+- [Diagnostics without a build](tickets/042-diagnostics-without-a-build.md) —
+  **done.** The `diagnostics` tool: merlin's errors for one file, warnings kept
+  apart from errors, in 12 ms standalone and 43 ms on a real project file. It
+  takes the edit rather than the file when given one, which is the half nothing
+  else on this surface can do and the question the ticket turned on; the file is
+  still named, because that is how the configuration to type against is found.
+  Not a build, and the description says so twice, because a clean answer here is
+  not a passing build.
 - [What a ppx generated](tickets/037-ppx-expansion.md) — **done.** The `expand`
   tool over merlin's `expand-ppx`: the code a deriver or extension produced at a
   position, as source rather than as JSON with its newlines escaped, so an agent
@@ -386,14 +394,10 @@ it is also where `dune top` came from.
   `#trace` shows the boundary and never the interior, the debuggers cannot
   evaluate, and a breakpoint here would be an effect handler rather than
   either. Nothing is built; what is open is whether an agent ever asks for it.
-- **Diagnostics without a build.** The remaining half of the pair that
-  [Typecheck without running](tickets/041-typecheck-without-running.md) was the
-  first of: [Diagnostics without a build](tickets/042-diagnostics-without-a-build.md)
-  is merlin answering about one file, including an edit that has not been
-  written, in tens of milliseconds. Not a build tool, and it does not reverse
-  ticket 025. Worth doing after 041 rather than before, since the two overlap on
-  what a type answer looks like and 041 answers from the session, which nothing
-  else can do.
+- **Resource limits beyond time and heap.** File descriptors, subprocesses and
+  disk are still unbounded, and a phrase can spawn something the worker's death
+  would not reap. Time and heap are not, see
+  [A ceiling on a phrase's heap](tickets/030-heap-ceiling.md).
 
 - **Two silences and a missing number.** Surveyed September 2026 against
   `mina-agent`, a sibling harness for the Mina monorepo, which reaches OCaml
@@ -416,10 +420,6 @@ it is also where `dune top` came from.
   fixed, see ticket 039 below, and the fallback it used to trigger now says so:
   [A failed dune top degrades in silence](tickets/040-a-silent-fallback.md).
 
-- **Resource limits beyond time and heap.** Both are now bounded, see
-  [A ceiling on a phrase's heap](tickets/030-heap-ceiling.md). File
-  descriptors, subprocesses and disk are not, and a phrase can still spawn
-  something the worker's death would not reap.
 - **History.** Declined. utop's history serves a human recalling a line to
   retype it; an agent has the conversation for that, and what a session holds
   is its bindings rather than a list of what was typed. Nothing would read it.
