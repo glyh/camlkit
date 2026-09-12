@@ -1,8 +1,8 @@
 ---
-status: open
+status: resolved
 type: defect
 blocked-by: []
-assignee:
+assignee: lyh
 ---
 
 # A warning arrives several times over
@@ -33,19 +33,45 @@ Capturing the typecheck passes, which 041 did for its own reasons, removes two
 of the four. A warning now arrives three times: once in `warnings`, twice in
 `output`.
 
-## Not understood
+## Measured
 
-Where the remaining two come from. The execute pass sets
-`Location.formatter_for_warnings` to the phrase's warning buffer before
-`Toploop.execute_phrase`, and exactly one copy does arrive there. Two more
-reach stderr during the same call, from something that is not honouring the
-formatter or is reporting through another route. Not chased, because 041 had
-no need to.
+Markers written to the capture file at each stage boundary, flushed, put both
+remaining copies inside the two typecheck passes rather than the execute pass:
 
-## Worth knowing before fixing
+    <<PASS1>> [warning] <<PASS2>> [warning] <<EXEC>>
 
-The fix is probably not another formatter swap. Three copies of a warning per
-phrase means the phrase is being typed three times, and if that is so then the
-duplication is a symptom of the passes rather than of where they print. The
-thing to measure first is how many times a phrase is typed on the way to
-running, not how many times a warning is printed.
+Then the deciding test. Replacing the capture buffer with a formatter that
+discards everything left both copies in place, and the wrapper reported
+capturing nothing:
+
+    <<PASS1>><<CAPTURED 0 bytes>> [warning] <<PASS2>><<CAPTURED 0 bytes>> [warning]
+
+So each typing prints the warning twice: once through
+`Location.formatter_for_warnings`, which the wrapper catches, and once through
+something that does not read that ref at all. Nothing in this project prints
+it, so the second printer is inside the compiler. The execute pass does not do
+this - its single copy goes through the ref into the phrase's warnings.
+
+The guess this ticket recorded, that three copies meant three typings and the
+duplication was a symptom of the passes, was wrong. There are three typings,
+but that is not why.
+
+## The fix
+
+Not the second printer, which is not ours and need not be found. The capture
+file is where a phrase's *program output* is read from, and nothing in it
+before execution begins can be program output: a phrase cannot print before it
+runs. So the capture is reset between the last typecheck pass and the first
+execution, and everything the compiler said while typing is dropped with it.
+
+One line, at the point where the passes end. It also covers whatever else the
+compiler may print during typing, which chasing this one printer would not
+have.
+
+A warning now arrives once, in the phrase's `warnings`, where it started out
+arriving five times.
+
+Covered by "a warning arrives once" in the worker suite, which counts the
+copies in the warnings and in the payload, and then checks that a phrase's own
+output still reaches it and is still addressed to the right phrase with a
+warning raised between two printing phrases.

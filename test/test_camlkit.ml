@@ -269,6 +269,44 @@ let test_output_is_separate_from_rendering () =
   Alcotest.(check bool) "and not in the rendering" false
     (p.Msg.rendering = "printed")
 
+(* A warning used to reach the caller five times: once as a warning and four
+   times as the phrase's own output, because the two typecheck passes print
+   through something that is not the warning formatter and the capture file is
+   read as program output. See docs/wayfinder/tickets/050. *)
+let test_a_warning_arrives_once () =
+  with_worker @@ fun s ->
+  let warns = "let f l = match l with [] -> 0;;" in
+  let r, output = ask s (ev warns) in
+  let p = List.hd (phrases r) in
+  let count needle hay =
+    let re = Str.regexp_string needle in
+    let rec go from n =
+      match Str.search_forward re hay from with
+      | exception Not_found -> n
+      | at -> go (at + 1) (n + 1)
+    in
+    go 0 0
+  in
+  Alcotest.(check int) "the warning is reported once" 1
+    (count "Warning 8" p.Msg.warnings);
+  Alcotest.(check int) "and the compiler's own chatter is not program output" 0
+    (count "Warning 8" output);
+  (* The capture is reset between typing and running, so what a phrase prints
+     must still reach it, and still be addressed to the right phrase. *)
+  let r, output =
+    ask s (ev ("let () = print_string \"one\";; " ^ warns
+               ^ " let () = print_string \"two\";;")) in
+  (match phrases r with
+   | [ a; b; c ] ->
+     let out (p : Msg.phrase) = String.sub output p.Msg.out_start p.Msg.out_len in
+     Alcotest.(check string) "the first phrase's output survives" "one" (out a);
+     Alcotest.(check string) "the warning phrase printed nothing" "" (out b);
+     Alcotest.(check string) "and the last phrase's output is its own" "two"
+       (out c);
+     Alcotest.(check int) "with the warning still reported once" 1
+       (count "Warning 8" b.Msg.warnings)
+   | _ -> Alcotest.fail "expected three phrase records")
+
 let test_type_error_executes_nothing () =
   with_worker @@ fun s ->
   let r, _ = ask s (ev "let survivor = 1;; survivor + true;;") in
@@ -770,6 +808,8 @@ let () =
        [ Alcotest.test_case "eval and state" `Slow test_eval_and_state;
          Alcotest.test_case "output vs rendering" `Slow
            test_output_is_separate_from_rendering;
+         Alcotest.test_case "a warning arrives once" `Slow
+           test_a_warning_arrives_once;
          Alcotest.test_case "type error executes nothing" `Slow
            test_type_error_executes_nothing;
          Alcotest.test_case "directives rejected" `Slow test_directives_rejected;

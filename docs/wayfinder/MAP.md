@@ -232,6 +232,17 @@ must evaluate it first. Tests are Alcotest.
   and `OPAM_SWITCH_PREFIX` only: `CAML_LD_LIBRARY_PATH` stays untouched so
   ticket 028's `Dll.add_path` decision stands. `CAMLKIT_SWITCH` overrides,
   soundly only for a switch of the same OCaml version.
+- [A warning arrives several times over](tickets/050-a-warning-arrives-several-times-over.md)
+  — **fixed.** One warning reached the caller five times: once as a warning and
+  four times as the phrase's own output, because the typecheck passes print to
+  the worker's stderr and that is the file program output is read from.
+  Capturing the passes took it to three; the last two turned out to come from a
+  printer inside the compiler that does not read
+  `Location.formatter_for_warnings` at all, proved by discarding everything
+  that ref receives and watching both copies survive. Fixed by resetting the
+  capture between typing and running rather than by finding that printer:
+  nothing in it before execution can be program output, since a phrase cannot
+  print before it runs.
 - [A tree built by another compiler](tickets/044-a-tree-built-by-another-compiler.md)
   — **fixed.** The worker is bytecode and loads only archives its own compiler
   produced, and a tree from another one reported "is not a bytecode object

@@ -534,6 +534,16 @@ let eval cap ~autorun ~check src =
                                 autorun = Not_an_eval; checked = true })
            else begin
              implicit_counter := next;
+             (* Everything in the capture file so far is the compiler talking
+                during the two typecheck passes, because nothing has run yet: a
+                phrase cannot print before it executes. Some of it does not go
+                through Location.formatter_for_warnings and so survives the
+                capture around each typing, which is how one warning reached a
+                caller three times over - once as a warning and twice as the
+                phrase's own output. Dropped here rather than chased to its
+                printer, because the capture file is for program output and
+                nothing before this line can be any. See tickets/050. *)
+             Capture.reset cap;
              let phrases =
                List.combine (List.map (fun t -> t.tree) typed) fired in
              with_autorun rules (execute_all cap phrases)
