@@ -132,6 +132,39 @@ let of_response (response : Msg.response) payload =
                      `Assoc [ "library", `String lib; "error", `String err ])
                      failed) ];
       is_error = false }
+  (* A stop is not a completion and does not pretend to be one: the caller has
+     to know the phrase is still waiting, and with which id. *)
+  | Msg.Stopped { id; phrase_index; bound; skipped; done_ } ->
+    let names =
+      String.concat ", "
+        (List.map (fun (b : Msg.binding) ->
+             Printf.sprintf "%s : %s" b.Msg.bound b.Msg.bound_type) bound) in
+    let head =
+      Printf.sprintf "Stopped at [%%break]%s, id %d.%s%s"
+        (if phrase_index >= 0 then Printf.sprintf " in phrase %d" (phrase_index + 1)
+         else "")
+        id
+        (match bound with
+         | [] -> " Nothing was in scope to bind."
+         | _ -> " Bound " ^ names ^ ".")
+        (match skipped with
+         | [] -> ""
+         | _ ->
+           "\nSkipped, because the type cannot be written outside the phrase: "
+           ^ String.concat "; "
+               (List.map (fun (n, why) ->
+                    Printf.sprintf "%s (%s)" n (String.trim why)) skipped))
+    in
+    let body = transcript payload done_ in
+    { content = (if body = "" then head else body ^ "\n" ^ head);
+      structured =
+        `Assoc [ "status", `String "stopped";
+                 "id", `Int id;
+                 "bound", `List (List.map Msg.json_of_binding bound);
+                 "skipped", `List (List.map (fun (n, why) ->
+                     `Assoc [ "name", `String n; "reason", `String why ]) skipped);
+                 "phrases", `List (List.map (json_phrase payload) done_) ];
+      is_error = false }
   | Msg.Rejected why ->
     { content = why;
       structured = `Assoc [ "status", `String "rejected"; "reason", `String why ];

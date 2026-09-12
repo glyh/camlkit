@@ -14,6 +14,50 @@ open Wire
 
 let interrupted = ref false
 
+(* The rewrite of [%break] calls a value, so the value has to exist before a
+   phrase carrying a marker can be typed. It is declared by evaluating an
+   ordinary phrase, which gives it a type without building a value
+   description by hand, and the real closure is then put underneath it. A
+   session can see the name; that is the price of not shipping an interface
+   file beside the worker for it. *)
+let install_break_hook () =
+  let declare name ty value =
+    let src = Printf.sprintf "let %s : %s = Obj.magic 0;;" name ty in
+    (match Toplevel.parse src with
+     | Ok phrases ->
+       List.iter
+         (fun p ->
+            (* Never printed: the declaration is ours, not the caller's. *)
+            try ignore (Toploop.execute_phrase false Format.err_formatter p)
+            with _ -> ())
+         phrases
+     | Error _ -> ());
+    Toploop.setvalue name value
+  in
+  declare Breakpoint.local_hook_name Breakpoint.local_hook_type
+    (Obj.repr Breakpoint.local_hook);
+  declare Breakpoint.hook_name Breakpoint.hook_type (Obj.repr Breakpoint.hook);
+  (* Defined in the session so that abandoning a phrase renders as
+     "Exception: Camlkit_abandoned." rather than as this worker's internal
+     module path. *)
+  let src =
+    Printf.sprintf "exception %s;;\nlet %s = %s;;"
+      Breakpoint.abandoned_name Breakpoint.abandoned_binding
+      Breakpoint.abandoned_name
+  in
+  (match Toplevel.parse src with
+   | Ok phrases ->
+     List.iter
+       (fun p ->
+          try ignore (Toploop.execute_phrase false Format.err_formatter p)
+          with _ -> ())
+       phrases;
+     (try
+        Breakpoint.abandoned :=
+          (Obj.magic (Toploop.getvalue Breakpoint.abandoned_binding) : exn)
+      with _ -> ())
+   | Error _ -> ())
+
 (* The ceiling on a phrase's heap, in MiB; see with_heap_limit below. *)
 let heap_limit_mib = ref 2048
 let heap_limit_words () = !heap_limit_mib * 1024 * 1024 / (Sys.word_size / 8)
@@ -49,6 +93,7 @@ let init () =
   (* utop sets this in common_init; it names the buffer in compiler messages. *)
   Location.input_name := Toplevel.input_name;
   Outcome.install ();
+  install_break_hook ();
   Printers.prime ();
   install_handler ()
 
@@ -119,23 +164,61 @@ let typecheck_all phrases =
   let rec go i acc = function
     | [] -> restore (); Ok (List.rev acc)
     | (Parsetree.Ptop_dir _ as d) :: rest -> go (i + 1) ((d, None) :: acc) rest
-    | Parsetree.Ptop_def str :: rest ->
+    | Parsetree.Ptop_def str0 :: rest ->
+      (* A marker cannot be typed as it stands, so it becomes a call with no
+         locals first. What is in scope at it is only knowable from the typed
+         tree, which is why the locals arrive in a second rewrite. *)
+      let breaking = Breakpoint.has_marker str0 in
+      let str, marker_locs =
+        if breaking then Breakpoint.rewrite_empty str0 else (str0, []) in
       (match Typemod.type_toplevel_phrase !Toploop.toplevel_env str with
        | (tstr, _, _, _, env) ->
          let env_before = !Toploop.toplevel_env in
          let str', fired = Autorun.rewrite env_before str tstr in
-         (* A rewritten phrase has a different type - unit rather than a
-            promise - so it has to be typed again for the environment the next
-            phrase sees to be right. *)
-         let env =
-           if str' == str then env
-           else
-             match Typemod.type_toplevel_phrase env_before str' with
-             | (_, _, _, _, env) -> env
-             | exception _ -> env
-         in
-         Toploop.toplevel_env := env;
-         go (i + 1) ((Parsetree.Ptop_def str', fired) :: acc) rest
+         if breaking && fired <> None then begin
+           restore ();
+           (* Escaping a blocking run leaves the scheduler unable to start
+              another, which would break every later promise phrase in the
+              session. Refused before anything runs rather than left as a
+              trap; see docs/wayfinder/tickets/035. *)
+           Error Msg.{ phase = Typecheck; phrase_index = i;
+                       message =
+                         "A breakpoint cannot sit inside a phrase that \
+                          autorun will run as a promise: stopping escapes the \
+                          run, which leaves the scheduler unable to start \
+                          another. Pass autorun: [] for this call, or run the \
+                          promise yourself.";
+                       spans = []; lines = []; done_ = [] }
+         end else begin
+           let str' =
+             if not breaking then str'
+             else
+               let before = Breakpoint.value_identities env_before in
+               let locals =
+                 List.map
+                   (function
+                     | None -> []
+                     | Some env -> Breakpoint.locals_at ~before env)
+                   (Breakpoint.marker_envs tstr marker_locs)
+               in
+               (* The markers are gone from [str], which is the tree that was
+                  typed; the second rewrite starts again from the caller's
+                  own tree. *)
+               Breakpoint.rewrite_with locals str0
+           in
+           (* A rewritten phrase has a different type - unit rather than a
+              promise - so it has to be typed again for the environment the next
+              phrase sees to be right. *)
+           let env =
+             if str' == str then env
+             else
+               match Typemod.type_toplevel_phrase env_before str' with
+               | (_, _, _, _, env) -> env
+               | exception _ -> env
+           in
+           Toploop.toplevel_env := env;
+           go (i + 1) ((Parsetree.Ptop_def str', fired) :: acc) rest
+         end
        | exception exn ->
          let message, spans, lines = Toplevel.describe_exn exn in
          restore ();
@@ -180,6 +263,56 @@ let with_heap_limit f =
    than by catching an exception. It does raise on compile errors, which the
    typing pass should have caught already; the guard stays because an
    unreachable path that kills the worker is not worth the saving. *)
+(* The handler sits around each phrase rather than around the request, so the
+   phrases that finished before a stop stay accounted for exactly as they are
+   for an interrupt. Deep, so a resumed phrase that stops again is caught by
+   the same handler and comes back to whoever resumed it. *)
+let run_phrase ppf buf phrase =
+  try
+    Effect.Deep.match_with
+      (fun () -> Breakpoint.Ran (with_heap_limit
+                        (fun () -> Toploop.execute_phrase true ppf phrase)))
+      ()
+      { Effect.Deep.retc = (fun step -> step);
+        exnc = (fun e -> raise e);
+        effc = (fun (type c) (eff : c Effect.t) ->
+            match eff with
+            | Breakpoint.Stop locals ->
+              Some (fun (k : (c, Breakpoint.step) Effect.Deep.continuation) ->
+                  Breakpoint.Broke (locals, k))
+            | _ -> None) }
+  with exn -> Buffer.add_string buf (message_of_exn exn); Breakpoint.Ran false
+
+(* Binding a local is declaring a name of the printed type and then putting
+   the value underneath it, which is how a type that cannot be written outside
+   the phrase is detected: the declaration simply fails to compile, and the
+   compiler's own message becomes the reason it was skipped. A weak variable,
+   a locally abstract type and an existential all land here. *)
+let bind_locals (locals : Breakpoint.local list) =
+  let bound = ref [] and skipped = ref [] in
+  List.iter
+    (fun (l : Breakpoint.local) ->
+       let name = "bp_" ^ l.Breakpoint.name in
+       let src = Printf.sprintf "let %s : %s = Obj.magic 0;;" name l.Breakpoint.ty in
+       match Toplevel.parse src with
+       | Error (message, _, _) -> skipped := (l.Breakpoint.name, message) :: !skipped
+       | Ok phrases ->
+         (match
+            List.iter
+              (fun p ->
+                 (* Never printed: the dummy is a placeholder and rendering it
+                    would read a value of the wrong shape. *)
+                 ignore (Toploop.execute_phrase false Format.err_formatter p))
+              phrases
+          with
+          | () ->
+            Toploop.setvalue name l.Breakpoint.value;
+            bound := Msg.{ bound = name; bound_type = l.Breakpoint.ty } :: !bound
+          | exception exn ->
+            skipped := (l.Breakpoint.name, message_of_exn exn) :: !skipped))
+    locals;
+  (List.rev !bound, List.rev !skipped)
+
 let execute_all cap phrases =
   let acc = ref [] and pos = ref 0 in
   let rec go i = function
@@ -194,10 +327,9 @@ let execute_all cap phrases =
       (* Scan before and after, as utop does: a phrase may itself load the
          cmis carrying the printers it then wants to use. *)
       Printers.scan ppf;
+      let step = run_phrase ppf buf phrase in
       let ok =
-        try with_heap_limit (fun () -> Toploop.execute_phrase true ppf phrase)
-        with exn -> Buffer.add_string buf (message_of_exn exn); false
-      in
+        match step with Breakpoint.Ran ok -> ok | Breakpoint.Broke _ -> true in
       let ok =
         if not !over_limit then ok
         else begin
@@ -224,6 +356,15 @@ let execute_all cap phrases =
                          ran } in
       pos := stop;
       acc := record :: !acc;
+      match step with
+      | Breakpoint.Broke (locals, k) ->
+        let bound, skipped = bind_locals locals in
+        let id = Breakpoint.fresh_id () in
+        Breakpoint.park { Breakpoint.id; k; locals; buf; wbuf;
+                          seen = Buffer.length buf };
+        Msg.Stopped { id; phrase_index = i; bound; skipped;
+                      done_ = List.rev !acc }
+      | Breakpoint.Ran _ ->
       if !interrupted then
         Msg.Interrupted { phrase_index = i; done_ = List.rev !acc }
       else if ok then go (i + 1) rest
@@ -356,6 +497,113 @@ let load cap ~libraries ~packages path =
   match Loader.load ~libraries path with
   | Error e -> fail_result e
   | Ok (loaded, failed) -> Msg.Loaded { loaded; failed }
+
+(* --- parked phrases ----------------------------------------------------- *)
+
+let resolve id =
+  let listing () =
+    match Breakpoint.ids () with
+    | [] -> "no phrase is parked in this session"
+    | ids ->
+      Printf.sprintf "parked: %s"
+        (String.concat ", " (List.map string_of_int ids))
+  in
+  match id with
+  | Some id ->
+    (match Breakpoint.find id with
+     | Some p -> Ok p
+     | None ->
+       Error (Printf.sprintf "no phrase is parked with id %d. %s" id (listing ())))
+  | None ->
+    match Breakpoint.the_only_one () with
+    | Some id -> Ok (Option.get (Breakpoint.find id))
+    | None ->
+      Error
+        (Printf.sprintf
+           "which parked phrase? Give an id: %s" (listing ()))
+
+(* The rest of a resumed phrase prints into the buffers the original call
+   handed execute_phrase, which are inside the continuation and cannot be
+   swapped. They were kept with the continuation, so what the rest of the
+   phrase adds is read from them here. *)
+let record_of_parked cap (p : Breakpoint.parked) =
+  let rendering =
+    let all = Buffer.contents p.Breakpoint.buf in
+    if String.length all <= p.Breakpoint.seen then ""
+    else String.sub all p.Breakpoint.seen
+           (String.length all - p.Breakpoint.seen)
+  in
+  Msg.{ rendering; warnings = Buffer.contents p.Breakpoint.wbuf;
+        out_start = 0; out_len = Capture.mark cap;
+        truncated = false; bindings = Outcome.take (); ran = None }
+
+let continue_ cap ~id ~abandon =
+  Capture.reset cap;
+  match resolve id with
+  | Error why -> Msg.Rejected why
+  | Ok p ->
+    Breakpoint.forget p.Breakpoint.id;
+    interrupted := false;
+    over_limit := false;
+    let step =
+      try
+        if abandon then
+          Effect.Deep.discontinue p.Breakpoint.k !Breakpoint.abandoned
+        else Effect.Deep.continue p.Breakpoint.k ()
+      with
+      | exn when exn == !Breakpoint.abandoned ->
+        Buffer.add_string p.Breakpoint.buf
+          "The phrase was abandoned at its breakpoint. Anything it had set up \
+           to release on the way out has been released.\n";
+        Breakpoint.Ran false
+      | exn ->
+        Buffer.add_string p.Breakpoint.buf (message_of_exn exn);
+        Breakpoint.Ran false
+    in
+    (match step with
+     | Breakpoint.Ran _ ->
+       Msg.Completed { phrases = [ record_of_parked cap p ]; autorun = None }
+     | Breakpoint.Broke (locals, k) ->
+       (* Stopped again: the same phrase, a later marker, a new id. *)
+       let record = record_of_parked cap p in
+       let bound, skipped = bind_locals locals in
+       let id = Breakpoint.fresh_id () in
+       Breakpoint.park { p with Breakpoint.id; k; locals;
+                                seen = Buffer.length p.Breakpoint.buf };
+       Msg.Stopped { id; phrase_index = -1; bound; skipped; done_ = [ record ] })
+
+(* Looking is not resuming. Binding again is what makes an older stop
+   reachable after a later one overwrote the names, and rendering is done by
+   rebinding each name to itself, so the value is printed by the session's own
+   printers rather than by a second rendering path here. *)
+let inspect cap ~id =
+  Capture.reset cap;
+  match resolve id with
+  | Error why -> Msg.Rejected why
+  | Ok p ->
+    let bound, skipped = bind_locals p.Breakpoint.locals in
+    let buf = Buffer.create 256 in
+    let ppf = Format.formatter_of_buffer buf in
+    List.iter
+      (fun (b : Msg.binding) ->
+         let src = Printf.sprintf "let %s = %s;;" b.Msg.bound b.Msg.bound in
+         match Toplevel.parse src with
+         | Error _ -> ()
+         | Ok phrases ->
+           List.iter
+             (fun phrase ->
+                try ignore (Toploop.execute_phrase true ppf phrase) with _ -> ())
+             phrases)
+      bound;
+    Format.pp_print_flush ppf ();
+    ignore (Outcome.take ());
+    let record =
+      Msg.{ rendering = Buffer.contents buf; warnings = "";
+            out_start = 0; out_len = Capture.mark cap;
+            truncated = false; bindings = bound; ran = None }
+    in
+    Msg.Stopped { id = p.Breakpoint.id; phrase_index = -1; bound; skipped;
+                  done_ = [ record ] }
 
 (* Directive-backed operations. These bypass the typing pass by design:
    directives are not typeable, which is why they are not allowed in eval. *)

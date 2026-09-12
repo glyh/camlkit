@@ -53,6 +53,8 @@ let () =
         match Msg.request_of_json meta with
         | Msg.Eval { source; autorun } -> Eval.eval cap ?autorun source
         | Msg.Describe path -> Eval.describe cap path
+        | Msg.Continue { id; abandon } -> Eval.continue_ cap ~id ~abandon
+        | Msg.Inspect { id } -> Eval.inspect cap ~id
         | Msg.Require packages -> Eval.require cap packages
         | Msg.Load { path; libraries; packages } ->
           Eval.load cap ~libraries ~packages path
@@ -76,6 +78,7 @@ let () =
         match response with
         | Msg.Completed c -> Msg.Completed { c with phrases = clamp c.phrases }
         | Msg.Interrupted r -> Msg.Interrupted { r with done_ = clamp r.done_ }
+        | Msg.Stopped st -> Msg.Stopped { st with done_ = clamp st.done_ }
         | Msg.Failed f -> Msg.Failed { f with done_ = clamp f.done_ }
         | other -> other
       in

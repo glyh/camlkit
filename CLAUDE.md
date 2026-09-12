@@ -7,11 +7,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 An MCP server, written in OCaml, that gives an MCP client live OCaml
 toplevels. A bytecode worker process owns the toplevel over
 `compiler-libs.toplevel`; the native server supervises one worker per named
-session and speaks MCP over stdio. Twelve tools: `eval`, `describe`, `require`,
-`load`, `reset` (session state), `locate`, `type_at`, `outline`, `uses`,
-`search_type`, `document` (merlin, no session needed) and `signature` (an
-installed package's interfaces, no session needed). There is no build tool;
-see ticket 025.
+session and speaks MCP over stdio. Fourteen tools: `eval`, `describe`, `require`,
+`load`, `reset`, `continue`, `inspect` (session state), `locate`, `type_at`,
+`outline`, `uses`, `search_type`, `document` (merlin, no session needed) and
+`signature` (an installed package's interfaces, no session needed). There is
+no build tool; see ticket 025.
 
 ## Commands
 
@@ -108,7 +108,15 @@ only while a phrase runs raises past a heap ceiling (2048 MiB, or
 killing the worker. Ticket 030 has the three details that are easy to get
 wrong.
 
-**Sessions are hermetic.** `~/.config/utop/init.ml` is not loaded.
+**Sessions are hermetic.** `~/.config/utop/init.ml` is not loaded. Three
+reserved names are injected, for breakpoints; see ticket 035.
+
+**A phrase can stop in the middle.** `[%break]` in evaluated code performs an
+effect, the handler around the phrase keeps the continuation, and evaluation
+returns to the request loop, so the session stays usable while the rest of the
+phrase waits as a value. Locals in scope are bound under `bp_` names. The
+`continue` and `inspect` tools drive it. The worker is still sequential:
+nothing is blocked, a parked phrase is a value in a table.
 
 Prefer stability over linking: merlin is shelled out to in single mode rather
 than linked, and the reasoning is a long comment at the top of

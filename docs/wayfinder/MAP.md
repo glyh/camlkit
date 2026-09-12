@@ -164,6 +164,12 @@ must evaluate it first. Tests are Alcotest.
   cursor and a module path narrows it to modules alone; merlin's failures are
   strings that read like docstrings, so the sentinel set is decoded into an
   error field; odoc markup is passed through unrendered.
+- [Breakpoints in a session](tickets/035-breakpoints.md) — `[%break]` parks a
+  phrase as a continuation and binds the locals in scope under `bp_` names, so
+  the session stays usable while the rest of the phrase waits; `continue` and
+  `inspect` are the tools, a local whose type cannot leave the phrase is
+  skipped with the compiler's own reason, and a marker under autorun is
+  refused before anything runs.
 - [A raise in a phrase had no position](tickets/034-locating-a-raise.md) —
   **fixed.** The worker never set `Clflags.debug`, so phrases compiled without
   debug events and an exception reported "Called from unknown location";

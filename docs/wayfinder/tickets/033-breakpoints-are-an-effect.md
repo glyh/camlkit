@@ -178,8 +178,12 @@ within it only the functions on the path to the requested stop, with tail
 positions modelled as above. A phrase nobody asked to break in compiles exactly
 as it does today.
 
-**Nothing is built.** No tool is added for this. The decision is what a
-breakpoint would be if one is ever wanted, and that the debuggers are not it.
+**Nothing is built here.** The decision was what a breakpoint would be if one
+were ever wanted, and that the debuggers are not it. One was then wanted: the
+marker and the captured locals are built in
+[Breakpoints in a session](035-breakpoints.md), which keeps to this design and
+records what the building taught. Stepping, positional breakpoints and the
+shadow stack remain unbuilt.
 
 ## Noted separately
 

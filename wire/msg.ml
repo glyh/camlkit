@@ -9,6 +9,13 @@ type request =
   | Describe of string      (* a module path, answered via #show *)
   | Require of string list  (* findlib packages *)
   (* A dune build tree, whose private libraries findlib cannot see. *)
+  (* Resume or abandon a phrase parked at a breakpoint. [id] is absent when
+     the session holds exactly one, which is the ordinary case. *)
+  | Continue of { id : int option; abandon : bool }
+  (* Bind a parked stop's locals again and print them. Separate from continue
+     because looking is not resuming, and a later stop's bindings overwrite an
+     earlier one's. *)
+  | Inspect of { id : int option }
   | Load of { path : string; libraries : string list;
               (* findlib packages to load first. A reset empties the session,
                  including anything it had required, and a project's libraries
@@ -64,6 +71,15 @@ type response =
   | Loaded of { loaded : string list; failed : (string * string) list }
   | Failed of failure
   | Interrupted of { phrase_index : int; done_ : phrase list }
+  (* A phrase performed [%break] and is parked. Mirrors Interrupted: the
+     phrases that finished first are kept, since they really ran. [bound] and
+     [skipped] are what became of the locals in scope at the stop; a local
+     whose type cannot be written down outside the phrase is skipped with the
+     compiler's own reason rather than silently missing. *)
+  | Stopped of { id : int; phrase_index : int;
+                 bound : binding list;
+                 skipped : (string * string) list;
+                 done_ : phrase list }
   | Rejected of string       (* e.g. a directive sent to eval *)
 
 let string_of_phase = function
@@ -85,6 +101,12 @@ let json_of_request = function
   | Require ps ->
     `Assoc [ "kind", `String "require";
              "packages", `List (List.map (fun p -> `String p) ps) ]
+  | Continue { id; abandon } ->
+    `Assoc ([ "kind", `String "continue"; "abandon", `Bool abandon ]
+            @ (match id with None -> [] | Some i -> [ "id", `Int i ]))
+  | Inspect { id } ->
+    `Assoc ([ "kind", `String "inspect" ]
+            @ (match id with None -> [] | Some i -> [ "id", `Int i ]))
   | Load { path; libraries; packages } ->
     `Assoc [ "kind", `String "load"; "path", `String path;
              "libraries", `List (List.map (fun l -> `String l) libraries);
@@ -99,6 +121,11 @@ let request_of_json j =
                | `List l -> Some (List.map to_string l)
                | _ -> None) }
   | "describe" -> Describe (member "path" j |> to_string)
+  | "continue" ->
+    Continue { id = (match member "id" j with `Int i -> Some i | _ -> None);
+               abandon = (member "abandon" j = `Bool true) }
+  | "inspect" ->
+    Inspect { id = (match member "id" j with `Int i -> Some i | _ -> None) }
   | "require" -> Require (member "packages" j |> to_list |> List.map to_string)
   | "load" ->
     Load { path = member "path" j |> to_string;
@@ -178,6 +205,14 @@ let json_of_response = function
     `Assoc [ "status", `String "interrupted";
              "phrase_index", `Int phrase_index;
              "phrases", `List (List.map json_of_phrase done_) ]
+  | Stopped { id; phrase_index; bound; skipped; done_ } ->
+    `Assoc [ "status", `String "stopped";
+             "id", `Int id;
+             "phrase_index", `Int phrase_index;
+             "bound", `List (List.map json_of_binding bound);
+             "skipped", `List (List.map (fun (name, why) ->
+                 `Assoc [ "name", `String name; "reason", `String why ]) skipped);
+             "phrases", `List (List.map json_of_phrase done_) ]
   | Loaded { loaded; failed } ->
     `Assoc [ "status", `String (if failed = [] then "ok" else "partial");
              "loaded", `List (List.map (fun l -> `String l) loaded);
@@ -193,6 +228,14 @@ let response_of_json j =
                 autorun = (match member "autorun" j with
                     | `List l -> Some (List.map to_string l)
                     | _ -> None) }
+  | "stopped" ->
+    Stopped { id = member "id" j |> to_int;
+              phrase_index = member "phrase_index" j |> to_int;
+              bound = member "bound" j |> to_list |> List.map binding_of_json;
+              skipped = member "skipped" j |> to_list
+                        |> List.map (fun s -> (member "name" s |> to_string,
+                                               member "reason" s |> to_string));
+              done_ = member "phrases" j |> to_list |> List.map phrase_of_json }
   | "failed" ->
     Failed { phase = member "phase" j |> to_string |> phase_of_string;
              phrase_index = member "phrase_index" j |> to_int;

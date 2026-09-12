@@ -98,15 +98,17 @@ let test_tools_listed () =
     Yojson.Safe.Util.(member "tools" r |> to_list
                       |> List.map (fun t -> member "name" t |> to_string)) in
   Alcotest.(check (slist string compare)) "the tools"
-    [ "describe"; "document"; "eval"; "load"; "locate"; "outline"; "require";
-      "reset"; "search_type"; "signature"; "type_at"; "uses" ] names;
+    [ "continue"; "describe"; "document"; "eval"; "inspect"; "load"; "locate";
+      "outline"; "require"; "reset"; "search_type"; "signature"; "type_at";
+      "uses" ] names;
   let schemas =
     Yojson.Safe.Util.(member "tools" r |> to_list
                       |> List.filter (fun t -> member "outputSchema" t <> `Null)
                       |> List.map (fun t -> member "name" t |> to_string)) in
   Alcotest.(check (slist string compare)) "every tool declares an output schema"
-    [ "describe"; "document"; "eval"; "load"; "locate"; "outline"; "require";
-      "reset"; "search_type"; "signature"; "type_at"; "uses" ] schemas
+    [ "continue"; "describe"; "document"; "eval"; "inspect"; "load"; "locate";
+      "outline"; "require"; "reset"; "search_type"; "signature"; "type_at";
+      "uses" ] schemas
 
 let test_eval_through_the_loop () =
   with_server @@ fun c ->
@@ -601,6 +603,89 @@ let test_search_type_fills_its_limit () =
          (List.length got) (List.length distinct))
     [ 3; 8 ]
 
+(* A phrase stops where the caller wrote a marker, its locals become ordinary
+   session values, and the session stays usable while the rest of the phrase
+   waits as a value rather than as a blocked process. *)
+let test_a_phrase_stops_and_resumes () =
+  with_server @@ fun c ->
+  let args code = `Assoc [ "session", `String "bp"; "code", `String code ] in
+  let r = call c ~id:1 ~tool:"eval"
+      ~args:(args "let f n =\n  let x = n * 2 in\n  [%break];\n  x + 1\nin f 20;;") in
+  let structured = Yojson.Safe.Util.member "structuredContent" r in
+  Alcotest.(check string) "stopped rather than completed" "stopped"
+    Yojson.Safe.Util.(member "status" structured |> to_string);
+  Alcotest.(check bool) "both locals bound" true
+    (has "bp_n : int" (text r) && has "bp_x : int" (text r));
+  (* The point of binding them: the caller can compute with them. *)
+  let r = call c ~id:2 ~tool:"eval" ~args:(args "bp_x * 3;;") in
+  Alcotest.(check bool) "the parked values are usable" true (has "120" (text r));
+  let r = call c ~id:3 ~tool:"inspect"
+      ~args:(`Assoc [ "session", `String "bp" ]) in
+  Alcotest.(check bool) "inspect prints them" true (has "bp_x : int = 40" (text r));
+  let r = call c ~id:4 ~tool:"continue"
+      ~args:(`Assoc [ "session", `String "bp" ]) in
+  Alcotest.(check bool) "the rest of the phrase ran" true (has "41" (text r))
+
+(* A local whose type is not expressible outside the phrase cannot be bound.
+   The compiler's own refusal is the reason reported, rather than the local
+   going silently missing. *)
+let test_a_local_that_cannot_be_bound_is_named () =
+  with_server @@ fun c ->
+  let r = call c ~id:1 ~tool:"eval"
+      ~args:(`Assoc [ "session", `String "bp2";
+                      "code", `String
+                        "let f (type a) (x : a) (y : int) = [%break]; y in f \"s\" 3;;" ]) in
+  let structured = Yojson.Safe.Util.member "structuredContent" r in
+  let skipped = Yojson.Safe.Util.(member "skipped" structured |> to_list) in
+  Alcotest.(check bool) "the typed local is still bound" true
+    (has "bp_y : int" (text r));
+  Alcotest.(check bool) "the other one is reported, with a reason" true
+    (List.exists (fun s ->
+         Yojson.Safe.Util.(member "name" s |> to_string) = "x"
+         && Yojson.Safe.Util.(member "reason" s |> to_string) <> "") skipped)
+
+(* Abandoning raises inside the phrase rather than resuming it, so the rest
+   does not run but anything it set up to release still is. *)
+let test_abandon_runs_the_cleanup () =
+  with_server @@ fun c ->
+  ignore (call c ~id:1 ~tool:"eval"
+            ~args:(`Assoc [ "session", `String "bp3"; "code", `String
+                              "Fun.protect ~finally:(fun () -> print_endline \"released\") \
+                               (fun () -> [%break]; 7);;" ]));
+  let r = call c ~id:2 ~tool:"continue"
+      ~args:(`Assoc [ "session", `String "bp3"; "abandon", `Bool true ]) in
+  Alcotest.(check bool) "the finaliser ran" true (has "released" (text r));
+  Alcotest.(check bool) "and it says what happened" true
+    (has "Camlkit_abandoned" (text r))
+
+(* Two parked phrases are independent, so neither can be resumed by guessing. *)
+let test_two_parked_phrases_need_an_id () =
+  with_server @@ fun c ->
+  let args code = `Assoc [ "session", `String "bp4"; "code", `String code ] in
+  ignore (call c ~id:1 ~tool:"eval" ~args:(args "let a = 1 in [%break]; a;;"));
+  ignore (call c ~id:2 ~tool:"eval" ~args:(args "let b = 2 in [%break]; b;;"));
+  let r = call c ~id:3 ~tool:"continue" ~args:(`Assoc [ "session", `String "bp4" ]) in
+  Alcotest.(check bool) "it asks which, and lists them" true
+    (has "1, 2" (text r));
+  let r = call c ~id:4 ~tool:"continue"
+      ~args:(`Assoc [ "session", `String "bp4"; "id", `Int 1 ]) in
+  Alcotest.(check bool) "the named one resumes" true (has "1" (text r))
+
+(* Stopping escapes the blocking run autorun would wrap the phrase in, which
+   would leave the scheduler unable to start another. Refused before anything
+   runs rather than left as a trap. *)
+let test_a_breakpoint_under_autorun_is_refused () =
+  with_server @@ fun c ->
+  ignore (call c ~id:1 ~tool:"require"
+            ~args:(`Assoc [ "session", `String "bp5";
+                            "packages", `List [ `String "lwt.unix" ] ]));
+  let r = call c ~id:2 ~tool:"eval"
+      ~args:(`Assoc [ "session", `String "bp5"; "code", `String
+                        "let h () = [%break]; Lwt.return 5 in h ();;" ]) in
+  Alcotest.(check bool) "refused, saying why" true
+    (has "autorun will run as a promise" (text r));
+  Alcotest.(check bool) "and nothing ran" true (has "Nothing was executed" (text r))
+
 (* Documentation by name rather than by position. Merlin infers the namespace
    to search from the node under the cursor even when the name is given, so a
    position inside a module path would answer "Not in environment" about a
@@ -732,6 +817,17 @@ let () =
            test_reset_load_restores_required_packages;
          Alcotest.test_case "explicit reset forgets packages" `Slow
            test_explicit_reset_forgets_packages ]);
+      ("breakpoints",
+       [ Alcotest.test_case "a phrase stops and resumes" `Slow
+           test_a_phrase_stops_and_resumes;
+         Alcotest.test_case "a local that cannot be bound is named" `Slow
+           test_a_local_that_cannot_be_bound_is_named;
+         Alcotest.test_case "abandon runs the cleanup" `Slow
+           test_abandon_runs_the_cleanup;
+         Alcotest.test_case "two parked phrases need an id" `Slow
+           test_two_parked_phrases_need_an_id;
+         Alcotest.test_case "a breakpoint under autorun is refused" `Slow
+           test_a_breakpoint_under_autorun_is_refused ]);
       ("source",
        [ Alcotest.test_case "outline" `Slow test_outline;
          Alcotest.test_case "type at a position" `Slow test_type_at;

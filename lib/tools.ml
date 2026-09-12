@@ -165,6 +165,52 @@ let reset_tool =
                                                  "Present only when the \
                                                   reset carried code." ]) ] ]
 
+(* Breakpoints. A phrase stops where the caller wrote [%break], and the rest
+   of it waits as a value rather than as a blocked process, so the session
+   stays usable while it is parked. See docs/wayfinder/tickets/035. *)
+
+let id_arg =
+  ("id", `Assoc [ "type", `String "integer";
+                  "description", `String "Which parked phrase. Omit when the \
+                    session has exactly one, which is the usual case." ])
+
+let continue_tool =
+  `Assoc [
+    "name", `String "continue";
+    "description", `String
+      "Resume a phrase parked at a breakpoint, or abandon it. The result is \
+       an ordinary evaluation result: what the rest of the phrase printed and \
+       what it came to, or another stop if it hit a second breakpoint. \
+       Abandon raises inside the phrase instead of resuming it, so the rest \
+       does not run but whatever it set up to release on the way out is \
+       released.";
+    "inputSchema", obj ~required:[ "session" ]
+      [ session_arg; id_arg;
+        ("abandon", `Assoc [ "type", `String "boolean";
+                             "description", `String "Raise inside the phrase \
+                               rather than resuming it." ]) ];
+    "outputSchema", obj [ ("phrases", phrase_array);
+                          ("status", `Assoc [ "type", `String "string" ]) ] ]
+
+let inspect_tool =
+  `Assoc [
+    "name", `String "inspect";
+    "description", `String
+      "Show the locals of a parked phrase and bind them again under their \
+       bp_ names. A stop already binds them, so this is for reading them once \
+       more, and for getting an earlier stop's values back after a later stop \
+       overwrote the names. It does not resume anything.";
+    "inputSchema", obj ~required:[ "session" ] [ session_arg; id_arg ];
+    "outputSchema", obj
+      [ ("id", `Assoc [ "type", `String "integer" ]);
+        ("bound", `Assoc [ "type", `String "array";
+                           "description", `String "Each local, by the name it \
+                             is bound under, with its type." ]);
+        ("skipped", `Assoc [ "type", `String "array";
+                             "description", `String "Locals that could not be \
+                               bound, each with the reason." ]);
+        ("phrases", phrase_array) ] ]
+
 (* Source queries. These take a file and a position rather than a session:
    they ask about code as written, not about values in a toplevel, so they
    need nothing loaded and no build. *)
@@ -322,5 +368,6 @@ let signature_tool =
 
 let all =
   [ eval_tool; describe_tool; require_tool; load_tool; reset_tool;
+    continue_tool; inspect_tool;
     locate_tool; type_at_tool; outline_tool; uses_tool; search_type_tool;
     document_tool; signature_tool ]

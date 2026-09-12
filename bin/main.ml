@@ -279,6 +279,15 @@ let request_of_call name args =
      | Error _ as e -> e
      | Ok source -> Ok (Msg.Eval { source; autorun }))
   | "describe" -> Result.map (fun p -> Msg.Describe p) (arg_string args "path")
+  | "continue" ->
+    let id = match Yojson.Safe.Util.member "id" args with
+      | `Int i -> Some i | _ -> None in
+    Ok (Msg.Continue { id; abandon =
+                               Yojson.Safe.Util.member "abandon" args = `Bool true })
+  | "inspect" ->
+    let id = match Yojson.Safe.Util.member "id" args with
+      | `Int i -> Some i | _ -> None in
+    Ok (Msg.Inspect { id })
   | "require" -> Result.map (fun p -> Msg.Require p) (arg_strings args "packages")
   | "load" -> assert false                       (* handled before we get here *)
   | "reset" -> assert false                      (* handled before we get here *)
@@ -411,7 +420,8 @@ let handle_call id params =
          can restore it instead of making the caller say it twice. *)
       (match request with
        | Msg.Require ps -> remember_required session_name ps
-       | Msg.Eval _ | Msg.Describe _ | Msg.Load _ -> ());
+       | Msg.Eval _ | Msg.Describe _ | Msg.Load _
+       | Msg.Continue _ | Msg.Inspect _ -> ());
       match session_for session_name with
       | Error e -> reply id (Render.infrastructure_failure e)
       | Ok (s, note) ->
