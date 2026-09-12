@@ -139,6 +139,45 @@ loses identity and write-back, closures only survive where the same code runs,
 and channels and mutexes refuse outright. Worth knowing if the out-of-process
 route is ever reopened; not worth building instead of the effect handler.
 
+**Instrumentation is an AST pass, never a source rewrite.** Rewriting the text
+a caller sent would move every position after the insertion, and positions are
+what this project reports: error spans, line ranges, and now the backtrace of
+[A raise in a phrase had no position](034-locating-a-raise.md). So nothing is
+printed back to source. Inserted nodes are synthesised into the tree and carry
+ghost locations, while existing nodes keep theirs untouched, which is the same
+discipline a ppx follows. Debug events are generated from locations, so the
+caller's text keeps its own line and character numbers whether or not a phrase
+is instrumented, and a breakpoint's reported position is the position the
+caller wrote.
+
+**Where the stop points come from: the compiler's own event table.** With
+debug events on, every phrase already has one, and its entries are exactly the
+places a stop is meaningful. A request to break at a line and column is
+snapped to the nearest event rather than to an arbitrary node, which is what a
+debugger does and what keeps "break here" from landing mid-expression.
+
+**How a value is rendered: the toplevel's printer, not generated code.** The
+inserted call carries `Obj.repr` of each captured variable plus an index into a
+side table of its `Types.type_expr`, and the handler renders with
+`Toploop.print_value : Env.t -> Obj.t -> Format.formatter ->
+Types.type_expr -> unit`. That is the same path a binding takes, so a project's
+own `[@@ocaml.toplevel_printer]` printers apply, see
+[Automatic toplevel printers](018-automatic-toplevel-printers.md). No printing
+code is synthesised and no type annotation is required of the caller.
+
+**The two-pass evaluation already supplies the types.** Nothing executes until
+every phrase typechecks, see
+[Protocol between server and worker](015-worker-ipc.md), so the typed structure
+from the first pass is where the name, location and type of each binder in
+scope at the stop are harvested. The second pass then runs a parsetree
+carrying the inserted calls. The pass we already have for a different reason is
+what makes the capture typed rather than guessed.
+
+**Scope the cost to the request.** Instrument the marked phrase only, and
+within it only the functions on the path to the requested stop, with tail
+positions modelled as above. A phrase nobody asked to break in compiles exactly
+as it does today.
+
 **Nothing is built.** No tool is added for this. The decision is what a
 breakpoint would be if one is ever wanted, and that the debuggers are not it.
 
