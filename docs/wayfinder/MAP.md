@@ -164,6 +164,10 @@ must evaluate it first. Tests are Alcotest.
   cursor and a module path narrows it to modules alone; merlin's failures are
   strings that read like docstrings, so the sentinel set is decoded into an
   error field; odoc markup is passed through unrendered.
+- [A raise in a phrase had no position](tickets/034-locating-a-raise.md) —
+  **fixed.** The worker never set `Clflags.debug`, so phrases compiled without
+  debug events and an exception reported "Called from unknown location";
+  positions now count into the code the caller sent, as error spans already do.
 - [Stopping inside a running phrase](tickets/033-breakpoints-are-an-effect.md)
   — a breakpoint here would be an effect handler around a phrase, keeping the
   continuation and leaving the session alive, not a debugger: the debug

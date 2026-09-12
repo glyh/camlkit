@@ -25,6 +25,7 @@ let install_handler () =
 let init () =
   Sys.interactive := false;
   Clflags.real_paths := false;          (* -short-paths *)
+  Clflags.debug := true;                (* -g: see ticket 034 *)
   Toploop.initialize_toplevel_env ();
   (* utop used to do this for us. Without it Topfind has no configuration and
      every require fails; the byte predicate matters because this worker is

@@ -159,6 +159,22 @@ let test_autorun_is_visible_in_the_result () =
 
 (* A failed phrase is a successful call: isError means the server failed at its
    own job, not that the code was wrong. *)
+(* Without debug events a raise inside evaluated code reports "Called from
+   unknown location", so an agent cannot tell which of its own expressions
+   raised. The positions are into the code the caller sent, which is the same
+   frame of reference as the spans a failure already carries. *)
+let test_a_raise_can_be_located () =
+  with_server @@ fun c ->
+  let args code = `Assoc [ "session", `String "bt"; "code", `String code ] in
+  ignore (call c ~id:1 ~tool:"eval" ~args:(args "Printexc.record_backtrace true;;"));
+  ignore (call c ~id:2 ~tool:"eval"
+            ~args:(args "let boom x = if x > 0 then failwith \"here\" else x;;"));
+  let r = call c ~id:3 ~tool:"eval"
+      ~args:(args "(try ignore (boom 1) with _ -> \
+                   print_string (Printexc.get_backtrace ()));;") in
+  Alcotest.(check bool) "the backtrace names the phrase it came from" true
+    (has "//toplevel//" (text r))
+
 let test_type_error_is_not_is_error () =
   with_server @@ fun c ->
   let r = call c ~id:1 ~tool:"eval"
@@ -689,6 +705,8 @@ let () =
          Alcotest.test_case "tools listed" `Slow test_tools_listed ]);
       ("tools",
        [ Alcotest.test_case "eval through the loop" `Slow test_eval_through_the_loop;
+         Alcotest.test_case "a raise can be located" `Slow
+           test_a_raise_can_be_located;
          Alcotest.test_case "type error is not isError" `Slow
            test_type_error_is_not_is_error;
          Alcotest.test_case "unknown tool is isError" `Slow
