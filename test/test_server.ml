@@ -645,6 +645,40 @@ let test_resuming_finishes_the_rest_of_the_call () =
       ~args:(`Assoc [ "session", `String "bp7"; "code", `String "!total;;" ]) in
   Alcotest.(check bool) "and the loop itself completed" true (has "3" (text r))
 
+(* Output and bindings belong to the call that produced them: what a phrase
+   printed before stopping to the stop, what it printed afterwards and what it
+   bound to the resume. *)
+let test_output_and_bindings_split_across_the_stop () =
+  with_server @@ fun c ->
+  let r = call c ~id:1 ~tool:"eval"
+      ~args:(`Assoc [ "session", `String "bp10"; "code", `String
+                        "print_string \"before\\n\";;\n\
+                         let a = (let b = 6 in [%break]; \
+                         print_string \"after\\n\"; b * 7);;" ]) in
+  Alcotest.(check bool) "what it printed first" true (has "before" (text r));
+  Alcotest.(check bool) "and not what it has not printed yet" false
+    (has "after" (text r));
+  let r = call c ~id:2 ~tool:"continue" ~args:(`Assoc [ "session", `String "bp10" ]) in
+  Alcotest.(check bool) "the rest of the output" true (has "after" (text r));
+  Alcotest.(check bool) "and the binding it made" true (has "val a : int = 42" (text r))
+
+(* A lazy parked half way through being forced is still in progress, and
+   OCaml's own guard says so to anyone who forces it meanwhile. Resuming
+   completes it and memoises it as usual. *)
+let test_a_lazy_parked_mid_force () =
+  with_server @@ fun c ->
+  let args code = `Assoc [ "session", `String "bp11"; "code", `String code ] in
+  ignore (call c ~id:1 ~tool:"eval"
+            ~args:(args "let l = lazy (let seed = 6 in [%break]; seed * 7);;"));
+  ignore (call c ~id:2 ~tool:"eval" ~args:(args "Lazy.force l;;"));
+  let r = call c ~id:3 ~tool:"eval"
+      ~args:(args "(try `Forced (Lazy.force l) with e -> `Raised (Printexc.to_string e));;") in
+  Alcotest.(check bool) "forcing it again says it is already being forced" true
+    (has "Undefined" (text r));
+  ignore (call c ~id:4 ~tool:"continue" ~args:(`Assoc [ "session", `String "bp11" ]));
+  let r = call c ~id:5 ~tool:"eval" ~args:(args "Lazy.force l, Lazy.is_val l;;") in
+  Alcotest.(check bool) "and afterwards it is a value" true (has "(42, true)" (text r))
+
 (* A local whose type is not expressible outside the phrase cannot be bound.
    The compiler's own refusal is the reason reported, rather than the local
    going silently missing. *)
@@ -903,6 +937,10 @@ let () =
            test_a_phrase_stops_and_resumes;
          Alcotest.test_case "resuming finishes the rest of the call" `Slow
            test_resuming_finishes_the_rest_of_the_call;
+         Alcotest.test_case "output and bindings split across the stop" `Slow
+           test_output_and_bindings_split_across_the_stop;
+         Alcotest.test_case "a lazy parked mid-force" `Slow
+           test_a_lazy_parked_mid_force;
          Alcotest.test_case "a local that cannot be bound is named" `Slow
            test_a_local_that_cannot_be_bound_is_named;
          Alcotest.test_case "a polymorphic local is not bound" `Slow

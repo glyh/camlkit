@@ -91,6 +91,26 @@ everything survives it: `try [%break]; "ran" with _ -> "caught"` returned
 inside a computation and is worth knowing before relying on abandon to stop
 something.
 
+**The deadline treats a resume like any evaluation, and that is right.** A
+phrase resumed into an endless loop was interrupted after the usual thirty
+seconds, reported "Interrupted.", and left the session usable. Nothing in
+supervision knows about breakpoints, which is the point of parking a phrase as
+a value: a stop returns an answer promptly, so only a resumed phrase that runs
+away is a runaway, and that is the case the escalation in
+[How a session is spawned and supervised](009-session-spawn-and-supervision.md)
+already covers. Not tested in the suite, because it costs the full deadline.
+
+**Output and bindings belong to the call that produced them.** What a phrase
+printed before stopping comes back with the stop, and what it printed
+afterwards, along with anything it bound, comes back with the resume. The
+output cap applies either side, with the truncation flag, measured with twenty
+thousand characters printed before a stop.
+
+**A lazy parked half way through being forced is honest about it.** Forcing it
+from another call raises OCaml's own in-progress guard,
+`CamlinternalLazy.Undefined`, rather than deadlocking or forcing twice.
+Resuming completes and memoises it.
+
 **Three messages a caller has to act on were rewritten after testing them.** A
 marker with a payload, or in structure-item position, is refused before typing
 with the form it should have taken, rather than left to the compiler's
