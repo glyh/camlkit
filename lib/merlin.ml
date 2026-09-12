@@ -41,6 +41,25 @@ let absolute path =
    So build the index first. It is cheap once the project itself is built -
    measured at 0.2 s - and correctness here is worth a build, because a wrong
    answer that looks complete is worse than a slow one. *)
+(* Whether dune wrote any occurrence index under the build directory. Stops at
+   the first one, so the answer on a project that has them costs a few
+   directory reads; only a project with none pays for the whole walk.
+   ponytail: a full walk in the negative case, narrow it if a large project
+   ever notices. *)
+let has_index build_dir =
+  let rec look dir =
+    match Sys.readdir dir with
+    | exception Sys_error _ -> false
+    | entries ->
+      Array.exists
+        (fun name ->
+           let path = Filename.concat dir name in
+           if Filename.check_suffix name ".ocaml-index" then true
+           else Sys.is_directory path && look path)
+        entries
+  in
+  look build_dir
+
 let ensure_index file =
   match Wire.Exe.project_root_of (absolute file) with
   | None -> Error "not inside a dune project"
@@ -55,7 +74,20 @@ let ensure_index file =
        while true do Buffer.add_channel buf ic 1 done
      with End_of_file -> ());
     (match Unix.close_process_in ic with
-     | Unix.WEXITED 0 -> Ok ()
+     | Unix.WEXITED 0 ->
+       (* A zero exit is not an index. The occurrence data dune builds one from
+          is written by the compiler, and only by OCaml 5.2 and later; these
+          tools need no session, so they answer about whatever project they are
+          pointed at, including one this server could never run a toplevel for.
+          Such a project's index alias does not have to fail in order to
+          produce nothing. Asking whether a file was written says so without
+          having to know which of the reasons applied. *)
+       if has_index (Filename.concat root "_build") then Ok ()
+       else
+         Error
+           "dune built the index alias without error and wrote no index. The \
+            occurrence data it is built from is written by OCaml 5.2 and \
+            later, so a project on an older compiler has none"
      | _ -> Error (String.trim (Buffer.contents buf)))
 
 

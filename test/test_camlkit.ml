@@ -685,6 +685,32 @@ let test_partial_output_recovered_on_interrupt () =
 
 (* merlin answers document with class: return whatever happened, so its
    failures are strings that read like documentation. Pure, so no merlin. *)
+(* A zero exit from the index build is not an index: the occurrence data dune
+   builds one from is written by OCaml 5.2 and later only, and these tools
+   answer about whatever project they are pointed at. See tickets/046. *)
+let test_has_index () =
+  let root = Filename.temp_file "camlkit-index" "" in
+  Sys.remove root;
+  let objs = Filename.concat root "default/lib/.thing.objs" in
+  let rec mkdirs d =
+    if not (Sys.file_exists d) then begin
+      mkdirs (Filename.dirname d);
+      Unix.mkdir d 0o700
+    end
+  in
+  mkdirs objs;
+  Alcotest.(check bool) "a build tree with no index reads as none" false
+    (Merlin.has_index root);
+  (* A .cmt beside it is not one either: it is the index that is asked for. *)
+  close_out (open_out (Filename.concat objs "thing.cmt"));
+  Alcotest.(check bool) "and a build tree with other artefacts still reads as none"
+    false (Merlin.has_index root);
+  close_out (open_out (Filename.concat objs "cctx.ocaml-index"));
+  Alcotest.(check bool) "one anywhere under it is enough" true
+    (Merlin.has_index root);
+  Alcotest.(check bool) "a directory that does not exist is not an error" false
+    (Merlin.has_index (Filename.concat root "nowhere"))
+
 let test_document_sentinels () =
   let doc = function
     | Ok s -> "doc:" ^ s
@@ -730,7 +756,9 @@ let () =
       ("output cap", [ Alcotest.test_case "clamp" `Quick test_clamp ]);
       ("merlin",
        [ Alcotest.test_case "document sentinels" `Quick
-           test_document_sentinels ]);
+           test_document_sentinels;
+         Alcotest.test_case "an index that was not written" `Quick
+           test_has_index ]);
       ("supervision",
        [ Alcotest.test_case "escalation" `Quick test_escalation;
          Alcotest.test_case "interrupt answered" `Quick

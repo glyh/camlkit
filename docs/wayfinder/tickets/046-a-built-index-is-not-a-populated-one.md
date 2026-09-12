@@ -1,8 +1,8 @@
 ---
-status: open
+status: resolved
 type: defect
 blocked-by: [027]
-assignee:
+assignee: lyh
 ---
 
 # A built index is not a populated one
@@ -57,6 +57,33 @@ implementation of `uses`, a compiled helper binary and a dependency graph, to
 serve a project this server cannot start a session for. What transfers is the
 finding, not the workaround.
 
+## Decided
+
+**The check is whether a `.ocaml-index` file exists under the build
+directory,** walked with an early exit so a project that has them pays a few
+directory reads. It answers the real question without having to know which
+reason applied: an old compiler, a dune too old for the alias, a tree never
+built. dune writes them at `<dir>/.<name>.objs/cctx.ocaml-index`, five of them
+on this project.
+
+**It reuses the `incomplete` field,** which the index build's own failure
+already used, rather than adding a second way to say the same thing.
+
+**The caveat stopped claiming a build failure.** It read "which could not be
+built here", which is now one of three reasons and not the new one. It says
+"which is not available here" and keeps naming the remedy, qualified: where
+the project is a dune project on OCaml 5.2 or later, building the alias and
+asking again fixes it. Qualified because the remedy does not help a project
+whose compiler writes no occurrence data, and saying so unconditionally would
+send a caller round a loop that cannot close.
+
+**Scope is not refused.** [A failed dune top degrades in silence](040-a-silent-fallback.md)
+refused rather than answered, because there the alternative answer was
+actively wrong. Here the buffer-local answer is correct as far as it goes and
+useful on its own, so it is returned with the field saying what it covers.
+Same convention, different outcome, because the two partial answers are not
+the same kind of partial.
+
 ## Open
 
 **What the caller is told.** `uses` already has an `incomplete` field
@@ -65,12 +92,13 @@ with a reason of its own. The wording matters more than the mechanism: it has
 to say the answer covers this file only, because that is the thing a caller
 would otherwise act on wrongly.
 
-**Whether the scope argument should refuse.** A caller that asked for project
-scope and can only be given buffer scope has asked for something unavailable.
-Answering with buffer scope plus a field is consistent with the rest of the
-surface; refusing would be defensible and is a worse fit for a tool whose
-partial answer is still useful.
+**Whether the index build should be skipped when it cannot help.** Still open,
+and still probably not. Nothing is lost by trying - 0.2 s on a built project -
+and skipping it needs the compiler version, which is one more thing to find
+out.
 
-**Whether the index build should be skipped when it cannot help.** Nothing
-is lost by trying - it is 0.2 s on a built project - and skipping it needs
-the compiler version, which is one more thing to find out. Probably not.
+**The negative case was not exercised end to end.** Producing it needs a
+project on a compiler older than 5.2, which this switch is not and which this
+server could not run a session for anyway. The detection is unit-tested
+directly instead, against a build tree with no index, one with other artefacts
+and no index, one with an index, and one that does not exist.

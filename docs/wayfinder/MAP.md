@@ -232,6 +232,15 @@ must evaluate it first. Tests are Alcotest.
   and `OPAM_SWITCH_PREFIX` only: `CAML_LD_LIBRARY_PATH` stays untouched so
   ticket 028's `Dll.add_path` decision stands. `CAMLKIT_SWITCH` overrides,
   soundly only for a switch of the same OCaml version.
+- [A built index is not a populated one](tickets/046-a-built-index-is-not-a-populated-one.md)
+  — **fixed.** `uses` trusted the exit status of `dune build @ocaml-index`, and
+  a zero exit is not an index with occurrences in it: the data it is built from
+  is written by OCaml 5.2 and later only, and the merlin tools answer about
+  whatever project they are pointed at, including one no session could run.
+  It now asks whether an index file was written, which needs no theory about
+  why one was not. Answered with the existing `incomplete` field rather than
+  refused, unlike ticket 040, because a buffer-local answer is correct as far
+  as it goes where a scanned load was not.
 - [context lost the wrapper](tickets/051-context-lost-the-wrapper.md) —
   **fixed.** A relative `file` argument silently cost every merlin query the
   project's configuration: the query runs in the file's own directory so merlin

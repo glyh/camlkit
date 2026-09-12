@@ -267,11 +267,15 @@ let source_query id name args =
     let caveat, value =
       match value with
       | `Assoc [ ("incomplete", `String why); ("value", v) ] ->
+        (* Two reasons now reach this, so the sentence cannot claim either:
+           dune failed, or dune succeeded and wrote no index because the
+           project's compiler writes no occurrence data. See tickets/046. *)
         ( Some (Printf.sprintf
                   "INCOMPLETE: these are occurrences in this file only. \
-                   Project-wide results need dune's index, which could not be \
-                   built here (%s). Run `dune build @ocaml-index` in the \
-                   project and ask again." why),
+                   Project-wide results need dune's index, which is not \
+                   available here (%s). Where the project is a dune project on \
+                   OCaml 5.2 or later, `dune build @ocaml-index` in it and \
+                   asking again fixes this." why),
           v )
       | v -> (None, v)
     in
