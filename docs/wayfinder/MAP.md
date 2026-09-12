@@ -330,8 +330,9 @@ conversation already is, which History below declined.
   constructor. Not from the Lisps, but the same family, and an agent writing
   OCaml has no way to ask for it today.
 
-- **Macroexpansion.** Core to both CIDER and SLY, and the OCaml equivalent is
-  ppx, currently invisible. Merlin's `expand-ppx` expands at a position, which
+- **Macroexpansion.** Specified in [What a ppx generated](tickets/037-ppx-expansion.md),
+  open. Core to both CIDER and SLY, and the OCaml equivalent is ppx,
+  currently invisible. Merlin's `expand-ppx` expands at a position, which
   is cheaper than `dune describe pp`, which builds the file and prints the
   whole preprocessed source.
 
@@ -348,12 +349,15 @@ conversation already is, which History below declined.
   it: a second way to say what `eval` says, on a surface that is fourteen
   tools already.
 
-- **The namespace an evaluation happens in.** Both CIDER's ns and SLY's
+- **The namespace an evaluation happens in.** Specified in
+  [Evaluating in a file's context](tickets/036-a-file-s-context.md), open.
+  Both CIDER's ns and SLY's
   `set-package` evaluate inside an ambient namespace, so a snippet lifted out
   of a file resolves the way the file does. OCaml has no such thing, and a
   session evaluating code from a project file sees none of that file's opens.
-  Merlin could supply them and `eval` could prepend them. The real impedance
-  mismatch of the three, and the least lazy item here.
+  Merlin supplies dune's `-open` through `dump-configuration` and both opens
+  were measured to work in a loaded session, so it is lazier than it first
+  looked. The real impedance mismatch of the three.
 
 - **The inspector.** Declined. The most-used feature in both CIDER and SLY,
   and it does not transfer: it exists because a Lisp value carries its own
