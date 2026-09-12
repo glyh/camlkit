@@ -164,6 +164,13 @@ must evaluate it first. Tests are Alcotest.
   cursor and a module path narrows it to modules alone; merlin's failures are
   strings that read like docstrings, so the sentinel set is decoded into an
   error field; odoc markup is passed through unrendered.
+- [Stopping inside a running phrase](tickets/033-breakpoints-are-an-effect.md)
+  — a breakpoint here would be an effect handler around a phrase, keeping the
+  continuation and leaving the session alive, not a debugger: the debug
+  protocol has no command that runs code, ocamldebug cannot apply a function,
+  earlybird has no evaluate at all and did not complete a handshake here, and
+  the runtime patch that would fix all of it is a compiler fork. Nothing built;
+  the four limits of the effect design are measured in the ticket.
 - [Trust boundary](tickets/012-trust-boundary.md) — trusted local developer
   tool, deliberately not sandboxed; stdio implies a local parent and that
   assumption is load-bearing.
@@ -252,11 +259,11 @@ it is also where `dune top` came from.
   WebSocket and SSE as missing. Out of scope here for the reason in the trust
   boundary ticket: stdio implies a local parent, and that assumption is what
   makes running unsandboxed acceptable.
-- **Tracing a function.** `#trace` is the one directive whose absence costs a
-  capability rather than a redundancy, see
-  [Toplevel directives are not part of the tool surface](tickets/029-directives-are-not-the-surface.md).
-  Whether an agent wants a call trace at all is the open part; the machinery
-  for it already exists.
+- **Tracing a function, and stopping in one.** No longer fog, see
+  [Stopping inside a running phrase](tickets/033-breakpoints-are-an-effect.md):
+  `#trace` shows the boundary and never the interior, the debuggers cannot
+  evaluate, and a breakpoint here would be an effect handler rather than
+  either. Nothing is built; what is open is whether an agent ever asks for it.
 - **Resource limits beyond time and heap.** Both are now bounded, see
   [A ceiling on a phrase's heap](tickets/030-heap-ceiling.md). File
   descriptors, subprocesses and disk are not, and a phrase can still spawn
