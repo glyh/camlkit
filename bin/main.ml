@@ -72,6 +72,42 @@ let is_source_query = function
   | "locate" | "type_at" | "outline" | "uses" | "search_type" -> true
   | _ -> false
 
+(* Also session-less, but it asks the switch rather than merlin: what an
+   installed package holds, read from its interfaces without loading it. *)
+let signature_call id args =
+  match arg_string args "path" with
+  | Error e -> reply id (Render.infrastructure_failure e)
+  | Ok path ->
+    let given = match Yojson.Safe.Util.member "package" args with
+      | `String p -> Some p | _ -> None in
+    let package = Option.value given ~default:(Signature.package_of path) in
+    (* A package or a path that is not there is a negative answer, not the
+       server failing at its own job, so it is not isError. *)
+    let content, fields = match Signature.show ~package ~path with
+      | Ok signature ->
+        (signature, [ "signature", `String signature ])
+      | Error e ->
+        (* The guess is right for most packages and wrong for the rest, and
+           the caller cannot tell which without being told. *)
+        ((match given with
+          | Some _ -> e
+          | None ->
+            Printf.sprintf
+              "%s\n\nThe package was guessed from the path. Name it \
+               explicitly if it is not %s." e package),
+         [ "error", `String e ])
+    in
+    (* In the structure too, not only in the text: a caller acting on the
+       fields alone has to be able to tell a package that is absent from a
+       guess that was wrong, and retrying with an explicit package is the
+       whole difference. *)
+    let fields = match given with
+      | Some _ -> fields
+      | None -> ("guessed", `Bool true) :: fields in
+    reply id { Render.content;
+               structured = `Assoc (("package", `String package) :: fields);
+               is_error = false }
+
 let source_query id name args =
   let ( let* ) = Result.bind in
   let requested_limit =
@@ -261,7 +297,8 @@ let handle_call id params =
     | `String s -> s | _ -> "" in
   let args = match Yojson.Safe.Util.member "arguments" params with
     | `Assoc _ as a -> a | _ -> `Assoc [] in
-  if is_source_query name then source_query id name args else
+  if is_source_query name then source_query id name args
+  else if name = "signature" then signature_call id args else
   match arg_string args "session" with
   | Error e -> reply id (Render.infrastructure_failure e)
   | Ok session_name ->

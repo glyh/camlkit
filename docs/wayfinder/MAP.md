@@ -154,6 +154,10 @@ must evaluate it first. Tests are Alcotest.
   same call, so a preamble goes back atomically. Nothing is stored: a session
   carrying a preamble would make "empty" conditional and put an init file back
   under another name.
+- [Module signatures without loading](tickets/026-signatures-without-loading.md)
+  — the `signature` tool: findlib's recursive directories on a throwaway
+  toplevel's search path and `#show`, so an installed package's signature can
+  be read without linking it; local rungs only, no network.
 - [Trust boundary](tickets/012-trust-boundary.md) — trusted local developer
   tool, deliberately not sandboxed; stdio implies a local parent and that
   assumption is load-bearing.
@@ -195,7 +199,9 @@ it is also where `dune top` came from.
 - **Documentation lookup.** Reading odoc or docstrings for a value. merlin
   has a `document` command; whether that is worth a tool is unclear. Jump to
   source is no longer fog, see
-  [Merlin-backed source queries](tickets/027-merlin-source-queries.md).
+  [Merlin-backed source queries](tickets/027-merlin-source-queries.md), and
+  neither is reading an uninstalled-in-the-session signature, see
+  [Module signatures without loading](tickets/026-signatures-without-loading.md).
 
 - **A project as a tree of modules rather than files.** From ocaml-mcp's
   TODO, and the most interesting idea in it: an agent working on an OCaml

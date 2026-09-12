@@ -257,6 +257,42 @@ let search_type_tool =
         ("limit", `Assoc [ "type", `String "integer" ]) ];
     "outputSchema", obj [ ("results", `Assoc [ "type", `String "array" ]) ] ]
 
+let signature_tool =
+  `Assoc [
+    "name", `String "signature";
+    "description", `String
+      "Show the signature of a module, value or type in an installed findlib \
+       package, without loading it. Answers from the package's compiled \
+       interfaces, so no session is needed, nothing is linked and none of the \
+       package's code runs. Use describe instead for what a session already \
+       has, and for modules defined during the session.";
+    "inputSchema", obj ~required:[ "path" ]
+      [ ("path", `Assoc [ "type", `String "string";
+                          "description", `String "A module path such as \
+                            Lwt.Infix, or a value such as Lwt.bind." ]);
+        ("package", `Assoc [ "type", `String "string";
+                             "description", `String "The findlib package \
+                               holding it, such as lwt.unix. Omit when the \
+                               package is named after the first component of \
+                               the path, which is the usual case." ]) ];
+    "outputSchema", obj
+      [ ("signature", `Assoc [ "type", `String "string";
+                               "description", `String "What the toplevel \
+                                 prints for the path, as #show would." ]);
+        ("package", `Assoc [ "type", `String "string";
+                             "description", `String "The package that was \
+                               searched, guessed or given." ]);
+        ("guessed", `Assoc [ "type", `String "boolean";
+                             "description", `String "True when the package \
+                               was guessed from the path rather than given. \
+                               A failure with this set is worth retrying with \
+                               the package named; one without it is not." ]);
+        ("error", `Assoc [ "type", `String "string";
+                           "description", `String "Present instead of \
+                             signature when the package or the path was not \
+                             found." ]) ] ]
+
 let all =
   [ eval_tool; describe_tool; require_tool; load_tool; reset_tool;
-    locate_tool; type_at_tool; outline_tool; uses_tool; search_type_tool ]
+    locate_tool; type_at_tool; outline_tool; uses_tool; search_type_tool;
+    signature_tool ]

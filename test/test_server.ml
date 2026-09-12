@@ -99,14 +99,14 @@ let test_tools_listed () =
                       |> List.map (fun t -> member "name" t |> to_string)) in
   Alcotest.(check (slist string compare)) "the tools"
     [ "describe"; "eval"; "load"; "locate"; "outline"; "require";
-      "reset"; "search_type"; "type_at"; "uses" ] names;
+      "reset"; "search_type"; "signature"; "type_at"; "uses" ] names;
   let schemas =
     Yojson.Safe.Util.(member "tools" r |> to_list
                       |> List.filter (fun t -> member "outputSchema" t <> `Null)
                       |> List.map (fun t -> member "name" t |> to_string)) in
   Alcotest.(check (slist string compare)) "every tool declares an output schema"
     [ "describe"; "eval"; "load"; "locate"; "outline"; "require";
-      "reset"; "search_type"; "type_at"; "uses" ] schemas
+      "reset"; "search_type"; "signature"; "type_at"; "uses" ] schemas
 
 let test_eval_through_the_loop () =
   with_server @@ fun c ->
@@ -585,6 +585,41 @@ let test_search_type_fills_its_limit () =
          (List.length got) (List.length distinct))
     [ 3; 8 ]
 
+(* A signature read from an installed package's interfaces: no session, and
+   nothing of the package is loaded or run. yojson because this server links
+   it, so it is installed wherever the tests run. *)
+let test_signature_without_a_session () =
+  with_server @@ fun c ->
+  let r = call c ~id:1 ~tool:"signature"
+      ~args:(`Assoc [ "path", `String "Yojson.Safe.to_string" ]) in
+  Alcotest.(check bool) "not an error" false (is_error r);
+  Alcotest.(check bool) "the value's type" true (has "?buf:Buffer.t" (text r));
+  let structured = Yojson.Safe.Util.member "structuredContent" r in
+  Alcotest.(check string) "the package it guessed" "yojson"
+    Yojson.Safe.Util.(member "package" structured |> to_string)
+
+(* A package that is not installed is a negative answer, not the server
+   failing at its own job, so it says so in a field rather than as isError. *)
+let test_signature_of_an_unknown_package () =
+  with_server @@ fun c ->
+  let r = call c ~id:1 ~tool:"signature"
+      ~args:(`Assoc [ "path", `String "Nope.Thing" ]) in
+  Alcotest.(check bool) "not isError" false (is_error r);
+  let structured = Yojson.Safe.Util.member "structuredContent" r in
+  Alcotest.(check bool) "an error field, no signature" true
+    (Yojson.Safe.Util.member "error" structured <> `Null
+     && Yojson.Safe.Util.member "signature" structured = `Null);
+  (* The retry that would fix it is naming the package, and only a guess says
+     so: the fields alone have to carry that, not just the text. *)
+  Alcotest.(check bool) "the structure says the package was a guess" true
+    (Yojson.Safe.Util.member "guessed" structured = `Bool true);
+  let named = call c ~id:2 ~tool:"signature"
+      ~args:(`Assoc [ "path", `String "Yojson.Safe.to_string";
+                      "package", `String "yojson" ]) in
+  Alcotest.(check bool) "a package that was given is not a guess" true
+    Yojson.Safe.Util.(member "structuredContent" named |> member "guessed"
+                      |> (=) `Null)
+
 let test_source_query_on_a_missing_file () =
   with_server @@ fun c ->
   let r = call c ~id:1 ~tool:"outline"
@@ -662,7 +697,11 @@ let () =
          Alcotest.test_case "enclosings are not repeated" `Slow
            test_enclosings_are_not_repeated;
          Alcotest.test_case "search_type fills its limit" `Slow
-           test_search_type_fills_its_limit ]);
+           test_search_type_fills_its_limit;
+         Alcotest.test_case "signature without a session" `Slow
+           test_signature_without_a_session;
+         Alcotest.test_case "signature of an unknown package" `Slow
+           test_signature_of_an_unknown_package ]);
       ("lifetime",
        [ Alcotest.test_case "a killed server takes its workers with it" `Slow
            test_a_killed_server_takes_its_workers_with_it ]);
