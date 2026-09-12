@@ -7,6 +7,9 @@ assignee: lyh
 
 # Stopping inside a running phrase
 
+> **The marker now requires a name: `[%break "name"]`.** See
+> [One point, several behaviours](049-one-point-several-behaviours.md).
+
 ## Question
 
 [Toplevel directives are not part of the tool surface](029-directives-are-not-the-surface.md)

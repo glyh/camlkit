@@ -1019,7 +1019,17 @@ let test_watch_records_without_stopping () =
   (* A watch without a name is refused, and says what the form is. *)
   let r = ev "let bad = [%watch (1 + 1)];;" in
   Alcotest.(check bool) "an unnamed watch is refused" true
-    (has "A watch is written" (text r))
+    (has "A watch is written" (text r));
+  (* inspect carries the whole trail, which a result deliberately does not:
+     an eval reports only what its own phrase recorded. Nothing is parked
+     here, and that is not an error when there is something watched. *)
+  ignore (call c ~id:3 ~tool:"markers"
+            ~args:(`Assoc [ "session", session;
+                            "arm", `List [ `String "doubled" ] ]));
+  ignore (ev "g [100];;");
+  let r = call c ~id:4 ~tool:"inspect" ~args:(`Assoc [ "session", session ]) in
+  Alcotest.(check bool) "the trail outlives the phrase that recorded it" true
+    (has "2" (text r) && has "14" (text r) && has "200" (text r))
 
 (* A marker is compiled into the code holding it, so it fires whenever that
    code runs and nothing removes it. Disarming is what stopping one means, and

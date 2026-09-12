@@ -176,6 +176,18 @@ must evaluate it first. Tests are Alcotest.
   cursor and a module path narrows it to modules alone; merlin's failures are
   strings that read like docstrings, so the sentinel set is decoded into an
   error field; odoc markup is passed through unrendered.
+- [One point, several behaviours](tickets/049-one-point-several-behaviours.md)
+  — **done, and the factoring it proposed was declined.** Stickers are built,
+  as `[%watch "name" expr]`, but as a second marker rather than as a behaviour
+  on the first: a break replaces an expression in unit position and types as
+  unit, a watch wraps one and returns its value, so the rewrites cannot be
+  shared. What is shared is the registry, the naming, the disarm flag and a
+  location-matching walk over the typed tree - fifteen lines. Every marker is
+  named now, which makes a bare `[%break]` a compile error, because a marker
+  compiles into the code holding it and fires whenever that code runs: measured,
+  and the reason a marker in a hot function was a trap. The `markers` tool lists
+  them, disarms them and arms them again. A result carries what its own phrase
+  recorded; `inspect` carries the whole trail.
 - [Breakpoints in a session](tickets/035-breakpoints.md) — `[%break]` parks a
   phrase as a continuation and binds the locals in scope under `bp_` names, so
   the session stays usable while the rest of the phrase waits; `continue` and
@@ -451,7 +463,9 @@ here as the `_N` implicit names. Conjure has nothing architectural to take: it
 is a thin editor client and its log buffer is the transcript an agent's
 conversation already is, which History below declined.
 
-- **Stickers.** From `sly-stickers`, and the best fit of anything surveyed. A
+- **Stickers.** No longer fog: built as `[%watch "name" expr]`, see
+  [One point, several behaviours](tickets/049-one-point-several-behaviours.md).
+  The entry below is the survey that proposed them, kept for its reasoning. A
   marked expression records the value that flowed through it on every hit and
   the phrase runs to completion; sly keeps a hit count, the recorded values,
   and whether the site exited non-locally instead of returning. Against

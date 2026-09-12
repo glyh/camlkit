@@ -7,8 +7,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 An MCP server, written in OCaml, that gives an MCP client live OCaml
 toplevels. A bytecode worker process owns the toplevel over
 `compiler-libs.toplevel`; the native server supervises one worker per named
-session and speaks MCP over stdio. Seventeen tools: `eval`, `describe`, `require`,
-`load`, `reset`, `continue`, `inspect` (session state), `locate`, `type_at`,
+session and speaks MCP over stdio. Eighteen tools: `eval`, `describe`, `require`,
+`load`, `reset`, `continue`, `inspect` (session state), `markers` (the
+breakpoints and watches a session knows), `locate`, `type_at`,
 `outline`, `uses`, `search_type`, `document`, `expand` (what a ppx generated at
 a position), `diagnostics` (errors for one file, or for an edit not yet
 written), `context` (the opens that put a
@@ -146,12 +147,20 @@ wrong.
 **Sessions are hermetic.** `~/.config/utop/init.ml` is not loaded. Three
 reserved names are injected, for breakpoints; see ticket 035.
 
-**A phrase can stop in the middle.** `[%break]` in evaluated code performs an
-effect, the handler around the phrase keeps the continuation, and evaluation
-returns to the request loop, so the session stays usable while the rest of the
-phrase waits as a value. Locals in scope are bound under `bp_` names. The
-`continue` and `inspect` tools drive it. The worker is still sequential:
-nothing is blocked, a parked phrase is a value in a table.
+**A phrase can stop in the middle.** `[%break "name"]` in evaluated code
+performs an effect, the handler around the phrase keeps the continuation, and
+evaluation returns to the request loop, so the session stays usable while the
+rest of the phrase waits as a value. Locals in scope are bound under `bp_`
+names. The `continue` and `inspect` tools drive it. The worker is still
+sequential: nothing is blocked, a parked phrase is a value in a table.
+
+**A phrase can also be watched without stopping.** `[%watch "name" expr]`
+records every value flowing through the expression and returns it, which is the
+complement of a stop rather than a variant of it: a break replaces an expression
+in unit position, a watch wraps one and gives its value back. Both are named,
+because a marker compiles into the code holding it and keeps firing whenever
+that code runs; `markers` lists them and disarms them, which is the only way to
+stop one short of redefining its function. See ticket 049.
 
 Prefer stability over linking: merlin is shelled out to in single mode rather
 than linked, and the reasoning is a long comment at the top of

@@ -789,10 +789,36 @@ let continue_ cap ~id ~abandon =
    reachable after a later one overwrote the names, and rendering is done by
    rebinding each name to itself, so the value is printed by the session's own
    printers rather than by a second rendering path here. *)
+(* Every watch's whole trail, rather than one phrase's slice of it. The site
+   keeps at most trail_limit values, oldest dropped first, so a long-lived
+   watch answers with its recent history and its lifetime count. *)
+let trails () =
+  List.filter_map
+    (fun (s : Breakpoint.site) ->
+       match s.Breakpoint.kind with
+       | Breakpoint.Break -> None
+       | Breakpoint.Watch ->
+         Some Msg.{ site = s.Breakpoint.site_name;
+                    site_hits = s.Breakpoint.hits;
+                    values = Watch.printed s s.Breakpoint.trail })
+    (Breakpoint.known ())
+
 let inspect cap ~id =
   Capture.reset cap;
   match resolve id with
-  | Error why -> Msg.Rejected why
+  (* A session with no parked phrase is not an error when there are watches to
+     read: inspect is the tool for looking at what a marker gathered, and a
+     watch gathers without ever parking. *)
+  | Error why ->
+    (match trails () with
+     | [] -> Msg.Rejected why
+     | ws ->
+       Msg.Completed
+         { phrases =
+             [ Msg.{ rendering = ""; warnings = ""; out_start = 0;
+                     out_len = 0; dropped = 0; ran = None; cost = None;
+                     watched = ws } ];
+           autorun = Not_an_eval; checked = false })
   | Ok p ->
     let bound, skipped = bind_locals p.Breakpoint.locals in
     let buf = Buffer.create 256 in
@@ -812,7 +838,7 @@ let inspect cap ~id =
     let record =
       Msg.{ rendering = Buffer.contents buf; warnings = "";
             out_start = 0; out_len = Capture.mark cap;
-            dropped = 0; ran = None; cost = None; watched = [] }
+            dropped = 0; ran = None; cost = None; watched = trails () }
     in
     Msg.Stopped { id = p.Breakpoint.id; name = p.Breakpoint.name;
                   phrase_index = -1; bound; skipped; done_ = [ record ] }

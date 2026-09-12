@@ -1,8 +1,8 @@
 ---
-status: open
+status: resolved
 type: research
 blocked-by: [035]
-assignee:
+assignee: lyh
 ---
 
 # One point, several behaviours
@@ -128,3 +128,27 @@ which is the machinery this design avoids.
 `OnceBehavior` have no counterpart on this surface and are not built. `once` is
 the common case and is currently a condition the caller writes plus a disarm it
 remembers - which the `markers` tool at least makes possible.
+
+## Built
+
+`[%break "name"]` and `[%watch "name" expr]`, a registry both share, and the
+`markers` tool. Checked end to end in the server suite by "a watch records
+without stopping" and "markers list and disarm".
+
+What the two share turned out to be the registry, the naming, the disarm flag
+and a location-matching walk over the typed tree. That is fifteen lines, which
+is the measurement this ticket's factoring argument needed and did not have.
+
+The pieces that only a watch needed: a wrapping rewrite that binds the value
+once and returns it, a type stashed from the site's typed node, and printing
+through `Toploop.print_value` when the result is built rather than in generated
+code. A phrase that failed to type therefore reports a count and no values,
+rather than guessing at a printer.
+
+The cutoff works as the map predicted: a loop recording the same value five
+times keeps one entry and counts five hits. Above that a fixed cap of 100
+bounds each site's trail.
+
+Two windows, both used: an eval result carries what its own phrase recorded,
+`inspect` carries the whole trail, and `inspect` no longer requires a parked
+phrase when there is something watched.

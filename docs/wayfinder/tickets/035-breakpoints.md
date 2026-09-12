@@ -7,6 +7,13 @@ assignee: lyh
 
 # Breakpoints in a session
 
+> **The marker now requires a name: `[%break "name"]`.** Every example below
+> shows the old bare form, which is a compile error today. The reasoning is in
+> [One point, several behaviours](049-one-point-several-behaviours.md): a name
+> is what the `markers` tool disarms by, and a marker compiles into the code
+> holding it, so without a way to turn it off a marker in a hot function is a
+> trap. Nothing else in this ticket changed.
+
 ## Question
 
 [Stopping inside a running phrase](033-breakpoints-are-an-effect.md) decided

@@ -292,10 +292,13 @@ let inspect_tool =
   `Assoc [
     "name", `String "inspect";
     "description", `String
-      "Show the locals of a parked phrase and bind them again under their \
-       bp_ names. A stop already binds them, so this is for reading them once \
-       more, and for getting an earlier stop's values back after a later stop \
-       overwrote the names. It does not resume anything.";
+      "Show what the markers have gathered, without resuming anything. The \
+       locals of a parked phrase, bound again under their bp_ names, which is \
+       how an earlier stop's values are recovered after a later stop \
+       overwrote them. And every watch's whole trail, which is what a result \
+       does not carry: an eval reports only what its own phrase recorded, \
+       while this reports the recent history of each site. Works with nothing \
+       parked, as long as something has been watched.";
     "inputSchema", obj [ session_arg; id_arg ];
     "outputSchema", obj
       [ ("id", `Assoc [ "type", `String "integer" ]);
