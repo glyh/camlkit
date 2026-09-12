@@ -223,8 +223,12 @@ it is also where `dune top` came from.
   worth anything if exploration turns out to be limited by not knowing what
   exists rather than by not being able to load it.
 
-- **Formatting.** ocamlformat as a tool, as ocaml-mcp exposes. Probably
-  belongs to whatever writes files, which is not this.
+- **Formatting.** Declined. ocamlformat as a tool, as ocaml-mcp exposes, but
+  formatting belongs to whatever writes the file and this server never writes
+  one. A caller that edits already reaches ocamlformat through its shell, the
+  way it reaches dune since the build tool was removed, see
+  [Building the project from a tool](tickets/025-build-from-a-tool.md). Same
+  reasoning, same answer.
 
 - **File tools with OCaml awareness.** ocaml-mcp wraps read, write and edit
   with merlin diagnostics and formatting, plus a rule forbidding an edit to a
@@ -254,8 +258,9 @@ it is also where `dune top` came from.
   [A ceiling on a phrase's heap](tickets/030-heap-ceiling.md). File
   descriptors, subprocesses and disk are not, and a phrase can still spawn
   something the worker's death would not reap.
-- **History.** utop's protocol exposes history navigation and
-  `save-history`. Unclear whether an agent client wants any of it.
+- **History.** Declined. utop's history serves a human recalling a line to
+  retype it; an agent has the conversation for that, and what a session holds
+  is its bindings rather than a list of what was typed. Nothing would read it.
 - **Publishing.** Installing and client registration are done. What remains
   is whether this is worth releasing to opam, and what a version-1 promise
   about the tool surface would be.
