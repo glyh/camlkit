@@ -75,9 +75,31 @@ phrase in the session would fail. The check is precise: the phrase was
 rewritten by autorun and carries a marker. See
 [Should Lwt and Async expressions auto-run](019-lwt-async-auto-run.md).
 
+**A marker fires wherever the code it is in runs, including a later call.** A
+closure carrying one escaped its phrase without stopping, and stopped when it
+was called two calls later, with the closure's own local bound. The handler is
+per phrase, so the stop belongs to whichever phrase is running, not to the one
+that compiled it.
+
 **Abandon raises, so cleanups run.** `Effect.Deep.discontinue` raises inside
 the parked phrase, which is what makes a `Fun.protect` release what it holds.
 Measured: the finaliser printed before the exception was reported.
+
+**Abandon is cooperative, not forced.** It raises, so a phrase that catches
+everything survives it: `try [%break]; "ran" with _ -> "caught"` returned
+"caught" rather than being abandoned. That is the honest behaviour of raising
+inside a computation and is worth knowing before relying on abandon to stop
+something.
+
+**Three messages a caller has to act on were rewritten after testing them.** A
+marker with a payload, or in structure-item position, is refused before typing
+with the form it should have taken, rather than left to the compiler's
+"uninterpreted extension". A `continue` in a session with nothing parked says
+so plainly instead of asking which one. And a marker reached in a frame the
+runtime entered, measured with a signal handler, reports the boundary in a
+sentence rather than as
+`Effect.Unhandled(Dune__exe__Breakpoint.Stop(0))`; the session survives it,
+since it is a phrase failure and not a death.
 
 ## How it works, and what had to be got right
 

@@ -96,7 +96,17 @@ let local_hook name ty value = pending := { name; ty; value } :: !pending
 let hook () : unit =
   let locals = List.rev !pending in
   pending := [];
-  Effect.perform (Stop locals)
+  (* An effect cannot be performed in a frame the runtime entered: a signal
+     handler, or a callback arriving from C. The raw Unhandled exception names
+     this worker's internals and tells a caller nothing, so it is turned into
+     a sentence here, at the only place that knows what was being attempted. *)
+  try Effect.perform (Stop locals)
+  with Effect.Unhandled _ ->
+    failwith
+      "a breakpoint was reached in a frame the runtime entered, such as a \
+       signal handler or a callback from C, where an effect cannot be \
+       performed. The phrase failed instead of stopping. Put the breakpoint \
+       in code the phrase itself calls."
 
 (* --- the rewrite ------------------------------------------------------- *)
 
@@ -106,6 +116,31 @@ let is_marker (e : Parsetree.expression) =
   match e.pexp_desc with
   | Parsetree.Pexp_extension ({ txt = "break"; _ }, Parsetree.PStr []) -> true
   | _ -> false
+
+(* A break extension that is not a bare [%break] expression: one with a
+   payload, or one in structure-item position. The compiler calls it an
+   uninterpreted extension, which is true and does not say what the right
+   form is. *)
+let malformed_marker str =
+  let found = ref None in
+  let note loc = if !found = None then found := Some loc in
+  let iter =
+    { Ast_iterator.default_iterator with
+      expr = (fun self (e : Parsetree.expression) ->
+          (match e.pexp_desc with
+           | Parsetree.Pexp_extension ({ txt = "break"; _ }, payload)
+             when payload <> Parsetree.PStr [] -> note e.pexp_loc
+           | _ -> ());
+          Ast_iterator.default_iterator.expr self e);
+      structure_item = (fun self (i : Parsetree.structure_item) ->
+          (match i.pstr_desc with
+           | Parsetree.Pstr_extension (({ txt = "break"; _ }, _), _) ->
+             note i.pstr_loc
+           | _ -> ());
+          Ast_iterator.default_iterator.structure_item self i) }
+  in
+  iter.Ast_iterator.structure iter str;
+  !found
 
 let ghost loc = { loc with Location.loc_ghost = true }
 

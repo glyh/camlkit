@@ -421,6 +421,20 @@ let eval cap ?autorun src =
   match parse src with
   | Error f -> Msg.Failed f
   | Ok phrases ->
+    match
+      List.filter_map
+        (function
+          | Parsetree.Ptop_def str -> Breakpoint.malformed_marker str
+          | Parsetree.Ptop_dir _ -> None)
+        phrases
+    with
+    | _ :: _ ->
+      Msg.Rejected
+        "A breakpoint is written [%break], with no payload, where an \
+         expression belongs. As a structure item ([%%break]) or with a \
+         payload it is not a breakpoint, and the compiler reports it as an \
+         uninterpreted extension."
+    | [] ->
     match reject_directives phrases with
     | Some d ->
       (* Not "use the tool for it": most directives have no tool and are not
@@ -522,19 +536,18 @@ let resolve id =
       Printf.sprintf "parked: %s"
         (String.concat ", " (List.map string_of_int ids))
   in
-  match id with
-  | Some id ->
+  match Breakpoint.ids (), id with
+  | [], _ -> Error "no phrase is parked in this session"
+  | _, Some id ->
     (match Breakpoint.find id with
      | Some p -> Ok p
      | None ->
        Error (Printf.sprintf "no phrase is parked with id %d. %s" id (listing ())))
-  | None ->
+  | _, None ->
     match Breakpoint.the_only_one () with
     | Some id -> Ok (Option.get (Breakpoint.find id))
     | None ->
-      Error
-        (Printf.sprintf
-           "which parked phrase? Give an id: %s" (listing ()))
+      Error (Printf.sprintf "which parked phrase? Give an id. %s" (listing ()))
 
 (* The rest of a resumed phrase prints into the buffers the original call
    handed execute_phrase, which are inside the continuation and cannot be

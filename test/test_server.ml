@@ -731,6 +731,42 @@ let test_a_breakpoint_under_autorun_is_refused () =
     (has "autorun will run as a promise" (text r));
   Alcotest.(check bool) "and nothing ran" true (has "Nothing was executed" (text r))
 
+(* A marker that is not a bare expression is not a breakpoint. The compiler
+   would call it an uninterpreted extension, which does not say what the right
+   form is, so it is refused before typing with a message that does. *)
+let test_a_malformed_marker_says_the_right_form () =
+  with_server @@ fun c ->
+  let refused code =
+    let r = call c ~id:1 ~tool:"eval"
+        ~args:(`Assoc [ "session", `String "bp8"; "code", `String code ]) in
+    has "written [%break]" (text r)
+  in
+  Alcotest.(check bool) "a payload is refused" true (refused "[%break 1];;");
+  Alcotest.(check bool) "a structure item is refused" true
+    (refused "module M = struct [%%break] end;;")
+
+(* An effect cannot be performed in a frame the runtime entered. The raw
+   Unhandled exception names the worker's internals and tells a caller
+   nothing, so the hook turns it into a sentence. *)
+let test_a_breakpoint_the_runtime_cannot_reach_says_so () =
+  with_server @@ fun c ->
+  let args code = `Assoc [ "session", `String "bp9"; "code", `String code ] in
+  ignore (call c ~id:1 ~tool:"require"
+            ~args:(`Assoc [ "session", `String "bp9";
+                            "packages", `List [ `String "unix" ] ]));
+  ignore (call c ~id:2 ~tool:"eval"
+            ~args:(args "Sys.set_signal Sys.sigusr1 \
+                         (Sys.Signal_handle (fun _ -> [%break]));;"));
+  let r = call c ~id:3 ~tool:"eval"
+      ~args:(args "Unix.kill (Unix.getpid ()) Sys.sigusr1;\n\
+                   for _ = 1 to 1_000_000 do ignore (Sys.opaque_identity 1) done;\n\
+                   \"survived\";;") in
+  Alcotest.(check bool) "it explains the boundary" true
+    (has "a frame the runtime entered" (text r));
+  (* The session is still usable: this is a phrase failure, not a death. *)
+  let r = call c ~id:4 ~tool:"eval" ~args:(args "1 + 1;;") in
+  Alcotest.(check bool) "and the session survives" true (has "2" (text r))
+
 (* Documentation by name rather than by position. Merlin infers the namespace
    to search from the node under the cursor even when the name is given, so a
    position inside a module path would answer "Not in environment" about a
@@ -876,7 +912,11 @@ let () =
          Alcotest.test_case "two parked phrases need an id" `Slow
            test_two_parked_phrases_need_an_id;
          Alcotest.test_case "a breakpoint under autorun is refused" `Slow
-           test_a_breakpoint_under_autorun_is_refused ]);
+           test_a_breakpoint_under_autorun_is_refused;
+         Alcotest.test_case "a malformed marker says the right form" `Slow
+           test_a_malformed_marker_says_the_right_form;
+         Alcotest.test_case "a breakpoint the runtime cannot reach says so" `Slow
+           test_a_breakpoint_the_runtime_cannot_reach_says_so ]);
       ("source",
        [ Alcotest.test_case "outline" `Slow test_outline;
          Alcotest.test_case "type at a position" `Slow test_type_at;
