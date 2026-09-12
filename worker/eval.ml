@@ -294,6 +294,16 @@ let bind_locals (locals : Breakpoint.local list) =
     (fun (l : Breakpoint.local) ->
        let name = "bp_" ^ l.Breakpoint.name in
        let src = Printf.sprintf "let %s : %s = Obj.magic 0;;" name l.Breakpoint.ty in
+       if Breakpoint.has_type_variable l.Breakpoint.ty then
+         skipped :=
+           (l.Breakpoint.name,
+            Printf.sprintf
+              "its type at the stop is %s, which still has a type variable in \
+               it. Binding it would let a later phrase pick any type for a \
+               value that has one, and the toplevel would then read it \
+               wrongly." l.Breakpoint.ty)
+           :: !skipped
+       else
        match Toplevel.parse src with
        | Error (message, _, _) -> skipped := (l.Breakpoint.name, message) :: !skipped
        | Ok phrases ->

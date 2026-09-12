@@ -208,6 +208,26 @@ let print_type ty =
   Format.pp_print_flush ppf ();
   Buffer.contents b
 
+(* A local whose type still has a variable in it cannot be handed back: the
+   declaration that binds it would generalise, so a later phrase could pick
+   any type it liked for a value that already has one, and the toplevel would
+   read it at that type. That segfaults, which is how this was found.
+
+   A variable is a quote that does not follow an identifier character, so a
+   type named t' is not mistaken for one. *)
+let has_type_variable ty =
+  let n = String.length ty in
+  let rec go i =
+    if i >= n then false
+    else if ty.[i] <> '\'' then go (i + 1)
+    else
+      let previous = if i = 0 then ' ' else ty.[i - 1] in
+      match previous with
+      | 'a' .. 'z' | 'A' .. 'Z' | '0' .. '9' | '_' | '\'' -> go (i + 1)
+      | _ -> true
+  in
+  go 0
+
 let is_bindable name =
   name <> "" && name.[0] <> '_'
   && (match name.[0] with 'a' .. 'z' -> true | _ -> false)

@@ -34,6 +34,16 @@ existential or a weak variable simply fails to compile and the failure is the
 answer. Measured on `let f (type a) (x : a) (y : int)`, which binds `bp_y` and
 skips `x` with "Unbound type constructor a".
 
+**A local whose type still holds a type variable is skipped too, and this one
+was found the hard way.** Binding it declares a name of that type, which
+generalises, so a later phrase could pick any type at all for a value that
+already has one. `String.length (bp_x : string)` where `bp_x` was an int bound
+at `'a` segfaulted the worker. It is skipped now, with the reason naming the
+type. The instantiated type is genuinely unknown at the stop, because a
+generic function is typed once and instantiated at its call sites, so there is
+nothing better to bind it at. This is the same wall `#trace` hits when it
+prints `<poly>`, reached from the other side.
+
 **Parked phrases live in a table keyed by an id**, and the id may be omitted
 when a session holds exactly one, which is the ordinary case. Two stops are
 independent phrases, neither continuation contains the other, so refusing the

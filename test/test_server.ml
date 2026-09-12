@@ -644,6 +644,32 @@ let test_a_local_that_cannot_be_bound_is_named () =
          Yojson.Safe.Util.(member "name" s |> to_string) = "x"
          && Yojson.Safe.Util.(member "reason" s |> to_string) <> "") skipped)
 
+(* Binding a local at a polymorphic type would let a later phrase choose any
+   type for a value that already has one, and the toplevel then reads it at
+   that type. Found by segfaulting a worker with String.length (bp_x : string)
+   where bp_x was an int bound at 'a. *)
+let test_a_polymorphic_local_is_not_bound () =
+  with_server @@ fun c ->
+  let r = call c ~id:1 ~tool:"eval"
+      ~args:(`Assoc [ "session", `String "bp6";
+                      "code", `String
+                        "let f x =\n  let n = String.length \"ab\" in\n  \
+                         [%break];\n  (x, n)\nin f 42;;" ]) in
+  let structured = Yojson.Safe.Util.member "structuredContent" r in
+  let named key =
+    Yojson.Safe.Util.(member key structured |> to_list
+                      |> List.map (fun e -> member "name" e |> to_string)) in
+  Alcotest.(check bool) "the monomorphic local is bound" true
+    (List.mem "bp_n" (named "bound"));
+  Alcotest.(check bool) "the polymorphic one is skipped, not bound" true
+    (List.mem "x" (named "skipped") && not (List.mem "bp_x" (named "bound")));
+  (* The hole, closed: this must not typecheck. *)
+  let r = call c ~id:2 ~tool:"eval"
+      ~args:(`Assoc [ "session", `String "bp6";
+                      "code", `String "String.length (bp_x : string);;" ]) in
+  Alcotest.(check bool) "and the name does not exist" true
+    (has "Unbound value bp_x" (text r))
+
 (* Abandoning raises inside the phrase rather than resuming it, so the rest
    does not run but anything it set up to release still is. *)
 let test_abandon_runs_the_cleanup () =
@@ -822,6 +848,8 @@ let () =
            test_a_phrase_stops_and_resumes;
          Alcotest.test_case "a local that cannot be bound is named" `Slow
            test_a_local_that_cannot_be_bound_is_named;
+         Alcotest.test_case "a polymorphic local is not bound" `Slow
+           test_a_polymorphic_local_is_not_bound;
          Alcotest.test_case "abandon runs the cleanup" `Slow
            test_abandon_runs_the_cleanup;
          Alcotest.test_case "two parked phrases need an id" `Slow
