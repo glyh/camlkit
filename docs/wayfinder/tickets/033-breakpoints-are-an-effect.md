@@ -69,14 +69,33 @@ Locals are in scope by construction because we compile the code that performs
 the effect, so nothing is copied, mutation is visible, identity holds, and the
 session's own printers render everything, including a project's.
 
-**Four limits, each measured rather than assumed.** A prebuilt dependency
-cannot be instrumented, so no breakpoint reaches inside one. A caller's locals
-are not reachable: the continuation is not a stack walk, and
-`Printexc.get_callstack` gives the chain without the values. Continuations are
+**Three limits, each measured rather than assumed.** A prebuilt dependency
+cannot be instrumented, so no breakpoint reaches inside one. Continuations are
 one-shot, so there is no going back; only forking the worker would give that.
 And an effect does not cross a frame the runtime entered: performing one from
 a signal handler raised `Unhandled` even with the handler installed in the
 enclosing scope.
+
+**A caller's locals are reachable after all, through a shadow stack.** The
+continuation is not a stack walk and `Printexc.get_callstack` gives the chain
+without the values, so this looked like a fourth limit. It is not: since we
+compile the code, instrumentation can push a frame on entry carrying the
+function's name and its variables as thunks, and pop on return. The handler
+snapshots that list at the stop, and the list is immutable, so it survives
+suspension and resumption. Measured: stopped three frames deep, the snapshot
+read `[("advance", ["cursor = 2"]); ("lex", ["input = let x = 1"; "start =
+0"]); ("parse", ["source = let x = 1"])]`. The thunks mean a call costs a
+closure rather than a rendered string, and nothing is formatted unless it is
+looked at.
+
+The ceiling is tail calls: popping after the call makes every instrumented
+call non-tail, so a tail-recursive function under instrumentation goes from
+constant space to linear, in the real stack and in the shadow stack both. That
+is why a debug mode has to be opt-in per phrase rather than a session setting.
+The rest of the cost is that captured thunks hold values alive while a frame
+is live, and that a raise which skips the pop leaves the stack drifting until
+something resynchronises it. What is shown is a reconstruction: an
+uninstrumented frame in the middle is a silent hole rather than an error.
 
 **Debugger integration is declined.** Not because it is redundant, because it
 is a different tool that already exists. What it adds over the effect design
