@@ -196,6 +196,48 @@ let attempt ?(add_dirs = true) archive =
   | Some e, "" -> Error e
   | Some e, said -> Error (said ^ " (" ^ e ^ ")")
 
+(* A bytecode archive carries the compiler's magic in its first bytes, and the
+   toplevel refuses one from another compiler with "is not a bytecode object
+   file" - a sentence that names neither version and reads as a corrupt file
+   rather than the wrong switch. Worse, it arrives once per archive, so a
+   project of thirty libraries reports it thirty times with no cause in any of
+   them.
+
+   The worker is bytecode, so it can only ever load archives its own compiler
+   produced. One archive decides the tree, since a build tree is built by one
+   compiler. See docs/wayfinder/tickets/044. *)
+let magic_of archive =
+  let want = String.length Config.cma_magic_number in
+  match open_in_bin archive with
+  | exception Sys_error _ -> None
+  | ic ->
+    let got =
+      match really_input_string ic want with
+      | s -> Some s
+      | exception End_of_file -> None
+    in
+    close_in_noerr ic; got
+
+(* The message when the first archive was built by another compiler, and None
+   when it was not - which includes an archive too short or unreadable to say,
+   since that is a broken file and [attempt] reports it better than a guess
+   about switches would. *)
+let foreign_build archives =
+  match archives with
+  | [] -> None
+  | first :: _ ->
+    match magic_of first with
+    | Some m when m <> Config.cma_magic_number ->
+      Some
+        (Printf.sprintf
+           "%s was built by a different OCaml than this worker, so nothing \
+            under it can be loaded. This worker is bytecode from OCaml %s, and \
+            bytecode only loads archives its own compiler produced. Rebuild \
+            the project in that switch, or point CAMLKIT_WORKER at a worker \
+            built in the project's."
+           first Config.version)
+    | _ -> None
+
 (* What the dune route concluded. [Scan] is the one case that falls through to
    walking the build tree: a directory that is not a dune project, where there
    is nothing to ask and nothing but archives to look at. Every other outcome
@@ -251,7 +293,11 @@ let load_via_dune ~libraries path =
             | names -> String.concat ", " names))
     | [] ->
     if archives = [] then Nothing_to_do
-    else begin
+    else
+    match foreign_build archives with
+    | Some why -> Refuse why
+    | None ->
+    begin
       List.iter (fun d -> Topdirs.dir_directory d) dirs;
       (* dune's order is already correct, so load once through, in order. *)
       let loaded, failed =
@@ -281,6 +327,8 @@ let load ~libraries path =
     | [] ->
       Error (Printf.sprintf "no .cma archives under %s; has the project been \
                              built for bytecode?" root)
+    | found when foreign_build found <> None ->
+      Error (Option.get (foreign_build found))
     | found ->
       let rec pass remaining loaded errors =
         let failed, loaded =

@@ -232,6 +232,16 @@ must evaluate it first. Tests are Alcotest.
   and `OPAM_SWITCH_PREFIX` only: `CAML_LD_LIBRARY_PATH` stays untouched so
   ticket 028's `Dll.add_path` decision stands. `CAMLKIT_SWITCH` overrides,
   soundly only for a switch of the same OCaml version.
+- [A tree built by another compiler](tickets/044-a-tree-built-by-another-compiler.md)
+  — **fixed.** The worker is bytecode and loads only archives its own compiler
+  produced, and a tree from another one reported "is not a bytecode object
+  file", once per archive, naming no version and no cause. Twelve bytes against
+  `Config.cma_magic_number` now decide it, once per load, reported as the
+  load's own failure since nothing in such a tree can load. The ticket's own
+  measurement was wrong - it named 5.4.0 and `Caml1999A036` from a probe
+  compiled outside the worker's switch, which is 5.3.0 and `Caml1999A035` - and
+  the correction is kept there, because it cost a debugging detour and is the
+  same mistake ticket 039 is about.
 - [A built index is not a populated one](tickets/046-a-built-index-is-not-a-populated-one.md)
   — **fixed.** `uses` trusted the exit status of `dune build @ocaml-index`, and
   a zero exit is not an index with occurrences in it: the data it is built from
