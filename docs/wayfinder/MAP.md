@@ -212,6 +212,11 @@ must evaluate it first. Tests are Alcotest.
   archive the worker already contains is now skipped, and `require` stopped
   reloading them too. Bisected, not guessed; checked by a script, because dune
   will not run inside dune.
+- [Evaluating in a file's context](tickets/036-a-file-s-context.md) — the
+  `context` tool: dune's `-open` asked of merlin, the file's own opens, and the
+  file's own module last, returned as a preamble to evaluate rather than
+  applied per call. An open is session state already, and prepending to the
+  caller's source would shift every span.
 - [Testing strategy](tickets/013-testing-strategy.md) — one tier, integration
   tests spawn a real worker and the real server in the default `dune test`.
 
@@ -355,16 +360,6 @@ conversation already is, which History below declined.
   error spans at real file lines; `outline` already knows the ranges. Against
   it: a second way to say what `eval` says, on a surface that is fourteen
   tools already.
-
-- **The namespace an evaluation happens in.** Specified in
-  [Evaluating in a file's context](tickets/036-a-file-s-context.md), open.
-  Both CIDER's ns and SLY's
-  `set-package` evaluate inside an ambient namespace, so a snippet lifted out
-  of a file resolves the way the file does. OCaml has no such thing, and a
-  session evaluating code from a project file sees none of that file's opens.
-  Merlin supplies dune's `-open` through `dump-configuration` and both opens
-  were measured to work in a loaded session, so it is lazier than it first
-  looked. The real impedance mismatch of the three.
 
 - **The inspector.** Declined. The most-used feature in both CIDER and SLY,
   and it does not transfer: it exists because a Lisp value carries its own

@@ -111,6 +111,32 @@ let signature_call id args =
                structured = `Assoc (("package", `String package) :: fields);
                is_error = false }
 
+(* Session-less like the rest, but the answer is code rather than a report:
+   the caller evaluates it, or hands it to reset. See ticket 036. *)
+let context_call id args =
+  match arg_string args "file" with
+  | Error e -> reply id (Render.infrastructure_failure e)
+  | Ok file ->
+    match Context.of_file ~file with
+    (* A file merlin cannot read or configure is a negative answer about that
+       file, not this server failing at its own job. *)
+    | Error e ->
+      reply id { Render.content = e; structured = `Assoc [ "error", `String e ];
+                 is_error = false }
+    | Ok [] ->
+      let said =
+        "no opens: the file has none of its own and belongs to no wrapped \
+         library, so a session needs nothing to read it the way the file \
+         does." in
+      reply id { Render.content = said; structured = `Assoc [ "opens", `List [] ];
+                 is_error = false }
+    | Ok opens ->
+      reply id
+        { Render.content = Context.code opens;
+          structured =
+            `Assoc [ "opens", `List (List.map (fun m -> `String m) opens) ];
+          is_error = false }
+
 let source_query id name args =
   let ( let* ) = Result.bind in
   let requested_limit =
@@ -348,7 +374,8 @@ let handle_call id params =
   let args = match Yojson.Safe.Util.member "arguments" params with
     | `Assoc _ as a -> a | _ -> `Assoc [] in
   if is_source_query name then source_query id name args
-  else if name = "signature" then signature_call id args else
+  else if name = "signature" then signature_call id args
+  else if name = "context" then context_call id args else
   (* A name is a handle, and most callers want one session. Defaulting it
      means a one-off evaluation needs no invented name; a caller that wants
      two independent toplevels still says so. *)

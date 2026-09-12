@@ -269,6 +269,25 @@ let outline_tool =
     "inputSchema", obj ~required:[ "file" ] [ file_arg ];
     "outputSchema", obj [ ("items", `Assoc [ "type", `String "array" ]) ] ]
 
+let context_tool =
+  `Assoc [
+    "name", `String "context";
+    "description", `String
+      "The opens that put a session in a source file's context, so a fragment \
+       lifted out of that file resolves the way the file does. Evaluate the \
+       code this returns once, or pass it to reset, and later calls in the \
+       session keep it: an open is ordinary session state. Answers from \
+       source and needs no session, but the modules it names only exist in a \
+       session that has loaded the project. A file that belongs to no wrapped \
+       library gets only its own opens, because a session cannot name that \
+       file's module.";
+    "inputSchema", obj ~required:[ "file" ] [ file_arg ];
+    "outputSchema", obj
+      [ ("opens", `Assoc [ "type", `String "array";
+                           "items", `Assoc [ "type", `String "string" ];
+                           "description", `String "The module paths, in the \
+                             order they must be opened." ]) ] ]
+
 let uses_tool =
   `Assoc [
     "name", `String "uses";
@@ -375,4 +394,4 @@ let all =
   [ eval_tool; describe_tool; require_tool; load_tool; reset_tool;
     continue_tool; inspect_tool;
     locate_tool; type_at_tool; outline_tool; uses_tool; search_type_tool;
-    document_tool; signature_tool ]
+    document_tool; signature_tool; context_tool ]

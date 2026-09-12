@@ -22,9 +22,19 @@ loaded = call(1, "load", {"session": "s", "path": project})
 # Toploop left the worker dead on the next phrase.
 after = call(2, "eval", {"session": "s", "code": "Location.none;;"})
 
+# The wrapper half of `context`, which needs a dune project and so cannot be
+# reached from dune test either: dune passes -open for a wrapped library, and
+# that open is the one a reader cannot guess.
+render = os.path.join(project, "lib", "render.ml")
+opens = call(3, "context", {"file": render})
+in_context = call(4, "eval", {"session": "s", "code": opens + "\ninfrastructure_failure;;"})
+
 print("load said     :", loaded)
 print("next phrase   :", after, "(expect a Warnings.loc value)")
-ok = "ocamltoplevel" not in loaded and "loc_ghost" in after
+print("context said  :", opens.replace("\n", " "))
+print("in context    :", in_context, "(expect a function, not Unbound value)")
+ok = ("ocamltoplevel" not in loaded and "loc_ghost" in after
+      and "open Camlkit.Render;;" in opens and "Unbound" not in in_context)
 print("PASS" if ok else "FAIL")
 try: p.terminate(); p.wait(timeout=5)
 except Exception: p.kill()

@@ -98,17 +98,17 @@ let test_tools_listed () =
     Yojson.Safe.Util.(member "tools" r |> to_list
                       |> List.map (fun t -> member "name" t |> to_string)) in
   Alcotest.(check (slist string compare)) "the tools"
-    [ "continue"; "describe"; "document"; "eval"; "inspect"; "load"; "locate";
-      "outline"; "require"; "reset"; "search_type"; "signature"; "type_at";
-      "uses" ] names;
+    [ "context"; "continue"; "describe"; "document"; "eval"; "inspect"; "load";
+      "locate"; "outline"; "require"; "reset"; "search_type"; "signature";
+      "type_at"; "uses" ] names;
   let schemas =
     Yojson.Safe.Util.(member "tools" r |> to_list
                       |> List.filter (fun t -> member "outputSchema" t <> `Null)
                       |> List.map (fun t -> member "name" t |> to_string)) in
   Alcotest.(check (slist string compare)) "every tool declares an output schema"
-    [ "continue"; "describe"; "document"; "eval"; "inspect"; "load"; "locate";
-      "outline"; "require"; "reset"; "search_type"; "signature"; "type_at";
-      "uses" ] schemas
+    [ "context"; "continue"; "describe"; "document"; "eval"; "inspect"; "load";
+      "locate"; "outline"; "require"; "reset"; "search_type"; "signature";
+      "type_at"; "uses" ] schemas
 
 let test_eval_through_the_loop () =
   with_server @@ fun c ->
@@ -534,6 +534,53 @@ let with_source f =
         (try Sys.remove path with Sys_error _ -> ());
         (try Unix.rmdir dir with Unix.Unix_error _ -> ()))
     (fun () -> f path)
+
+(* The opens that put a session in a file's context. A standalone file has no
+   wrapped library, so what this reaches is the file's own opens and the
+   decision not to offer a module a session could not name; the wrapper half
+   needs a dune project and lives in scripts/load-check.py. *)
+let with_opens f =
+  let dir = Filename.temp_dir "camlkit-ctx" "" in
+  let path = Filename.concat dir "widget.ml" in
+  let oc = open_out path in
+  output_string oc
+    "open Printf\n\
+     open! Buffer\n\
+     let shout s = String.uppercase_ascii s\n\
+     module Inner = struct\n\
+    \  open List\n\
+    \  let first = hd\n\
+     end\n";
+  close_out oc;
+  Fun.protect
+    ~finally:(fun () ->
+        (try Sys.remove path with Sys_error _ -> ());
+        (try Unix.rmdir dir with Unix.Unix_error _ -> ()))
+    (fun () -> f path)
+
+let test_context () =
+  with_server @@ fun c ->
+  with_opens @@ fun path ->
+  let r = call c ~id:1 ~tool:"context" ~args:(`Assoc [ "file", `String path ]) in
+  Alcotest.(check bool) "not an error" false (is_error r);
+  let opens =
+    Yojson.Safe.Util.(
+      r |> member "structuredContent" |> member "opens" |> to_list
+      |> List.map to_string)
+  in
+  Alcotest.(check (list string))
+    "the file's own opens, in order, and nothing nested or invented"
+    [ "Printf"; "Buffer" ] opens;
+  Alcotest.(check bool) "the text is code, ready to evaluate" true
+    (has "open Printf;;" (text r))
+
+let test_context_of_a_missing_file () =
+  with_server @@ fun c ->
+  let r = call c ~id:1 ~tool:"context"
+      ~args:(`Assoc [ "file", `String "/nope/nowhere.ml" ]) in
+  Alcotest.(check bool) "a negative answer, not the server failing" false
+    (is_error r);
+  Alcotest.(check bool) "and names the file" true (has "/nope/nowhere.ml" (text r))
 
 let test_outline () =
   with_server @@ fun c ->
@@ -1026,7 +1073,10 @@ let () =
          Alcotest.test_case "signature without a session" `Slow
            test_signature_without_a_session;
          Alcotest.test_case "signature of an unknown package" `Slow
-           test_signature_of_an_unknown_package ]);
+           test_signature_of_an_unknown_package;
+         Alcotest.test_case "context of a file" `Slow test_context;
+         Alcotest.test_case "context of a missing file" `Slow
+           test_context_of_a_missing_file ]);
       ("lifetime",
        [ Alcotest.test_case "a killed server takes its workers with it" `Slow
            test_a_killed_server_takes_its_workers_with_it ]);

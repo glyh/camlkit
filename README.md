@@ -123,7 +123,7 @@ an empty environment and `lwt.unix`.
 
 ## Using it
 
-Ten tools, in two groups.
+Fifteen tools, in two groups.
 
 A bare `Lwt` or `Async` expression is run rather than handed back as a
 promise, the way utop does it. `eval` takes an `autorun` list to change that
@@ -142,8 +142,10 @@ first use under whatever name you pick, and state persists between calls.
 
 **About source, with no session.** `locate` finds where a name is defined,
 `type_at` gives the type at a position, `outline` lists what a file defines,
-`uses` finds every occurrence, `search_type` finds values by their type.
-These need nothing built and nothing loaded.
+`uses` finds every occurrence, `search_type` finds values by their type, and
+`context` returns the opens that put a session in a file's context, so a
+fragment lifted out of that file resolves the way the file does. These need
+nothing built and nothing loaded.
 
 There is no build tool: build the project with `dune build` yourself, then:
 
@@ -201,8 +203,8 @@ echo '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"eval","arg
 
 ## Status
 
-Working end to end. All ten tools are served over MCP stdio, against
-real toplevels, one worker per session. 62 tests, of which 30 drive the
+Working end to end. All fifteen tools are served over MCP stdio, against
+real toplevels, one worker per session. 82 tests, of which 50 drive the
 server binary the way a client does.
 
 Sessions are created on first use under whatever name the caller picks. If
