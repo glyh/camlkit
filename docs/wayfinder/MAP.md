@@ -205,6 +205,13 @@ must evaluate it first. Tests are Alcotest.
   failure raises `Compenv.Exit_with_status`, which `require_packages` did not
   catch, so it ended the process instead of filling in `failed`; it now catches
   everything and carries the captured stderr back with it.
+- [Loading what the worker already is](tickets/038-loading-what-the-worker-already-is.md)
+  — **fixed.** `load` loaded the externals the worker is itself built from, and
+  replacing the live `Toploop` left the session dead on the next phrase, with
+  the death reported against that phrase rather than the load. An external
+  archive the worker already contains is now skipped, and `require` stopped
+  reloading them too. Bisected, not guessed; checked by a script, because dune
+  will not run inside dune.
 - [Testing strategy](tickets/013-testing-strategy.md) — one tier, integration
   tests spawn a real worker and the real server in the default `dune test`.
 

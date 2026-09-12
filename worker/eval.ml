@@ -89,7 +89,10 @@ let init () =
   (let stubs = Filename.concat (Findlib.default_location ()) "stublibs" in
    if Sys.file_exists stubs then Dll.add_path [ stubs ]);
   Topfind.add_predicates [ "byte" ];
-  Topfind.don't_load_deeply [ "compiler-libs.toplevel" ];
+  (* Everything the worker links, not just the toplevel: require of a package
+     already inside this binary would reload it, which is the same hazard the
+     loader guards against. *)
+  Topfind.don't_load_deeply Loader.linked_packages;
   (* utop sets this in common_init; it names the buffer in compiler messages. *)
   Location.input_name := Toplevel.input_name;
   install_break_hook ();

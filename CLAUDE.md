@@ -49,6 +49,12 @@ Cancellation is unreachable from the tool surface, so it has its own driver:
 python3 scripts/cancel-check.py "$(opam var bin)/camlkit" "$(opam var bin)/camlkit-worker"
 ```
 
+`load` is out of reach the same way, because dune refuses to run inside dune:
+
+```sh
+python3 scripts/load-check.py "$(opam var bin)/camlkit" "$(opam var bin)/camlkit-worker" .
+```
+
 ## Architecture
 
 Two processes, one shared codec library.

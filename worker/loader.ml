@@ -84,6 +84,41 @@ let archives ~libraries root =
 
 let name_of archive = Filename.remove_extension (Filename.basename archive)
 
+(* Archives the worker already contains.
+
+   `dune top` names every external a project depends on, including the ones
+   this worker is itself built from, and loading one again re-initialises
+   modules the running toplevel is made of. Measured: loading the compiler-libs
+   archives over the live Toploop leaves the worker dead on the next phrase,
+   so a project that depends on compiler-libs could be loaded but not used.
+
+   The list is the worker's own libraries, kept beside worker/dune. Archive
+   names are not written out: findlib expands each package to its ancestors
+   and reads their byte archives, so compiler-libs.toplevel brings ocamlcommon
+   and ocamlbytecomp with it without anyone naming them. *)
+let linked_packages =
+  [ "compiler-libs.toplevel"; "findlib.top"; "unix"; "str"; "yojson" ]
+
+let linked_archives = lazy (
+  let packages =
+    try Findlib.package_deep_ancestors [ "byte" ] linked_packages
+    with _ -> linked_packages in
+  List.concat_map
+    (fun p ->
+       match Findlib.package_property [ "byte" ] p "archive" with
+       | exception _ -> []
+       | archives ->
+         String.split_on_char ' ' archives
+         |> List.filter_map (fun a ->
+             match String.trim a with "" -> None | a -> Some (name_of a)))
+    packages)
+
+(* Only an archive from outside the project: a project may well have a library
+   of its own called str, and that one has to load. *)
+let already_linked ~root archive =
+  not (String.starts_with ~prefix:root archive)
+  && List.mem (name_of archive) (Lazy.force linked_archives)
+
 (* dune puts a library's .cmi files in .<name>.objs/byte beside its archive. *)
 let interface_dirs archive =
   let dir = Filename.dirname archive in
@@ -153,6 +188,7 @@ let load_via_dune ~libraries path =
       | [] -> archives
       | wanted -> List.filter (fun a -> List.mem (name_of a) wanted) archives
     in
+    let archives = List.filter (fun a -> not (already_linked ~root:path a)) archives in
     if archives = [] then None
     else begin
       List.iter (fun d -> Topdirs.dir_directory d) dirs;
