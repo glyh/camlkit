@@ -642,6 +642,26 @@ let load cap ~libraries ~packages path =
   | Error e -> fail_result e
   | Ok (loaded, failed) -> Msg.Loaded { loaded; failed }
 
+(* Listing and disarming. A marker cannot be removed, since it is compiled into
+   the code holding it, so disarming is a flag the hook reads. Arming back is
+   the same path: without it the only way to re-enable a marker would be to
+   redefine its function, which is the trap disarming exists to avoid.
+   See docs/wayfinder/tickets/049. *)
+let markers ~disarm ~arm =
+  let unknown =
+    List.filter (fun n -> not (Breakpoint.disarm n)) disarm
+    @ List.filter (fun n -> not (Breakpoint.arm n)) arm
+  in
+  let of_site (s : Breakpoint.site) =
+    Msg.{ marker = s.Breakpoint.site_name;
+          marker_kind =
+            (match s.Breakpoint.kind with Breakpoint.Break -> "break");
+          armed = s.Breakpoint.armed;
+          hits = s.Breakpoint.hits }
+  in
+  Msg.Markers_listed { markers = List.map of_site (Breakpoint.known ());
+                       unknown }
+
 (* --- parked phrases ----------------------------------------------------- *)
 
 let resolve id =

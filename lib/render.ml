@@ -240,6 +240,36 @@ let of_response (response : Msg.response) payload =
                | [] -> []
                | ps -> [ ("phrases", `List (List.map (json_phrase payload) ps)) ]));
       is_error = false }
+  | Msg.Markers_listed { markers; unknown } ->
+    let line (m : Msg.marker) =
+      Printf.sprintf "  %-20s %-6s %s, %d hit%s" m.Msg.marker m.Msg.marker_kind
+        (if m.Msg.armed then "armed" else "disarmed") m.Msg.hits
+        (if m.Msg.hits = 1 then "" else "s")
+    in
+    let body = match markers with
+      | [] -> "no markers in this session"
+      | ms -> String.concat "\n" (List.map line ms)
+    in
+    let note = match unknown with
+      | [] -> ""
+      | ns ->
+        Printf.sprintf "\n\nthis session has never seen: %s"
+          (String.concat ", " ns)
+    in
+    { content = body ^ note;
+      structured =
+        `Assoc
+          (("markers",
+            `List (List.map (fun (m : Msg.marker) ->
+                `Assoc [ ("name", `String m.Msg.marker);
+                         ("kind", `String m.Msg.marker_kind);
+                         ("armed", `Bool m.Msg.armed);
+                         ("hits", `Int m.Msg.hits) ]) markers))
+           :: (match unknown with
+               | [] -> []
+               | ns -> [ ("unknown",
+                          `List (List.map (fun n -> `String n) ns)) ]));
+      is_error = false }
   | Msg.Rejected why ->
     { content = why;
       structured = `Assoc [ "status", `String "rejected"; "reason", `String why ];

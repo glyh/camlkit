@@ -119,6 +119,46 @@ let eval_tool =
 let phrase_array =
   `Assoc [ "type", `String "array"; "items", phrase_schema ]
 
+(* A marker is compiled into the code holding it, so it fires whenever that
+   code runs and nothing can remove it short of redefining the function. This
+   is what stops one: a flag the marker reads when it is reached. See
+   docs/wayfinder/tickets/049. *)
+let markers_tool =
+  `Assoc [
+    "name", `String "markers";
+    "description", `String
+      "The breakpoints and watches this session knows: each one's name, \
+       whether it is armed, and how many times it has been reached in its \
+       lifetime. Pass disarm to turn one off and arm to turn it back on. A \
+       marker cannot be removed, because it is compiled into the code that \
+       holds it, so a marker in a function you call often keeps firing until \
+       you disarm it or redefine the function. Disarming a marker and then \
+       re-evaluating its definition leaves it disarmed.";
+    "inputSchema", obj
+      [ session_arg;
+        ("disarm", `Assoc
+           [ "type", `String "array";
+             "items", `Assoc [ "type", `String "string" ];
+             "description", `String
+               "Names to turn off. A disarmed marker is still reached and \
+                does nothing." ]);
+        ("arm", `Assoc
+           [ "type", `String "array";
+             "items", `Assoc [ "type", `String "string" ];
+             "description", `String "Names to turn back on." ]) ];
+    "outputSchema", obj
+      [ ("markers", `Assoc
+           [ "type", `String "array";
+             "description", `String
+               "Each with name, kind, armed and hits. hits is the site's \
+                lifetime count, not this call's." ]);
+        ("unknown", `Assoc
+           [ "type", `String "array";
+             "items", `Assoc [ "type", `String "string" ];
+             "description", `String
+               "Names passed to disarm or arm that this session has never \
+                seen, so a typo is not silent. Absent when there are none." ]) ] ]
+
 let describe_tool =
   `Assoc [
     "name", `String "describe";
@@ -505,5 +545,5 @@ let all =
   [ eval_tool; describe_tool; require_tool; load_tool; reset_tool;
     continue_tool; inspect_tool;
     locate_tool; type_at_tool; outline_tool; uses_tool; search_type_tool;
-    expand_tool; diagnostics_tool;
+    expand_tool; diagnostics_tool; markers_tool;
     document_tool; signature_tool; context_tool ]

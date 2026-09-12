@@ -99,16 +99,16 @@ let test_tools_listed () =
                       |> List.map (fun t -> member "name" t |> to_string)) in
   Alcotest.(check (slist string compare)) "the tools"
     [ "context"; "continue"; "describe"; "diagnostics"; "document"; "eval";
-      "expand"; "inspect"; "load"; "locate"; "outline"; "require"; "reset";
-      "search_type"; "signature"; "type_at"; "uses" ] names;
+      "expand"; "inspect"; "load"; "locate"; "markers"; "outline"; "require";
+      "reset"; "search_type"; "signature"; "type_at"; "uses" ] names;
   let schemas =
     Yojson.Safe.Util.(member "tools" r |> to_list
                       |> List.filter (fun t -> member "outputSchema" t <> `Null)
                       |> List.map (fun t -> member "name" t |> to_string)) in
   Alcotest.(check (slist string compare)) "every tool declares an output schema"
     [ "context"; "continue"; "describe"; "diagnostics"; "document"; "eval";
-      "expand"; "inspect"; "load"; "locate"; "outline"; "require"; "reset";
-      "search_type"; "signature"; "type_at"; "uses" ] schemas
+      "expand"; "inspect"; "load"; "locate"; "markers"; "outline"; "require";
+      "reset"; "search_type"; "signature"; "type_at"; "uses" ] schemas
 
 let test_eval_through_the_loop () =
   with_server @@ fun c ->
@@ -951,6 +951,55 @@ let test_a_breakpoint_under_autorun_is_refused () =
     (has "autorun will run as a promise" (text r));
   Alcotest.(check bool) "and nothing ran" true (has "Nothing was executed" (text r))
 
+(* A marker is compiled into the code holding it, so it fires whenever that
+   code runs and nothing removes it. Disarming is what stopping one means, and
+   it exists because a marker in a function you call often is otherwise a trap.
+   See docs/wayfinder/tickets/049. *)
+let test_markers_list_and_disarm () =
+  with_server @@ fun c ->
+  let session = `String "mk" in
+  let ev code = ignore (call c ~id:1 ~tool:"eval"
+                          ~args:(`Assoc [ "session", session;
+                                          "code", `String code ])) in
+  let stopped code =
+    let r = call c ~id:1 ~tool:"eval"
+        ~args:(`Assoc [ "session", session; "code", `String code ]) in
+    Yojson.Safe.Util.(member "structuredContent" r |> member "status")
+    = `String "stopped"
+  in
+  let markers ?(args = []) () =
+    call c ~id:2 ~tool:"markers" ~args:(`Assoc (("session", session) :: args))
+  in
+  let site r =
+    match Yojson.Safe.Util.(member "structuredContent" r |> member "markers") with
+    | `List [ m ] -> m
+    | _ -> Alcotest.fail "expected exactly one marker"
+  in
+  let field r k = Yojson.Safe.Util.member k (site r) in
+  ev "let f x = let d = x * 2 in [%break \"loop\"]; d;;";
+  (* Listed before it has ever fired, so a caller can disarm a marker it has
+     just defined without first running the code that reaches it. *)
+  let r = markers () in
+  Alcotest.(check bool) "listed before firing" true
+    (field r "name" = `String "loop" && field r "kind" = `String "break"
+     && field r "armed" = `Bool true && field r "hits" = `Int 0);
+  Alcotest.(check bool) "and it stops when armed" true (stopped "f 21;;");
+  let r = markers ~args:[ "disarm", `List [ `String "loop" ] ] () in
+  Alcotest.(check bool) "disarmed, with the hit still counted" true
+    (field r "armed" = `Bool false && field r "hits" = `Int 1);
+  (* Still reached, and does nothing. *)
+  Alcotest.(check bool) "a disarmed marker does not stop" false
+    (stopped "f 21;;");
+  let r = markers () in
+  Alcotest.(check bool) "but is still counted" true (field r "hits" = `Int 2);
+  let r = markers ~args:[ "arm", `List [ `String "loop" ] ] () in
+  Alcotest.(check bool) "armed again" true (field r "armed" = `Bool true);
+  (* A name nobody has defined is said, rather than silently doing nothing. *)
+  let r = markers ~args:[ "disarm", `List [ `String "nosuch" ] ] () in
+  Alcotest.(check bool) "an unknown name is reported" true
+    (Yojson.Safe.Util.(member "structuredContent" r |> member "unknown")
+     = `List [ `String "nosuch" ])
+
 (* A marker that is not [%break "name"] is not a breakpoint. The compiler would
    call it an uninterpreted extension, which does not say what the right form
    is, so it is refused before typing with a message that does. The name is
@@ -1156,6 +1205,8 @@ let () =
            test_two_parked_phrases_need_an_id;
          Alcotest.test_case "a breakpoint under autorun is refused" `Slow
            test_a_breakpoint_under_autorun_is_refused;
+         Alcotest.test_case "markers list and disarm" `Slow
+           test_markers_list_and_disarm;
          Alcotest.test_case "a malformed marker says the right form" `Slow
            test_a_malformed_marker_says_the_right_form;
          Alcotest.test_case "a breakpoint the runtime cannot reach says so" `Slow

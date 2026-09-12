@@ -25,6 +25,10 @@ type request =
      because looking is not resuming, and a later stop's bindings overwrite an
      earlier one's. *)
   | Inspect of { id : int option }
+  (* List every marker the session knows, and arm or disarm by name. A marker
+     cannot be removed - it is compiled into the code holding it - so disarming
+     is what "destroy" means here. See docs/wayfinder/tickets/049. *)
+  | Markers of { disarm : string list; arm : string list }
   | Load of { path : string; libraries : string list;
               (* findlib packages to load first. A reset empties the session,
                  including anything it had required, and a project's libraries
@@ -71,6 +75,16 @@ type phrase = {
   cost : cost option;
 }
 
+(* One marker, as the markers tool reports it. [hits] is the site's lifetime
+   count, not this call's: "this has fired 4000 times" is what a caller wants
+   before reading any values. *)
+type marker = {
+  marker : string;
+  marker_kind : string;          (* "break" or "watch" *)
+  armed : bool;
+  hits : int;
+}
+
 type phase = Parse | Typecheck | Execute
 
 type failure = {
@@ -115,6 +129,10 @@ type response =
                  bound : binding list;
                  skipped : (string * string) list;
                  done_ : phrase list }
+  | Markers_listed of { markers : marker list;
+                        (* Names asked for that the session has never seen. A
+                           typo in a disarm is otherwise silent. *)
+                        unknown : string list }
   | Rejected of string       (* e.g. a directive sent to eval *)
 let string_of_phase = function
   | Parse -> "parse" | Typecheck -> "typecheck" | Execute -> "execute"

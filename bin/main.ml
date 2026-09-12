@@ -412,6 +412,14 @@ let request_of_call name args =
     let id = match Yojson.Safe.Util.member "id" args with
       | `Int i -> Some i | _ -> None in
     Ok (Msg.Inspect { id })
+  | "markers" ->
+    let names key =
+      match Yojson.Safe.Util.member key args with
+      | `List l -> List.filter_map (function `String s -> Some s | _ -> None) l
+      | `String s -> [ s ]
+      | _ -> []
+    in
+    Ok (Msg.Markers { disarm = names "disarm"; arm = names "arm" })
   | "require" -> Result.map (fun p -> Msg.Require p) (arg_strings args "packages")
   | "load" -> assert false                       (* handled before we get here *)
   | "reset" -> assert false                      (* handled before we get here *)
@@ -565,7 +573,7 @@ let handle_call id params =
       (match request with
        | Msg.Require ps -> remember_required session_name ps
        | Msg.Eval _ | Msg.Describe _ | Msg.Load _
-       | Msg.Continue _ | Msg.Inspect _ -> ());
+       | Msg.Continue _ | Msg.Inspect _ | Msg.Markers _ -> ());
       match session_for session_name with
       | Error e -> reply id (Render.infrastructure_failure e)
       | Ok (s, note) ->

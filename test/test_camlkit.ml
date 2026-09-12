@@ -251,6 +251,7 @@ let phrases = function
   | Msg.Interrupted _ -> Alcotest.fail "expected success, got interrupt"
   | Msg.Loaded _ -> Alcotest.fail "expected phrase results, got a load result"
   | Msg.Stopped _ -> Alcotest.fail "expected success, got a breakpoint"
+  | Msg.Markers_listed _ -> Alcotest.fail "expected success, got a marker listing"
 
 let test_eval_and_state () =
   with_worker @@ fun s ->
