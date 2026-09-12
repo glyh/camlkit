@@ -37,7 +37,15 @@ let phrase_schema =
                  rather than returned. Absent when nothing was rewritten." ];
              "cost", `Assoc [ "type", `String "object";
                "description", `String "wall_ms and allocated_bytes for this \
-                 phrase. Present only when the call asked for it." ] ] ]
+                 phrase, present only when the call asked for them. Both \
+                 cover compiling, running and printing the phrase, not \
+                 running it alone: a phrase that does little is mostly this \
+                 floor, around 70 kB and a fraction of a millisecond, and one \
+                 that prints a large value is mostly the printing. Compare \
+                 two of these only when the work dwarfs that, which in \
+                 practice means a loop inside the phrase. wall_ms is a single \
+                 un-repeated run of bytecode and is not what a release build \
+                 would cost." ] ] ]
 
 let eval_tool =
   `Assoc [
