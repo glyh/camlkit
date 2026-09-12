@@ -183,3 +183,21 @@ documentation.
 stay a list of name and type, spans stay numbers, a failure still names its
 phase and phrase. The rule is that structure earns its bytes by being
 actionable, not by being present.
+
+**And the bindings went the same way.** The phrase record carried each name
+with its type beside a rendering that already said "val x : int = 42", so a
+caller was charged twice for one fact. `worker/outcome.ml` existed only to
+collect them, and its own header recorded that a kind field and a value field
+had already been removed for duplicating the rendering; the remaining half
+went for the same reason, and the module with it.
+
+The measurement, for a phrase binding an integer: 190 bytes of structure at
+the start of this, 110 after the empty fields went, 66 after the bindings did.
+A module definition, where the entry repeated the whole signature, fell
+furthest.
+
+What this costs: a caller wanting a phrase's type as a field must read it out
+of the transcript, which is one line rather than a parser. The principle that
+a caller should not have to regex a message still holds where there is no
+transcript to read: a breakpoint's locals keep their names and types as
+fields, because a stop prints nothing.

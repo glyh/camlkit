@@ -26,9 +26,10 @@ type request =
    "val x : int = 42"; program output lives in the raw segment at
    [out_start, out_start + out_len). These are different questions and the
    first worker prototype wrongly concatenated them. *)
-(* What a phrase bound, as data. The toplevel prints this as
-   "val f : int -> int = <fun>"; the type is the part a caller most often
-   wants and should not have to parse back out. *)
+(* A name and its type, as data. Used where there is no transcript to read it
+   out of: the locals a breakpoint binds. A phrase's own bindings are not
+   carried this way, because its rendering already says "val f : int -> int =
+   <fun>" and structure that restates readable text is not worth its bytes. *)
 type binding = {
   bound : string;       (* the name, or "" for a bare expression *)
   bound_type : string;  (* its type, or the whole declaration for a type or module *)
@@ -43,7 +44,6 @@ type phrase = {
      when all of it did. A count rather than a flag, so a caller knows whether
      it lost a line or a megabyte. *)
   dropped : int;
-  bindings : binding list;  (* what it bound, with types *)
   (* The autorun rule that rewrote this phrase, if one did. Without it the
      rewrite is invisible: a run promise and a plain value render the same way,
      and only the type hints that anything happened. *)
@@ -173,12 +173,10 @@ let binding_of_json j =
   { bound = member "name" j |> to_string;
     bound_type = member "type" j |> to_string }
 
-let json_of_phrase { rendering; warnings; out_start; out_len; dropped;
-                     bindings; ran } =
+let json_of_phrase { rendering; warnings; out_start; out_len; dropped; ran } =
   `Assoc ([ "rendering", `String rendering; "warnings", `String warnings;
             "out_start", `Int out_start; "out_len", `Int out_len;
-            "dropped", `Int dropped;
-            "bindings", `List (List.map json_of_binding bindings) ]
+            "dropped", `Int dropped ]
           @ (match ran with None -> [] | Some r -> [ "ran", `String r ]))
 
 let phrase_of_json j =
@@ -188,9 +186,6 @@ let phrase_of_json j =
     out_start = member "out_start" j |> to_int;
     out_len = member "out_len" j |> to_int;
     dropped = (match member "dropped" j with `Int n -> n | _ -> 0);
-    bindings = (match member "bindings" j with
-        | `List bs -> List.map binding_of_json bs
-        | _ -> []);
     ran = (match member "ran" j with `String r -> Some r | _ -> None) }
 
 let json_of_response = function

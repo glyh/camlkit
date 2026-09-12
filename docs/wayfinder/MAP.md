@@ -103,8 +103,9 @@ must evaluate it first. Tests are Alcotest.
   `lib/render.ml`, pure; per-phrase rendering, warnings, output and spans;
   `isError` only for the server failing at its own job. **Revised for token
   cost:** a field with nothing to say is absent, truncation is folded into the
-  output as a count of what was lost, and the autorun rules are reported only
-  when they were not the default.
+  output as a count of what was lost, the autorun rules are reported only when
+  they were not the default, and a phrase's bindings are gone because the
+  transcript beside them already said the same thing.
 - [Session lifecycle and the tool surface](tickets/006-tool-surface.md) — four
   tools, all with output schemas; sessions created on first use; a dead name is
   reusable and the first result after a restart says the toplevel is fresh.

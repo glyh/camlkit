@@ -194,8 +194,10 @@ let test_a_result_carries_only_what_it_has_to_say () =
   (* no session argument at all *)
   let r = call c ~id:1 ~tool:"eval"
       ~args:(`Assoc [ "code", `String "let x = 6 * 7;;" ]) in
+  (* The transcript alone: the names and types it bound are in it, so
+     carrying them again as fields was paying twice. *)
   Alcotest.(check (slist string compare)) "only what the phrase did"
-    [ "bindings"; "rendering" ] (keys (phrase r));
+    [ "rendering" ] (keys (phrase r));
   Alcotest.(check (slist string compare)) "and no default autorun"
     [ "status"; "phrases" ] (keys (structured r));
   (* the same session, unnamed again *)

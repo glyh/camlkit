@@ -92,7 +92,6 @@ let init () =
   Topfind.don't_load_deeply [ "compiler-libs.toplevel" ];
   (* utop sets this in common_init; it names the buffer in compiler messages. *)
   Location.input_name := Toplevel.input_name;
-  Outcome.install ();
   install_break_hook ();
   Printers.prime ();
   install_handler ()
@@ -365,8 +364,7 @@ let rec execute_from cap ~acc ~pos start phrases =
       let record = Msg.{ rendering = Buffer.contents buf;
                          warnings = Buffer.contents wbuf;
                          out_start = !pos; out_len = stop - !pos;
-                         dropped = 0; bindings = Outcome.take ();
-                         ran } in
+                         dropped = 0; ran } in
       pos := stop;
       acc := record :: !acc;
       match step with
@@ -498,7 +496,7 @@ let require_packages cap packages =
 let ok_result cap rendering =
   Msg.Completed { phrases = [ { rendering; warnings = ""; out_start = 0;
                                 out_len = Capture.mark cap; dropped = 0;
-                                bindings = []; ran = None } ];
+                                ran = None } ];
                   autorun = None }
 
 let fail_result message =
@@ -557,7 +555,7 @@ let record_of_parked cap (p : Breakpoint.parked) =
   in
   Msg.{ rendering; warnings = Buffer.contents p.Breakpoint.wbuf;
         out_start = 0; out_len = Capture.mark cap;
-        dropped = 0; bindings = Outcome.take (); ran = None }
+        dropped = 0; ran = None }
 
 let continue_ cap ~id ~abandon =
   Capture.reset cap;
@@ -623,11 +621,10 @@ let inspect cap ~id =
              phrases)
       bound;
     Format.pp_print_flush ppf ();
-    ignore (Outcome.take ());
     let record =
       Msg.{ rendering = Buffer.contents buf; warnings = "";
             out_start = 0; out_len = Capture.mark cap;
-            dropped = 0; bindings = bound; ran = None }
+            dropped = 0; ran = None }
     in
     Msg.Stopped { id = p.Breakpoint.id; phrase_index = -1; bound; skipped;
                   done_ = [ record ] }

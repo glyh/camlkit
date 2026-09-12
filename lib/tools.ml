@@ -21,14 +21,11 @@ let obj ?(required = []) props =
 let phrase_schema =
   `Assoc [ "type", `String "object";
            "properties", `Assoc [
-             "bindings", `Assoc [ "type", `String "array";
-               "description", `String "What the phrase bound, one entry per \
-                 name, each with its name and type. A module's type is its \
-                 signature. Empty for a phrase that bound nothing." ];
              "rendering", `Assoc [ "type", `String "string";
                "description", `String "What the toplevel printed about the \
-                 phrase, verbatim: bindings with their types and values, as a \
-                 utop transcript." ];
+                 phrase, verbatim: each name it bound with its type and its \
+                 value, as a utop transcript. This is where a phrase's \
+                 bindings are read." ];
              "warnings", `Assoc [ "type", `String "string" ];
              "output", `Assoc [ "type", `String "string";
                "description", `String "What the phrase printed. If it printed \

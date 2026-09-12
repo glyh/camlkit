@@ -36,10 +36,7 @@ let json_phrase payload (p : Msg.phrase) =
     else out
   in
   `Assoc
-    ((match p.bindings with
-       | [] -> []
-       | bs -> [ ("bindings", `List (List.map Msg.json_of_binding bs)) ])
-     @ field "rendering" p.rendering
+    (field "rendering" p.rendering
      @ field "warnings" p.warnings
      @ field "output" out
      @ (match p.ran with None -> [] | Some r -> [ ("ran", `String r) ]))
