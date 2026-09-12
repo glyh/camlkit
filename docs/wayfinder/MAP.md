@@ -83,8 +83,10 @@ must evaluate it first. Tests are Alcotest.
   race and stdin theft outright; supersedes the subprocess baseline. Neither
   server nor worker runs Eio or Lwt: the server is a `Unix.select` loop.
 - [Serialization format for worker IPC](tickets/017-serialization-benchmark.md)
-  — no serialization dependency; frame is JSON metadata plus a raw byte
-  segment, which measured faster than every library tested.
+  — no serialization dependency; frame is metadata plus a raw byte
+  segment, which measured faster than every library tested. **The metadata
+  half is superseded**: it was JSON, and the survey missed `Marshal` because
+  that is stdlib rather than a library. The raw segment stands.
 - [Protocol between server and worker](tickets/015-worker-ipc.md) — two-segment
   frames, per-phrase records with offsets, warnings split out via
   `Location.formatter_for_warnings`, and a two-pass evaluation so neither a
@@ -217,6 +219,12 @@ must evaluate it first. Tests are Alcotest.
   file's own module last, returned as a preamble to evaluate rather than
   applied per call. An open is session state already, and prepending to the
   caller's source would shift every span.
+- [Marshal instead of JSON metadata](tickets/043-marshal-for-worker-ipc.md)
+  — the metadata segment is a `Marshal`, not hand-written encoders, which took
+  167 lines out of `wire/msg.ml` and the yojson dependency out of `wire`. Not
+  for speed: the saving is microseconds against a process round trip. Marshal
+  casts blind, so the frame gained a magic and a build stamp and refuses a peer
+  built from other source instead of reading a pointer as an integer.
 - [Testing strategy](tickets/013-testing-strategy.md) — one tier, integration
   tests spawn a real worker and the real server in the default `dune test`.
 
@@ -304,16 +312,6 @@ it is also where `dune top` came from.
   `#trace` shows the boundary and never the interior, the debuggers cannot
   evaluate, and a breakpoint here would be an effect handler rather than
   either. Nothing is built; what is open is whether an agent ever asks for it.
-- **Marshal for the worker IPC.**
-  [Marshal instead of JSON metadata](tickets/043-marshal-for-worker-ipc.md),
-  open. Absent from ticket 017's survey because it is stdlib rather than a
-  library. Measured: it works across bytecode and native, is five to twelve
-  times faster at under a third the size, and the whole saving is microseconds
-  against a process round trip. What it would delete is about 168 lines of
-  hand-written codec; what it costs is that a mismatched binary reads silent
-  garbage instead of failing. The frame has no magic or version to guard that
-  with, which is worth fixing either way.
-
 - **Two features an agent would use, specified and open.**
   [Typecheck without running](tickets/041-typecheck-without-running.md), which
   the two-pass evaluation almost already does, and

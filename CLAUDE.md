@@ -73,9 +73,13 @@ worker is sequential so that `Lwt_main.run` still works inside evaluated
 code. **Nothing in the server may print to stdout** — that descriptor is the
 MCP channel; diagnostics go to stderr.
 
-A frame is two length-prefixed segments: JSON metadata, then raw bytes.
-Captured program output rides in the raw segment and is addressed by
-per-phrase offsets, so it is never JSON-escaped.
+A frame is a header and two length-prefixed segments: metadata, then raw
+bytes. The metadata is a `Marshal` of the request or response, which is why
+the header carries a stamp: Marshal casts blind, so a peer built from other
+source must be refused before its bytes are read. Bump `Frame.format_version`
+when the types in `wire/msg.ml` change shape. Captured program output rides in
+the raw segment and is addressed by per-phrase offsets, so it is never encoded
+at all.
 
 The worker is bytecode (`modes byte_complete`, `-linkall`) and the server is
 native. Bytecode is version-locked to the compiler, so a worker only loads

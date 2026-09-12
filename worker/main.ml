@@ -50,7 +50,7 @@ let () =
     | Some { Frame.meta; _ } ->
       watching ();
       let response =
-        match Msg.request_of_json meta with
+        match Msg.decode_request meta with
         | Msg.Eval { source; autorun } -> Eval.eval cap ?autorun source
         | Msg.Describe path -> Eval.describe cap path
         | Msg.Continue { id; abandon } -> Eval.continue_ cap ~id ~abandon
@@ -77,7 +77,7 @@ let () =
         | Msg.Failed f -> Msg.Failed { f with done_ = clamp f.done_ }
         | other -> other
       in
-      Frame_io.write oc { Frame.meta = Msg.json_of_response response; payload };
+      Frame_io.write oc { Frame.meta = Msg.encode_response response; payload };
       not_watching ();
       loop ()
   in

@@ -183,7 +183,11 @@ let of_response (response : Msg.response) payload =
           ([ ("status", `String "stopped"); ("id", `Int id) ]
            @ (match bound with
                | [] -> []
-               | bs -> [ ("bound", `List (List.map Msg.json_of_binding bs)) ])
+               | bs ->
+                 [ ("bound",
+                    `List (List.map (fun { Msg.bound; bound_type } ->
+                        `Assoc [ ("name", `String bound);
+                                 ("type", `String bound_type) ]) bs)) ])
            @ (match skipped with
                | [] -> []
                | ss ->

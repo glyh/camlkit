@@ -15,6 +15,12 @@ toplevel output, from a hundred bytes to megabytes, plus small metadata.
 
 ## Resolution
 
+**Superseded in part.** The two-segment frame stands and so does every number
+below. What does not is JSON for the metadata: `Marshal` was never in the
+survey, because the survey was of libraries and it is stdlib. See
+[Marshal instead of JSON metadata](043-marshal-for-worker-ipc.md).
+
+
 **Add no serialization dependency. Split the frame into two segments:**
 
 ```

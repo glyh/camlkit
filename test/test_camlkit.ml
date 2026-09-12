@@ -3,6 +3,10 @@ open Camlkit
 
 (* --- framing: pure, so no channels, pipes or temp files ---------------- *)
 
+let contains needle s =
+  let re = Str.regexp_string needle in
+  try ignore (Str.search_forward re s 0); true with Not_found -> false
+
 let roundtrip (f : Frame.t) =
   match Frame.parse (Frame.encode f) with
   | Frame.Complete (g, n) -> (g, n)
@@ -10,25 +14,24 @@ let roundtrip (f : Frame.t) =
   | Frame.Malformed m -> Alcotest.fail m
 
 let test_frame_roundtrip () =
-  let f = Frame.{ meta = `Assoc [ "kind", `String "eval" ];
+  let f = Frame.{ meta = "\000\001opaque metadata\xff";
                   payload = "line one\nline two\n\000binary\xff" } in
   let g, n = roundtrip f in
   Alcotest.(check string) "payload is byte-identical, newlines and all"
     f.Frame.payload g.Frame.payload;
-  Alcotest.(check string) "metadata survives"
-    (Yojson.Safe.to_string f.Frame.meta) (Yojson.Safe.to_string g.Frame.meta);
+  Alcotest.(check string) "metadata survives, bytes and all"
+    f.Frame.meta g.Frame.meta;
   Alcotest.(check int) "consumes exactly the frame"
     (String.length (Frame.encode f)) n
 
 let test_frame_empty_payload () =
-  let g, _ = roundtrip Frame.{ meta = `Assoc []; payload = "" } in
+  let g, _ = roundtrip Frame.{ meta = ""; payload = "" } in
   Alcotest.(check string) "empty payload" "" g.Frame.payload
 
 (* A reader is fed a stream, not a frame, so partial input must ask for more
    rather than fail. *)
 let test_frame_partial () =
-  let whole = Frame.encode Frame.{ meta = `Assoc [ "k", `String "v" ];
-                                   payload = "abcdef" } in
+  let whole = Frame.encode Frame.{ meta = "kv"; payload = "abcdef" } in
   let asks_for_more k =
     match Frame.parse (String.sub whole 0 k) with
     | Frame.Need n -> Alcotest.(check bool) "wants a positive amount" true (n > 0)
@@ -38,7 +41,7 @@ let test_frame_partial () =
   List.iter asks_for_more [ 0; 1; 3; 4; 6; String.length whole - 1 ]
 
 let test_frame_trailing_bytes () =
-  let f = Frame.{ meta = `Assoc []; payload = "x" } in
+  let f = Frame.{ meta = ""; payload = "x" } in
   let stream = Frame.encode f ^ "leftovers" in
   match Frame.parse stream with
   | Frame.Complete (_, n) ->
@@ -46,14 +49,30 @@ let test_frame_trailing_bytes () =
       (String.length (Frame.encode f)) n
   | _ -> Alcotest.fail "a complete frame followed by more bytes should parse"
 
+(* Marshal casts blind, so a frame from a peer built from other source has to
+   be refused before its metadata is read rather than after. *)
+let test_frame_rejects_a_foreign_build () =
+  let whole = Frame.encode Frame.{ meta = "x"; payload = "y" } in
+  let bad_stamp = Bytes.of_string whole in
+  Bytes.set bad_stamp 4 (Char.chr (Char.code (Bytes.get bad_stamp 4) lxor 0xff));
+  (match Frame.parse (Bytes.to_string bad_stamp) with
+   | Frame.Malformed m ->
+     Alcotest.(check bool) "says the build is incompatible" true
+       (contains "incompatible build" m)
+   | _ -> Alcotest.fail "a frame with another build's stamp must not parse");
+  let bad_magic = Bytes.of_string whole in
+  Bytes.set bad_magic 0 'X';
+  match Frame.parse (Bytes.to_string bad_magic) with
+  | Frame.Malformed m ->
+    Alcotest.(check bool) "and names the magic" true (contains "magic" m)
+  | _ -> Alcotest.fail "a frame without the magic must not parse"
+
 (* --- message encoding --------------------------------------------------- *)
 
 let test_request_roundtrip () =
   let check r =
-    Alcotest.(check string) "request survives"
-      (Yojson.Safe.to_string (Msg.json_of_request r))
-      (Yojson.Safe.to_string
-         (Msg.json_of_request (Msg.request_of_json (Msg.json_of_request r))))
+    Alcotest.(check bool) "request survives" true
+      (Msg.decode_request (Msg.encode_request r) = r)
   in
   check (Msg.Eval { source = "1 + 1;;"; autorun = None });
   check (Msg.Eval { source = "1;;"; autorun = Some [ "lwt" ] });
@@ -62,10 +81,8 @@ let test_request_roundtrip () =
 
 let test_response_roundtrip () =
   let check r =
-    Alcotest.(check string) "response survives"
-      (Yojson.Safe.to_string (Msg.json_of_response r))
-      (Yojson.Safe.to_string
-         (Msg.json_of_response (Msg.response_of_json (Msg.json_of_response r))))
+    Alcotest.(check bool) "response survives" true
+      (Msg.decode_response (Msg.encode_response r) = r)
   in
   check (Msg.Completed
            { phrases = [ { rendering = "val x : int = 42"; warnings = "";
@@ -601,7 +618,9 @@ let () =
        [ Alcotest.test_case "roundtrip" `Quick test_frame_roundtrip;
          Alcotest.test_case "empty payload" `Quick test_frame_empty_payload;
          Alcotest.test_case "partial input" `Quick test_frame_partial;
-         Alcotest.test_case "trailing bytes" `Quick test_frame_trailing_bytes ]);
+         Alcotest.test_case "trailing bytes" `Quick test_frame_trailing_bytes;
+         Alcotest.test_case "a foreign build is refused" `Quick
+           test_frame_rejects_a_foreign_build ]);
       ("msg",
        [ Alcotest.test_case "request" `Quick test_request_roundtrip;
          Alcotest.test_case "response" `Quick test_response_roundtrip ]);

@@ -95,9 +95,14 @@ let name_of archive = Filename.remove_extension (Filename.basename archive)
    The list is the worker's own libraries, kept beside worker/dune. Archive
    names are not written out: findlib expands each package to its ancestors
    and reads their byte archives, so compiler-libs.toplevel brings ocamlcommon
-   and ocamlbytecomp with it without anyone naming them. *)
+   and ocamlbytecomp with it without anyone naming them.
+
+   It has to follow worker/dune, and the test suite is what notices when it
+   does not: when wire stopped depending on yojson, this list still claimed
+   yojson was linked, so require of it became a no-op and a session could not
+   use it. *)
 let linked_packages =
-  [ "compiler-libs.toplevel"; "findlib.top"; "unix"; "str"; "yojson" ]
+  [ "compiler-libs.toplevel"; "findlib.top"; "unix"; "str" ]
 
 let linked_archives = lazy (
   let packages =

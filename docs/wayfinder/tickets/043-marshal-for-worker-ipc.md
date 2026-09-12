@@ -1,8 +1,8 @@
 ---
-status: open
+status: resolved
 type: research
 blocked-by: [017]
-assignee:
+assignee: lyh
 ---
 
 # Marshal instead of JSON metadata
@@ -78,9 +78,43 @@ Today that drift produces a decode error naming a field. Under Marshal it
 produces a wrong value or a crash in the server, which is the process that
 must never die.
 
-## Open
+## Decided
 
-**The mitigation is a header, and the frame has none.** `Frame` is two
+**Marshal, on the argument that this is not ours to hand-roll.** The numbers
+above do not decide it and were not asked to: the speed is microseconds and
+the size is a third of nothing. What decides it is that a serialization codec
+is a solved problem the stdlib solves, and 167 lines of encoders and decoders
+were being maintained, reviewed and tested here to avoid using it.
+
+**The mitigation was built rather than deferred**, because the hazard measured
+above is real and silent. `Frame` gained a four-byte magic and a four-byte
+stamp, checked before any metadata is read, so a peer from another build is
+refused by name instead of returning a pointer as an integer. The stamp is a
+hash of `Sys.ocaml_version` and a `format_version` that is bumped by hand when
+`Msg`'s types change shape.
+
+That last part is a `ponytail` ceiling and is marked as one: a hand-bumped
+number is not a hash of the type definitions, which is not available at
+runtime. It catches a stale worker and a switch mismatch. It does not catch
+someone editing `Msg` and rebuilding one side without bumping it.
+
+**What it came to.** 167 lines out of `wire/msg.ml`, 200 deletions against 126
+insertions overall, and `wire` no longer depends on yojson at all: the
+metadata was its only use, and the payload never entered it. The frame's
+metadata is now opaque bytes, so `Frame` is a codec for two byte segments and
+`Msg` alone decides what they mean.
+
+**One regression, caught by the suite rather than by review.** The worker's
+list of packages it already links, from
+[Loading what the worker already is](038-loading-what-the-worker-already-is.md),
+still named yojson after `wire` stopped depending on it. `require yojson` then
+became a silent no-op and a session could not use it. That list has to follow
+`worker/dune` by hand, which is its own small ceiling; the reset-load test is
+what noticed.
+
+## Was open, and answered by building it
+
+**The mitigation is a header, and the frame had none.** `Frame` is two
 length-prefixed segments with no magic and no version, so there is nowhere for
 a build stamp to live. Adding one - `Sys.ocaml_version` plus a format number,
 checked before the first read - reduces the hazard to type drift between two
@@ -90,12 +124,19 @@ what carries the metadata.
 
 **The dumpability that 017 bought.** That ticket accepted losing the
 whole-frame dump and explicitly kept the metadata readable through a JSON
-tool. Marshal gives that up too. Worth asking whether anything actually reads
-it, or whether it was a comfort that has never been used.
+tool. Marshal gives that up. Nothing was reading it, and the two driver
+scripts that inspect this server's behaviour work over its MCP stdio rather
+than over frames.
 
-**Whether 168 lines is the right measure of the tax.** They are mechanical and
-well covered by round-trip tests, so they are cheap to keep and cheap to
-extend. The cost is paid per new variant, at review time, not at runtime.
+**Whether the line count is the right measure of the tax.** The lines were
+mechanical and well covered by round-trip tests, so they were cheap to keep.
+The cost was paid per new variant, at review time. That is the tax this
+removes, and it is the reason given rather than the benchmark.
+
+The round-trip tests got better rather than worse: comparing `decode (encode
+r) = r` is what the test always meant, and re-encoding both sides to compare
+strings was a way of saying it that only JSON needed. A fourth framing test
+covers the stamp, by flipping a bit in it and by breaking the magic.
 
 Benchmark and the mismatch demonstration were run against the real record
 shape; they are not kept in the repo, unlike

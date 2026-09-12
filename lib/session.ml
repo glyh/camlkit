@@ -99,7 +99,7 @@ let send t request ~timeout =
   match Supervision.may_send t.state with
   | Error _ as e -> e
   | Ok () ->
-    Frame_io.write t.oc { Frame.meta = Msg.json_of_request request; payload = "" };
+    Frame_io.write t.oc { Frame.meta = Msg.encode_request request; payload = "" };
     apply t (Supervision.Sent { now = Unix.gettimeofday (); timeout });
     Ok ()
 
@@ -110,7 +110,7 @@ let receive t =
     Error "the worker died during evaluation; session state is gone"
   | Some { Frame.meta; payload } ->
     apply t Supervision.Replied;
-    Ok (Msg.response_of_json meta, payload)
+    Ok (Msg.decode_response meta, payload)
 
 let on_deadline t ~grace =
   apply t (Supervision.Expired { now = Unix.gettimeofday (); grace })

@@ -1,6 +1,6 @@
 (* Request and response types crossing the server/worker boundary.
-   Metadata rides in the JSON segment; captured program output is the raw
-   segment, addressed by per-phrase offsets. *)
+   Metadata rides in the first segment, marshalled; captured program output is
+   the raw segment, addressed by per-phrase offsets. *)
 
 type request =
   (* [autorun] names the rewrites this session performs, if the caller wants
@@ -84,59 +84,8 @@ type response =
                  skipped : (string * string) list;
                  done_ : phrase list }
   | Rejected of string       (* e.g. a directive sent to eval *)
-
 let string_of_phase = function
   | Parse -> "parse" | Typecheck -> "typecheck" | Execute -> "execute"
-
-let phase_of_string = function
-  | "parse" -> Parse | "typecheck" -> Typecheck | "execute" -> Execute
-  | s -> failwith ("unknown phase: " ^ s)
-
-let json_of_request = function
-  | Eval { source; autorun } ->
-    `Assoc
-      ([ "kind", `String "eval"; "source", `String source ]
-       @ (match autorun with
-           | None -> []
-           | Some names ->
-             [ "autorun", `List (List.map (fun n -> `String n) names) ]))
-  | Describe p -> `Assoc [ "kind", `String "describe"; "path", `String p ]
-  | Require ps ->
-    `Assoc [ "kind", `String "require";
-             "packages", `List (List.map (fun p -> `String p) ps) ]
-  | Continue { id; abandon } ->
-    `Assoc ([ "kind", `String "continue"; "abandon", `Bool abandon ]
-            @ (match id with None -> [] | Some i -> [ "id", `Int i ]))
-  | Inspect { id } ->
-    `Assoc ([ "kind", `String "inspect" ]
-            @ (match id with None -> [] | Some i -> [ "id", `Int i ]))
-  | Load { path; libraries; packages } ->
-    `Assoc [ "kind", `String "load"; "path", `String path;
-             "libraries", `List (List.map (fun l -> `String l) libraries);
-             "packages", `List (List.map (fun p -> `String p) packages) ]
-
-let request_of_json j =
-  let open Yojson.Safe.Util in
-  match member "kind" j |> to_string with
-  | "eval" ->
-    Eval { source = member "source" j |> to_string;
-           autorun = (match member "autorun" j with
-               | `List l -> Some (List.map to_string l)
-               | _ -> None) }
-  | "describe" -> Describe (member "path" j |> to_string)
-  | "continue" ->
-    Continue { id = (match member "id" j with `Int i -> Some i | _ -> None);
-               abandon = (member "abandon" j = `Bool true) }
-  | "inspect" ->
-    Inspect { id = (match member "id" j with `Int i -> Some i | _ -> None) }
-  | "require" -> Require (member "packages" j |> to_list |> List.map to_string)
-  | "load" ->
-    Load { path = member "path" j |> to_string;
-           libraries = (match member "libraries" j with
-               | `List l -> List.map to_string l | _ -> []);
-           packages = (match member "packages" j with
-               | `List l -> List.map to_string l | _ -> []) }
-  | k -> failwith ("unknown request kind: " ^ k)
 
 (* A phrase can print without bound, and an MCP result is a single payload with
    no streaming, so captured output is capped. The limit is small because the
@@ -164,104 +113,14 @@ let clamp ~limit phrases =
   in
   let clamped = List.map clamp_one phrases in
   (clamped, !any)
+(* The wire codec is Marshal, see docs/wayfinder/tickets/043. Both ends are
+   built from this file, so the types agree by construction, and Frame's stamp
+   is what refuses a peer that was not. Bump Frame.format_version when the
+   types above change shape.
 
-let json_of_binding { bound; bound_type } =
-  `Assoc [ "name", `String bound; "type", `String bound_type ]
-
-let binding_of_json j =
-  let open Yojson.Safe.Util in
-  { bound = member "name" j |> to_string;
-    bound_type = member "type" j |> to_string }
-
-let json_of_phrase { rendering; warnings; out_start; out_len; dropped; ran } =
-  `Assoc ([ "rendering", `String rendering; "warnings", `String warnings;
-            "out_start", `Int out_start; "out_len", `Int out_len;
-            "dropped", `Int dropped ]
-          @ (match ran with None -> [] | Some r -> [ "ran", `String r ]))
-
-let phrase_of_json j =
-  let open Yojson.Safe.Util in
-  { rendering = member "rendering" j |> to_string;
-    warnings = member "warnings" j |> to_string;
-    out_start = member "out_start" j |> to_int;
-    out_len = member "out_len" j |> to_int;
-    dropped = (match member "dropped" j with `Int n -> n | _ -> 0);
-    ran = (match member "ran" j with `String r -> Some r | _ -> None) }
-
-let json_of_response = function
-  | Completed { phrases; autorun } ->
-    `Assoc ([ "status", `String "completed";
-              "phrases", `List (List.map json_of_phrase phrases) ]
-            @ (match autorun with
-                | None -> []
-                | Some names ->
-                  [ "autorun", `List (List.map (fun n -> `String n) names) ]))
-  | Failed { phase; phrase_index; message; spans; lines; done_ } ->
-    `Assoc [ "status", `String "failed";
-             "phase", `String (string_of_phase phase);
-             "phrase_index", `Int phrase_index;
-             "message", `String message;
-             "spans", `List (List.map (fun (a, b) -> `List [ `Int a; `Int b ]) spans);
-             "lines", `List (List.map (fun (a, b) -> `List [ `Int a; `Int b ]) lines);
-             "phrases", `List (List.map json_of_phrase done_) ]
-  | Interrupted { phrase_index; done_ } ->
-    `Assoc [ "status", `String "interrupted";
-             "phrase_index", `Int phrase_index;
-             "phrases", `List (List.map json_of_phrase done_) ]
-  | Stopped { id; phrase_index; bound; skipped; done_ } ->
-    `Assoc [ "status", `String "stopped";
-             "id", `Int id;
-             "phrase_index", `Int phrase_index;
-             "bound", `List (List.map json_of_binding bound);
-             "skipped", `List (List.map (fun (name, why) ->
-                 `Assoc [ "name", `String name; "reason", `String why ]) skipped);
-             "phrases", `List (List.map json_of_phrase done_) ]
-  | Loaded { loaded; failed } ->
-    `Assoc [ "status", `String (if failed = [] then "ok" else "partial");
-             "loaded", `List (List.map (fun l -> `String l) loaded);
-             "failed", `List (List.map (fun (lib, err) ->
-                 `Assoc [ "library", `String lib; "error", `String err ]) failed) ]
-  | Rejected why -> `Assoc [ "status", `String "rejected"; "reason", `String why ]
-
-let response_of_json j =
-  let open Yojson.Safe.Util in
-  match member "status" j |> to_string with
-  | "completed" ->
-    Completed { phrases = member "phrases" j |> to_list |> List.map phrase_of_json;
-                autorun = (match member "autorun" j with
-                    | `List l -> Some (List.map to_string l)
-                    | _ -> None) }
-  | "stopped" ->
-    Stopped { id = member "id" j |> to_int;
-              phrase_index = member "phrase_index" j |> to_int;
-              bound = member "bound" j |> to_list |> List.map binding_of_json;
-              skipped = member "skipped" j |> to_list
-                        |> List.map (fun s -> (member "name" s |> to_string,
-                                               member "reason" s |> to_string));
-              done_ = member "phrases" j |> to_list |> List.map phrase_of_json }
-  | "failed" ->
-    Failed { phase = member "phase" j |> to_string |> phase_of_string;
-             phrase_index = member "phrase_index" j |> to_int;
-             message = member "message" j |> to_string;
-             spans = member "spans" j |> to_list
-                     |> List.map (fun s -> match to_list s with
-                         | [ a; b ] -> (to_int a, to_int b)
-                         | _ -> failwith "bad span");
-             lines = member "lines" j |> to_list
-                     |> List.map (fun s -> match to_list s with
-                         | [ a; b ] -> (to_int a, to_int b)
-                         | _ -> failwith "bad line range");
-             done_ = (match member "phrases" j with
-                 | `List ps -> List.map phrase_of_json ps
-                 | _ -> []) }
-  | "interrupted" ->
-    Interrupted { phrase_index = member "phrase_index" j |> to_int;
-                  done_ = member "phrases" j |> to_list |> List.map phrase_of_json }
-  | "ok" | "partial" ->
-    Loaded { loaded = member "loaded" j |> to_list |> List.map to_string;
-             failed = member "failed" j |> to_list
-                      |> List.map (fun f ->
-                          (member "library" f |> to_string,
-                           member "error" f |> to_string)) }
-  | "rejected" -> Rejected (member "reason" j |> to_string)
-  | s -> failwith ("unknown status: " ^ s)
+   Nothing here is a closure, an exception or a lazy value, which are what
+   Marshal cannot carry. Keep it that way: the compiler will not stop you. *)
+let encode_request (r : request) = Marshal.to_string r []
+let decode_request (s : string) : request = Marshal.from_string s 0
+let encode_response (r : response) = Marshal.to_string r []
+let decode_response (s : string) : response = Marshal.from_string s 0
