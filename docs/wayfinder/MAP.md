@@ -429,6 +429,9 @@ not.
 - [search_type names a file it does not locate](tickets/069-search-type-names-a-file-it-does-not-locate.md)
   — **fixed.** `file` is a path, resolved once per file through `locate`, and
   the unusable position is gone.
+- [Output schemas drift from results](tickets/070-output-schemas-drift-from-results.md)
+  — **open.** `locate` declared fields it never sent; `eval` declares none of
+  its failure fields. No test compares a result's keys with its schema.
 - [Testing strategy](tickets/013-testing-strategy.md) — one tier, integration
   tests spawn a real worker and the real server in the default `dune test`.
 
