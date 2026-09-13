@@ -367,6 +367,9 @@ must evaluate it first. Tests are Alcotest.
 - [load replaces the user's OCAMLPARAM](tickets/060-load-replaces-the-user-s-ocamlparam.md)
   — **fixed.** Merged after the user's `_`, the way the compiler parses it, and
   the separator is chosen so a comma in the worker's path does not split it.
+- [A swap under an open takes a name](tickets/061-a-swap-under-an-open-takes-a-name.md)
+  — **open.** A bare swap phrase renders only what it did; the same swap under
+  `let open` or `let module` renders `val _0 : unit = ()` too.
 - [Testing strategy](tickets/013-testing-strategy.md) — one tier, integration
   tests spawn a real worker and the real server in the default `dune test`.
 
