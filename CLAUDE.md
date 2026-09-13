@@ -19,7 +19,10 @@ no build tool; see ticket 025.
 
 ## Commands
 
-`opam env` is **not** loaded in the user's fish shell, so evaluate it first:
+`opam env` is **not** loaded in the user's fish shell, so evaluate it first.
+A gitignored, machine-specific `.envrc` pins the switch through direnv:
+building in another switch makes a worker that cannot load artifacts from the
+first (ticket 044).
 
 ```sh
 eval (opam env)     # fish; bash: eval $(opam env)
@@ -28,18 +31,29 @@ dune test
 ```
 
 Run one suite or one case (Alcotest filtering; consult the `ocaml-alcotest`
-skill before touching the suite):
+skill before touching the suite). The tests find the worker and server by
+paths relative to `_build/default/test`, so run the executables from there
+after `dune build`; `dune exec` from the repository root fails every case
+that spawns a process:
 
 ```sh
-dune exec test/test_server.exe -- test load          # one suite
-dune exec test/test_server.exe -- test load 0        # one case
-dune exec test/test_camlkit.exe -- list
+cd _build/default/test
+./test_server.exe test load          # one suite
+./test_server.exe test load 0        # one case
+./test_camlkit.exe list
 ```
 
-Both suites are `\`Slow`, so plain `dune test` runs them. Running an executable
-directly needs `opam env` evaluated first, or the Lwt test kills its worker
-loading `lwt.unix` and reports a dead session instead. Tests spawn the real
-worker and the real server binary and depend on `test/fixtures/mylib`.
+`test_camlkit` holds the pure units and the worker driven directly;
+`test_server` drives the server binary as a client does. Cases are `Quick` or
+`Slow`, and `dune test` runs both. Running an executable directly needs
+`opam env` evaluated first, or the Lwt tests kill their worker loading
+`lwt.unix` and report a dead session instead. Fixtures: `mylib` (a findlib
+package), `swaplib` (built through the worker's own swap ppx, standing in for a
+project `load` built) and `ppx` (a rewriter reached through `-ppx`).
+
+An MCP client runs the installed binaries, not the build tree: after a change,
+`dune install` and reconnect the client before testing through it. A project
+with its own local switch has its own installed copy.
 
 Drive the server by hand, one JSON-RPC object per line on stdin:
 
@@ -66,7 +80,7 @@ Two processes, one shared codec library.
 | Path | Role |
 | --- | --- |
 | `wire/` | frame codec (`frame.ml`), channel I/O (`frame_io.ml`), IPC message types (`msg.ml`) |
-| `worker/` | the toplevel: capture, two-pass evaluation, printers, loader, request loop |
+| `worker/` | the toplevel: capture, two-pass evaluation, printers, loader, request loop; `breakpoint.ml`, `watch.ml` and `swap.ml` are the three markers, `autorun.ml` the promise rewrite |
 | `lib/` | session supervision, tool declarations, rendering, merlin |
 | `bin/main.ml` | the server's `Unix.select` loop and tool dispatch |
 

@@ -87,14 +87,14 @@ comes, which is what you want when the toolchain is already on `PATH` and
 lives in a store path rather than a switch. An empty value means the same
 thing.
 
-**dune.** `load` asks `dune top` for a project's archives, `uses` asks dune to
-build its index, and `context` reads the `-open` flags dune passes, through
-merlin. A project with no `dune-project` still works for evaluating,
+**dune.** `load` has dune build a project's libraries in `_build/camlkit` and
+asks `dune top` for the archives, `uses` asks dune to build its index, and
+`context` reads the `-open` flags dune passes, through merlin. A project with no `dune-project` still works for evaluating,
 requiring installed packages and every merlin-backed query. What it loses is
 loading that project's own libraries and project-wide occurrences.
 
-There is no build tool: run `dune build` yourself. See
-`docs/wayfinder/tickets/025-build-from-a-tool.md`.
+There is no build tool for your own builds and tests: run `dune build`
+yourself. See `docs/wayfinder/tickets/025-build-from-a-tool.md`.
 
 ### From a clone, for development
 
@@ -109,7 +109,7 @@ To build against a different switch without disturbing your default build:
 
 ```sh
 PROJ=/path/to/project
-opam install --switch $PROJ jsonrpc ocamlfind yojson merlin alcotest lwt
+opam install --switch $PROJ jsonrpc ocamlfind yojson merlin alcotest lwt ppxlib ppx_deriving
 opam exec --switch $PROJ -- dune build --build-dir=/tmp/camlkit-build
 opam exec --switch $PROJ -- \
   dune install --build-dir=/tmp/camlkit-build --prefix=$PROJ/_opam
@@ -136,11 +136,12 @@ claude mcp add camlkit "$(opam var bin --switch /path/to/project)/camlkit"
 claude mcp list        # expect: camlkit: ... - ✔ Connected
 ```
 
-**Register the binary from the switch the project builds in.** The worker's
-`dune top` builds the project in the worker's own switch before loading it, so
-a client pointed at one switch and a shell building in another will not fail:
-they will rebuild the whole `_build` each time the other one touches it. Check
-what a registered server will actually run with `claude mcp get camlkit`.
+**Register the binary from the switch the project builds in.** A worker can
+only load artifacts built by its own compiler. `load` builds in its own
+`_build/camlkit`, but `uses` builds dune's index in the project's `_build`, so a
+client pointed at one switch and a shell building in another will not fail:
+they will rebuild that `_build` each time the other one touches it. Check what a
+registered server will actually run with `claude mcp get camlkit`.
 
 Ask opam where the binary is rather than assuming a layout: a global switch
 lives under `~/.opam/<name>/bin` and a local one under `<project>/_opam/bin`,
@@ -170,47 +171,76 @@ an empty environment and `lwt.unix`.
 
 ## Using it
 
-Fifteen tools, in two groups.
-
-A bare `Lwt` or `Async` expression is run rather than handed back as a
-promise, the way utop does it. `eval` takes an `autorun` list to change that
-per session: omit it to leave the setting alone, pass `[]` to keep the
-promise. Every result reports the rules in force, and a phrase that was
-rewritten names the rule that ran it, so neither the setting nor the rewrite
-has to be inferred.
+Eighteen tools, in two groups.
 
 **About values, in a session.** `eval` runs OCaml phrases, `describe` shows a
 signature, `require` loads findlib packages, `load` brings in a dune
 project's own libraries, `reset` empties a session. A reset takes optional
 `code`, evaluated in the fresh toplevel in the same call, which is how helpers
 go back without a window where the session is empty. Nothing is remembered:
-the next reset empties those too. Sessions are created on
-first use under whatever name you pick, and state persists between calls.
+the next reset empties those too. `continue`, `inspect` and `markers` drive
+the breakpoints, watches and swaps below. Sessions are created on first use
+under whatever name you pick, and state persists between calls.
+
+`eval` takes `check` to typecheck without running, which reports each phrase's
+type and leaves the session unchanged, and `cost` to report a phrase's wall
+clock and allocation.
+
+A bare `Lwt` or `Async` expression is run rather than handed back as a
+promise, the way utop does it. `eval` takes an `autorun` list for that call
+only: pass `[]` to keep the promise. A phrase that was run this way says so,
+and a result names the rules only when they differ from the default.
 
 **About source, with no session.** `locate` finds where a name is defined,
 `type_at` gives the type at a position, `outline` lists what a file defines,
-`uses` finds every occurrence, `search_type` finds values by their type, and
-`context` returns the opens that put a session in a file's context, so a
-fragment lifted out of that file resolves the way the file does. These need
-nothing built and nothing loaded.
+`uses` finds every occurrence, `search_type` finds values by their type,
+`document` reads a name's documentation comment, `expand` shows what a ppx
+generated at a position, `diagnostics` reports a file's errors and warnings,
+or those of an edit not yet written, and `context` returns the opens that put
+a session in a file's context, so a fragment lifted out of that file resolves
+the way the file does. `signature` shows an installed package's interfaces
+without loading it. These need nothing built and nothing loaded.
 
-There is no build tool: build the project with `dune build` yourself, then:
+To work with a dune project's own code:
 
 ```
 load { path: "/path/to/project" }
 ```
 
-That is the whole thing. `load` asks `dune top` for the directives the
-project needs, so its own libraries and its external dependencies arrive
-together, in dependency order. For a directory that is not a dune project it
-falls back to scanning for archives. After rebuilding the project, pass `reset: true`:
-loading a changed archive into a session holding the old one fails on an
-interface mismatch. The session remembers which findlib packages it was
-required to load, and restores them across that reset, so the rebuild loop
-stays one call.
+That is the whole thing. `load` has dune build the project for the session in
+`_build/camlkit`, beside your own build, and asks `dune top` for the directives
+it needs, so its own libraries and its external dependencies arrive together,
+in dependency order. For a directory that is not a dune project it falls back
+to scanning for archives. After changing the project's code, pass
+`reset: true`: loading a changed archive into a session holding the old one
+fails on an interface mismatch. The session remembers which findlib packages
+it was required to load, and restores them across that reset, so the change
+loop stays one call.
 
 The worker must be built with the same OCaml version as the project, because
 bytecode is version-locked. Install into the project's own switch.
+
+### Stopping, watching and swapping
+
+Three markers go in evaluated code:
+
+- **`[%break "name"]`** stops the phrase there. The session stays usable while
+  the rest of the phrase waits, the locals in scope are bound as `bp_` names,
+  and `continue` resumes it or abandons it.
+- **`[%watch "name" expr]`** records every value that flows through `expr` and
+  never stops. `inspect` reads what it recorded.
+- **`[%swap M.f replacement]`** makes every caller of `M.f`, in a project
+  brought in by `load`, call the replacement instead, callers inside `M`
+  included. `[%swap M.f]` puts the original back. The replacement is checked
+  against `f`'s type and must be at least as general.
+
+**Only functions can be swapped.** That means a top-level function of a loaded
+project, whether written with parameters or computed by an expression such as
+`let pp = Fmt.list item`. A value, an external, a function inside a functor, a
+function defined in the session and anything `load` did not build cannot be.
+
+Markers keep firing whenever the code holding them runs, and swaps stay in
+force until put back. `markers` lists all three and disarms or restores them.
 
 ## Testing it by hand
 
@@ -250,8 +280,8 @@ echo '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"eval","arg
 
 ## Status
 
-Working end to end. All fifteen tools are served over MCP stdio, against
-real toplevels, one worker per session. 82 tests, of which 50 drive the
+Working end to end. All eighteen tools are served over MCP stdio, against
+real toplevels, one worker per session. 100 tests, of which 57 drive the
 server binary the way a client does.
 
 Sessions are created on first use under whatever name the caller picks. If
@@ -270,7 +300,7 @@ Layout follows functional core, imperative shell:
 | Path | What it is |
 | --- | --- |
 | `wire/` | shared by both processes: frame codec, message types |
-| `worker/` | owns the toplevel: capture, two-pass evaluation, printers, loading, request loop |
+| `worker/` | owns the toplevel: capture, two-pass evaluation, printers, loading, markers, request loop |
 | `lib/` | session supervision, tool declarations, rendering, merlin queries |
 | `bin/` | the server's select loop |
 
