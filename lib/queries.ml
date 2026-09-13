@@ -78,6 +78,8 @@ let type_at =
 
 (* --- uses --------------------------------------------------------------- *)
 
+type scope = Project | Buffer [@@deriving mcp]
+
 type uses_args = {
   file : string;
   (** Absolute path to a source file. *)
@@ -85,8 +87,8 @@ type uses_args = {
   (** 1-based. *)
   col : int;
   (** 0-based. *)
-  scope : string; [@default "project"]
-  (** project or buffer. *)
+  scope : scope; [@default Project]
+  (** project, the default, or buffer. *)
 } [@@deriving mcp]
 
 type uses_result = {
@@ -104,10 +106,11 @@ let uses =
     (fun a ->
        (* Project scope is silently buffer scope without dune's index, so build
           it first rather than return a complete-looking partial answer. *)
-       let index = if a.scope = "project" then Merlin.ensure_index a.file else Ok () in
+       let index = if a.scope = Project then Merlin.ensure_index a.file else Ok () in
        let* v =
          query ~command:"occurrences" ~file:a.file ()
-           ~args:[ "-identifier-at"; Merlin.position a.line a.col; "-scope"; a.scope ] in
+           ~args:[ "-identifier-at"; Merlin.position a.line a.col; "-scope";
+                   (match a.scope with Project -> "project" | Buffer -> "buffer") ] in
        let* occurrences = fail (Merlin.list Merlin.occurrence_mcp v) in
        Ok (match index with
            | Ok () -> { occurrences; incomplete = false; caveat = "" }
