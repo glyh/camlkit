@@ -194,61 +194,6 @@ let documentation value =
     else Ok s
   | _ -> Error "merlin answered document with something other than text"
 
-(* What `expand-ppx` answers with.
-
-   Two shapes under one class. On success an object with the generated `code`
-   and the span of the deriver or extension node it came from; on failure a
-   bare string, `class: return` and all, the same sentinel-inside-a-success
-   that [documentation] above has to decode. There is one failure string and it
-   is matched whole rather than by prefix, because unlike the document
-   sentinels it carries nothing variable.
-
-   See docs/wayfinder/tickets/037. *)
-let expansion value =
-  match value with
-  | `String _ ->
-    Error
-      "no ppx deriver or extension node at that position. A deriver is the \
-       name inside [@@deriving ...] and an extension is the [%name] itself; \
-       the position has to be on one of those, not on the type or expression \
-       it is attached to."
-  | `Assoc _ as v ->
-    (match Yojson.Safe.Util.member "code" v with
-     | `String code -> Ok (code, Yojson.Safe.Util.member "deriver" v)
-     | _ -> Error "merlin answered expand-ppx without any expanded code")
-  | _ -> Error "merlin answered expand-ppx with neither code nor a reason"
-
-(* Errors and warnings for one file, split apart.
-
-   merlin answers with one list and a `type` on each entry - "typer",
-   "parser", "env" and so on, with "warning" among them. A caller wants the two
-   apart, the way an eval result keeps warnings out of its errors rather than
-   interleaving them, so the split happens here rather than in the caller's
-   head. `sub` carries nested messages and is usually empty; it is passed
-   through when it is not. See docs/wayfinder/tickets/042. *)
-let diagnostics value =
-  match value with
-  | `List items ->
-    let kind item = Yojson.Safe.Util.member "type" item in
-    let is_warning item = kind item = `String "warning" in
-    let trim item =
-      (* `valid` is true on everything merlin returns here, and the kind is
-         already said by which list an entry is in. *)
-      match item with
-      | `Assoc fields ->
-        `Assoc (List.filter
-                  (fun (k, v) ->
-                     match k, v with
-                     | ("valid" | "type"), _ -> false
-                     | "sub", `List [] -> false
-                     | _ -> true)
-                  fields)
-      | other -> other
-    in
-    Ok (List.map trim (List.filter (fun i -> not (is_warning i)) items),
-        List.map trim (List.filter is_warning items))
-  | _ -> Error "merlin answered errors with something other than a list"
-
 (* Merlin infers which namespace to search from the node under the cursor, even
    when the name is given outright: src/analysis/locate.ml infers a context
    from the browse tree and src/analysis/env_lookup.ml maps a module path to
@@ -261,87 +206,153 @@ let diagnostics value =
    name it named itself; it gets this one. *)
 let neutral_position = position 1 0
 
-(* Fields merlin sends on every entry that say nothing: an outline item's empty
-   `children` and `deprecated: false`, an occurrence's `stale: false`, an
-   enclosing's `tail: "no"`, and any null, such as a search result's `doc` on
-   a value with no comment. A search result's `constructible` goes too: it is
-   the name and one `_` per argument, which its type already says. Absent is
-   what an eval result means by nothing to say, and an outline of a large file
-   paid for them once per definition. The
-   other values of each are kept, since they are the case worth reading.
+(* --- merlin's answers, typed --------------------------------------------
 
-   `selection` stays: it is the name's span inside the item's, and an item
-   starts at its `let`, so it is the position `uses` or `locate` on the name
-   needs. See docs/wayfinder/tickets/053. *)
-let rec trim = function
-  | `Assoc fields ->
-    `Assoc
-      (List.filter_map
-         (fun (k, v) ->
-            match k, v with
-            | "children", `List [] | "deprecated", `Bool false
-            | "stale", `Bool false | "tail", `String "no"
-            | _, `Null | "constructible", _ -> None
-            | _ -> Some (k, trim v))
-         fields)
-  | `List items -> `List (List.map trim items)
-  | other -> other
+   Decoded into records rather than passed through, so a tool's schema
+   describes every field and a change in what merlin sends fails as a decode
+   error instead of silently changing a result. A field merlin sends and no
+   caller needs, such as a search hit's `constructible`, simply has no field
+   here and is dropped by decoding. What ticket 053 trimmed by hand (an empty
+   `children`, `deprecated: false`, `stale: false`) is now the deriver's empty
+   rule. See docs/wayfinder/tickets/071. *)
 
-(* search-by-type names each hit's file by basename alone, `list.mli`, which no
-   tool taking a file accepts, and its position is into that unusable file. So
-   the position goes, since `name` is qualified and the tools that matter take
-   names, and the file is resolved to a path by [resolve], given a name found
-   in it and "ml" or "mli" for which half. One call per distinct basename,
-   because every hit from one file shares the path. A file that does not
-   resolve is left out rather than left bare. See docs/wayfinder/tickets/069. *)
-let with_paths ~resolve value =
+type pos = { line : int; col : int } [@@deriving mcp]
+
+type span = { start : pos; end_ : pos } [@@deriving mcp]
+
+type outline_item = {
+  start : pos;
+  end_ : pos;
+  name : string;
+  kind : string;
+  type_ : string option;
+  children : outline_item list; [@default []]
+  deprecated : bool; [@default false]
+  selection : span option;
+  (** The name's own span; an item starts at its let, so this is the position
+      uses or locate on the name needs. *)
+} [@@deriving mcp]
+
+type location = { file : string; pos : pos } [@@deriving mcp]
+
+type enclosing = {
+  start : pos;
+  end_ : pos;
+  type_ : string;
+  tail : string; [@default ""]
+  (** Whether the expression is in tail position; absent when it is not. *)
+} [@@deriving mcp]
+
+type occurrence = {
+  start : pos;
+  end_ : pos;
+  stale : bool; [@default false]
+} [@@deriving mcp]
+
+type search_hit = {
+  file : string option;
+  (** The path of the interface or implementation it comes from, absent when
+      merlin cannot locate it. *)
+  name : string;
+  type_ : string;
+  cost : int;
+  doc : string option;
+} [@@deriving mcp]
+
+type sub_message = { start : pos; end_ : pos; message : string } [@@deriving mcp]
+
+type diagnostic = {
+  start : pos option;
+  (** Absent for a message about the file as a whole. *)
+  end_ : pos option;
+  message : string;
+  sub : sub_message list; [@default []]
+} [@@deriving mcp]
+
+let decode codec value =
+  Result.map_error (fun e -> "unexpected merlin answer: " ^ e)
+    (codec.Mcp_derive.of_json value)
+
+let list codec = function
+  | `List items ->
+    List.fold_right
+      (fun i acc -> Result.bind acc (fun l -> Result.map (fun x -> x :: l) (decode codec i)))
+      items (Ok [])
+  | _ -> Error "unexpected merlin answer: expected a list"
+
+(* merlin gives an outline last first at every level. Sorted by start, so a
+   caller reads the file top down. See tickets/066. *)
+let rec in_source_order items =
+  List.stable_sort
+    (fun (a : outline_item) (b : outline_item) ->
+       compare (a.start.line, a.start.col) (b.start.line, b.start.col))
+    (List.map (fun (i : outline_item) -> { i with children = in_source_order i.children })
+       items)
+
+(* Drops exact repeats, keeping the first. HACK: merlin repeats the innermost
+   enclosing when one range maps to two typedtree nodes, and a search hit when
+   two paths to a value collapse; both upstream. A repeat carries nothing. *)
+let dedup items =
+  List.rev
+    (List.fold_left (fun acc x -> if List.mem x acc then acc else x :: acc) [] items)
+
+(* The `tail` merlin sends on every enclosing is "no" almost always, which says
+   nothing; the other values are the case worth reading. *)
+let enclosing_tail (e : enclosing) = if e.tail = "no" then { e with tail = "" } else e
+
+(* search-by-type names each hit's file by basename alone, which no tool
+   accepts. Resolved to a path by [resolve], given a name found in it and "ml"
+   or "mli"; once per distinct basename, since hits from one file share a path.
+   A file that does not resolve is left out rather than left bare. See
+   tickets/069. *)
+let with_paths ~resolve (hits : search_hit list) =
   let cache = Hashtbl.create 8 in
-  let path base name =
-    match Hashtbl.find_opt cache base with
-    | Some p -> p
-    | None ->
-      let half = if Filename.check_suffix base ".mli" then "mli" else "ml" in
-      let p = resolve name half in
-      Hashtbl.add cache base p; p
-  in
+  List.map
+    (fun (h : search_hit) ->
+       match h.file with
+       | None -> h
+       | Some base ->
+         let path =
+           match Hashtbl.find_opt cache base with
+           | Some p -> p
+           | None ->
+             let half = if Filename.check_suffix base ".mli" then "mli" else "ml" in
+             let p = resolve h.name half in
+             Hashtbl.add cache base p; p
+         in
+         { h with file = path })
+    hits
+
+(* `errors` answers one list with a `type` on each entry, "warning" among the
+   rest. Split so a caller gets the two apart, as an eval result keeps them.
+   See tickets/042. *)
+let diagnostics value =
   match value with
   | `List items ->
-    `List
-      (List.map
-         (function
-           | `Assoc fields ->
-             let str k = match List.assoc_opt k fields with
-               | Some (`String s) -> Some s | _ -> None in
-             let file = match str "file", str "name" with
-               | Some base, Some name -> path base name
-               | _ -> None in
-             `Assoc
-               (List.filter_map
-                  (fun (k, v) -> match k with
-                     | "start" | "end" -> None
-                     | "file" -> Option.map (fun p -> (k, `String p)) file
-                     | _ -> Some (k, v))
-                  fields)
-           | other -> other)
-         items)
-  | other -> other
+    let is_warning i = Yojson.Safe.Util.member "type" i = `String "warning" in
+    Result.bind (list diagnostic_mcp (`List (List.filter (fun i -> not (is_warning i)) items)))
+      (fun errors ->
+         Result.map (fun warnings -> (errors, warnings))
+           (list diagnostic_mcp (`List (List.filter is_warning items))))
+  | _ -> Error "unexpected merlin answer: expected a list"
 
-(* An outline in the order the file reads. merlin gives items and each item's
-   children last first, so a caller reading down reads upside down, and one
-   taking the first match of a repeated name takes the shadowing one. Only
-   outline: enclosings are innermost first and search results ranked, both on
-   purpose. See docs/wayfinder/tickets/066. *)
-let rec in_source_order = function
-  | `List items ->
-    let start item =
-      let open Yojson.Safe.Util in
-      match member "start" item with
-      | `Assoc _ as p -> (member "line" p, member "col" p)
-      | _ -> (`Null, `Null)
-    in
-    `List (List.stable_sort (fun a b -> compare (start a) (start b))
-             (List.map in_source_order items))
-  | `Assoc fields ->
-    `Assoc (List.map (fun (k, v) ->
-        if k = "children" then (k, in_source_order v) else (k, v)) fields)
-  | other -> other
+(* What `expand-ppx` answers with: the generated code and the span of the node
+   it came from, or on failure a bare string under the same success class,
+   which is matched whole. See tickets/037. *)
+let expansion value =
+  match value with
+  | `String _ ->
+    Ok (Error
+          "no ppx deriver or extension node at that position. A deriver is the \
+           name inside [@@deriving ...] and an extension is the [%name] itself; \
+           the position has to be on one of those, not on the type or expression \
+           it is attached to.")
+  | `Assoc _ as v ->
+    (match Yojson.Safe.Util.member "code" v with
+     | `String code ->
+       (match Yojson.Safe.Util.member "deriver" v with
+        | `Null -> Ok (Ok (code, None))
+        | d -> Result.map (fun s -> Ok (code, Some s)) (decode span_mcp d))
+     | _ -> Error "merlin answered expand-ppx without any expanded code")
+  | _ -> Error "merlin answered expand-ppx with neither code nor a reason"
+

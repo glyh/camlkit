@@ -150,7 +150,7 @@ scope is project (the default) or buffer. Project scope needs dune's index,
 and merlin silently answers from the one file without it, so the index is
 built first (about 0.2 s on a built project). If it cannot be built, or the
 project's compiler predates OCaml 5.2 and writes no occurrence data, the result
-carries complete: false and a caveat rather than looking whole.|};
+carries incomplete: true and a caveat rather than looking whole.|};
 
   "search_type", {|Finds values by type, in scope at a position, such as "int -> string" or
 "'a list -> 'a option". Results are ranked best first.
@@ -211,8 +211,9 @@ For what a session already has, or modules defined in a session, use describe.|}
   "context", {|The opens that put a session in a source file's context, so a fragment lifted
 out of that file resolves the way the file does.
 
-Evaluate the returned code once, or pass it to reset: an open is ordinary
-session state. It answers from source and needs no session, but the modules it
+Evaluate `open M;;` for each module in opens, in order, once, or pass those
+lines to reset: an open is ordinary session state. opens is [] when a session
+needs none. It answers from source and needs no session, but the modules it
 names exist only in a session that has loaded the project. A file in no
 wrapped library gets only its own opens, because a session cannot name its
 module.|};

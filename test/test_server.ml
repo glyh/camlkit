@@ -638,8 +638,11 @@ let test_context () =
   Alcotest.(check (list string))
     "the file's own opens, in order, and nothing nested or invented"
     [ "Printf"; "Buffer" ] opens;
-  Alcotest.(check bool) "the text is code, ready to evaluate" true
-    (has "open Printf;;" (text r))
+  (* tickets/071: none is an answer, so [] is sent rather than left out *)
+  with_source @@ fun plain ->
+  let r = call c ~id:2 ~tool:"context" ~args:(`Assoc [ "file", `String plain ]) in
+  Alcotest.(check bool) "a file with no opens says []" true
+    (Yojson.Safe.Util.(r |> member "structuredContent" |> member "opens") = `List [])
 
 let test_context_of_a_missing_file () =
   with_server @@ fun c ->
@@ -671,9 +674,7 @@ let test_diagnostics () =
   (* The fixture compiles, so both fields are absent rather than empty. *)
   let r = ask () in
   Alcotest.(check bool) "not an error" false (is_error r);
-  Alcotest.(check bool) "a clean file says so" true
-    (has "no errors" (text r));
-  Alcotest.(check bool) "with nothing carried for either" true
+  Alcotest.(check bool) "a clean file carries nothing for either" true
     (Yojson.Safe.Util.(member "errors" (sc r)) = `Null
      && Yojson.Safe.Util.(member "warnings" (sc r)) = `Null);
   (* An edit that is not on disk, with one of each kind in it. *)
@@ -687,12 +688,10 @@ let test_diagnostics () =
   Alcotest.(check bool) "positions are into the edit, not the file" true
     (Yojson.Safe.Util.(member "errors" (sc r) |> to_list |> List.hd
                        |> member "start" |> member "line") = `Int 1);
-  Alcotest.(check bool) "the text half reads as text, not as JSON" true
-    (has "errors:" (text r) && has "warnings:" (text r));
   (* And the file on disk is untouched by having asked about an edit. *)
   let r = ask () in
   Alcotest.(check bool) "the file itself still compiles" true
-    (has "no errors" (text r));
+    (Yojson.Safe.Util.(member "errors" (sc r)) = `Null);
   (* A dune project that was never built has no configuration, and merlin
      says so in a message with no position. Reading one used to raise, which
      took the whole server down with it. *)
@@ -703,7 +702,7 @@ let test_diagnostics () =
   Alcotest.(check bool) "a message with no position is reported" true
     (has "No config found" (text r));
   Alcotest.(check bool) "and the server is still there" true
-    (has "no errors" (text (ask ())))
+    (Yojson.Safe.Util.(member "errors" (sc (ask ()))) = `Null)
 
 let test_expand () =
   with_server @@ fun c ->
@@ -719,8 +718,9 @@ let test_expand () =
      in [@@deriving show] says it gives you pp_point and show_point. *)
   Alcotest.(check bool) "the names the deriver invented" true
     (has "pp_point" code && has "show_point" code);
-  Alcotest.(check bool) "the text half is source, not JSON with escapes" true
-    (has "show_point" (text r) && not (has "\\n" (text r)));
+  (* tickets/071: the text is the structure, serialized, as the spec asks *)
+  Alcotest.(check string) "the text half is the structure serialized"
+    (Yojson.Safe.to_string sc) (text r);
   Alcotest.(check bool) "and the node it came from is located" true
     (Yojson.Safe.Util.(member "deriver" sc |> member "start" |> member "line")
      = `Int 1);
@@ -792,12 +792,11 @@ let test_uses_says_when_it_cannot_be_project_wide () =
   let r = call c ~id:1 ~tool:"uses"
       ~args:(`Assoc [ "file", `String path; "line", `Int 1; "col", `Int 4 ]) in
   let sc = Yojson.Safe.Util.member "structuredContent" r in
-  Alcotest.(check bool) "flagged as not complete" true
-    (Yojson.Safe.Util.(member "complete" sc) = `Bool false);
-  Alcotest.(check bool) "and says so in the text" true
-    (has "INCOMPLETE" (text r));
+  (* tickets/071: the flag whose news is its truth, rather than complete: false *)
+  Alcotest.(check bool) "flagged as incomplete" true
+    (Yojson.Safe.Util.(member "incomplete" sc) = `Bool true);
   Alcotest.(check bool) "naming the command that would fix it" true
-    (has "dune build @ocaml-index" (text r))
+    (has "dune build @ocaml-index" Yojson.Safe.Util.(member "caveat" sc |> to_string))
 
 (* Reported from a session: merlin repeats the innermost enclosing when one
    source range maps to two typedtree nodes, and repeats a search hit when two

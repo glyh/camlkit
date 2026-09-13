@@ -807,64 +807,83 @@ let test_has_index () =
   Alcotest.(check bool) "a directory that does not exist is not an error" false
     (Merlin.has_index (Filename.concat root "nowhere"))
 
-(* Nothing-to-say fields leave, at any depth, and their informative values
-   stay. See tickets/053. *)
+(* merlin's JSON in, our JSON out: a round trip through the typed answers. *)
+let merlin_roundtrip codec ?(f = Fun.id) input =
+  match Merlin.list codec (Yojson.Safe.from_string input) with
+  | Error e -> Alcotest.fail e
+  | Ok items -> `List (List.map codec.Mcp_derive.to_json (f items))
+
+let merlin_same what want got =
+  Alcotest.(check string) what (Yojson.Safe.to_string (Yojson.Safe.from_string want))
+    (Yojson.Safe.to_string got)
+
+let pos l c = Printf.sprintf {|{"line":%d,"col":%d}|} l c
+
+(* Nothing-to-say fields leave, at any depth, informative values stay, and a
+   field merlin sends that no caller needs is not decoded at all. See
+   tickets/053 and 071. *)
 let test_merlin_trim () =
-  let j = Yojson.Safe.from_string in
-  let same what a b =
-    Alcotest.(check string) what (Yojson.Safe.to_string (j b))
-      (Yojson.Safe.to_string (Merlin.trim (j a))) in
-  same "an outline item keeps its selection and nested children are trimmed"
-    {|[{"name":"f","children":[{"name":"g","children":[],"deprecated":false}],
-        "deprecated":false,"selection":{"start":1}}]|}
-    {|[{"name":"f","children":[{"name":"g"}],"selection":{"start":1}}]|};
-  same "the informative values stay"
-    {|[{"stale":true,"tail":"call","deprecated":true},{"stale":false,"tail":"no"}]|}
-    {|[{"stale":true,"tail":"call","deprecated":true},{}]|}
+  let z = pos 1 0 in
+  merlin_same "an outline item keeps its selection and nested children are trimmed"
+    (Printf.sprintf
+       {|[{"start":%s,"end":%s,"name":"f","kind":"Value",
+           "children":[{"start":%s,"end":%s,"name":"g","kind":"Value"}],
+           "selection":{"start":%s,"end":%s}}]|} z z z z z z)
+    (merlin_roundtrip Merlin.outline_item_mcp
+       (Printf.sprintf
+          {|[{"start":%s,"end":%s,"name":"f","kind":"Value","deprecated":false,
+              "children":[{"start":%s,"end":%s,"name":"g","kind":"Value",
+                           "children":[],"deprecated":false}],
+              "selection":{"start":%s,"end":%s}}]|} z z z z z z));
+  merlin_same "a tail worth reading stays, and \"no\" goes"
+    (Printf.sprintf {|[{"start":%s,"end":%s,"type":"int","tail":"call"},
+                      {"start":%s,"end":%s,"type":"int"}]|} z z z z)
+    (merlin_roundtrip Merlin.enclosing_mcp ~f:(List.map Merlin.enclosing_tail)
+       (Printf.sprintf {|[{"start":%s,"end":%s,"type":"int","tail":"call"},
+                          {"start":%s,"end":%s,"type":"int","tail":"no"}]|} z z z z));
+  merlin_same "stale true stays and false goes"
+    (Printf.sprintf {|[{"start":%s,"end":%s,"stale":true},{"start":%s,"end":%s}]|} z z z z)
+    (merlin_roundtrip Merlin.occurrence_mcp
+       (Printf.sprintf {|[{"start":%s,"end":%s,"stale":true},
+                          {"start":%s,"end":%s,"stale":false}]|} z z z z))
 
 (* merlin answers last first, at every level. See tickets/066. *)
 let test_outline_order () =
-  let j = Yojson.Safe.from_string in
-  let at l c = Printf.sprintf {|{"line":%d,"col":%d}|} l c in
-  let got =
-    Merlin.in_source_order
-      (j (Printf.sprintf
-            {|[{"name":"b","start":%s},
-               {"name":"t","start":%s,"children":[{"name":"Reap","start":%s},
-                                                   {"name":"Nothing","start":%s}]},
-               {"name":"a","start":%s}]|}
-            (at 9 0) (at 3 0) (at 3 20) (at 3 9) (at 1 0))) in
-  Alcotest.(check string) "items and children in the order the file reads"
-    (Yojson.Safe.to_string
-       (j (Printf.sprintf
-             {|[{"name":"a","start":%s},
-                {"name":"t","start":%s,"children":[{"name":"Nothing","start":%s},
-                                                    {"name":"Reap","start":%s}]},
-                {"name":"b","start":%s}]|}
-             (at 1 0) (at 3 0) (at 3 9) (at 3 20) (at 9 0))))
-    (Yojson.Safe.to_string got)
+  let item name l c children =
+    Printf.sprintf {|{"start":%s,"end":%s,"name":"%s","kind":"Value"%s}|}
+      (pos l c) (pos l c) name
+      (if children = [] then "" else ",\"children\":[" ^ String.concat "," children ^ "]") in
+  merlin_same "items and children in the order the file reads"
+    (Printf.sprintf "[%s]"
+       (String.concat ","
+          [ item "a" 1 0 []; item "t" 3 0 [ item "Nothing" 3 9 []; item "Reap" 3 20 [] ];
+            item "b" 9 0 [] ]))
+    (merlin_roundtrip Merlin.outline_item_mcp ~f:Merlin.in_source_order
+       (Printf.sprintf "[%s]"
+          (String.concat ","
+             [ item "b" 9 0 []; item "t" 3 0 [ item "Reap" 3 20 []; item "Nothing" 3 9 [] ];
+               item "a" 1 0 [] ])))
 
 (* A basename becomes a path, once per file, and positions go. See
    tickets/069. *)
 let test_search_paths () =
-  let j = Yojson.Safe.from_string in
   let asked = ref [] in
   let resolve name half =
     asked := (name, half) :: !asked;
     if name = "Gone.x" then None else Some ("/lib/" ^ name ^ "." ^ half) in
-  let got =
-    Merlin.with_paths ~resolve
-      (j {|[{"file":"list.mli","start":{"line":1},"end":{"line":1},"name":"List.a","cost":1},
-            {"file":"list.mli","start":{"line":2},"name":"List.b"},
-            {"file":"m.ml","name":"M.f"},
-            {"file":"gone.mli","name":"Gone.x"}]|}) in
-  Alcotest.(check string) "paths in, positions and unresolved files out"
-    (Yojson.Safe.to_string
-       (j {|[{"file":"/lib/List.a.mli","name":"List.a","cost":1},
-             {"file":"/lib/List.a.mli","name":"List.b"},
-             {"file":"/lib/M.f.ml","name":"M.f"},
-             {"name":"Gone.x"}]|}))
-    (Yojson.Safe.to_string got);
+  let hit file name =
+    Printf.sprintf {|{"file":"%s","start":%s,"end":%s,"name":"%s","type":"t","cost":1,
+                      "doc":null,"constructible":"%s _"}|} file (pos 1 0) (pos 1 0) name name in
+  merlin_same "paths in, positions and unresolved files out"
+    {|[{"file":"/lib/List.a.mli","name":"List.a","type":"t","cost":1},
+       {"file":"/lib/List.a.mli","name":"List.b","type":"t","cost":1},
+       {"file":"/lib/M.f.ml","name":"M.f","type":"t","cost":1},
+       {"name":"Gone.x","type":"t","cost":1}]|}
+    (merlin_roundtrip Merlin.search_hit_mcp ~f:(Merlin.with_paths ~resolve)
+       (Printf.sprintf "[%s]"
+          (String.concat ","
+             [ hit "list.mli" "List.a"; hit "list.mli" "List.b"; hit "m.ml" "M.f";
+               hit "gone.mli" "Gone.x" ])));
   Alcotest.(check int) "one lookup per file" 3 (List.length !asked)
 
 (* A dead worker says how it ended. See tickets/063. *)
