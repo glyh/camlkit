@@ -330,6 +330,16 @@ must evaluate it first. Tests are Alcotest.
   difference to rest on. It also found
   [A warning arrives several times over](tickets/050-a-warning-arrives-several-times-over.md),
   where one warning reached the caller five times, now three.
+- [A breakpoint reached inside a run](tickets/052-a-breakpoint-reached-inside-a-run.md)
+  — **open.** The refusal of a breakpoint under autorun only sees the phrase
+  sent; one defined earlier and reached from inside an autorun phrase stops, and
+  while it is parked every other promise phrase fails with Lwt's "Nested calls
+  to Lwt_main.run". Lwt recovers once the phrase is continued or abandoned;
+  Async is not measured.
+- [merlin fields with nothing to say](tickets/053-merlin-fields-with-nothing-to-say.md)
+  — **open.** `outline`, `uses` and `type_at` forward merlin's empty and default
+  fields (`children: []`, `deprecated: false`, `stale: false`, `tail: "no"`) on
+  every item, against the absent-not-empty convention.
 - [Testing strategy](tickets/013-testing-strategy.md) — one tier, integration
   tests spawn a real worker and the real server in the default `dune test`.
 
