@@ -105,3 +105,43 @@ let adopt_switch () =
     List.iter (fun (k, v) -> Unix.putenv k v) (switch_vars prefix);
     Unix.putenv "PATH"
       (path_with ~bin:(Filename.concat prefix "bin") (Sys.getenv_opt "PATH"))
+
+(* OCAMLPARAM with [ours] applied after whatever the user already set there,
+   rather than in place of it: load builds through this variable (see
+   docs/wayfinder/tickets/054 and 060). Pure, so the merge is checkable without
+   an environment.
+
+   Read the way driver/compenv.ml reads it: a leading `:`, `|`, `;`, space or
+   comma chooses the separator, and exactly one `_` splits the settings applied
+   before the command line from those applied after. A value the compiler
+   refuses it also ignores whole, after saying so, so nothing of one is kept
+   here either. Ours go last, after the `_`, so `w=-a` has the final word.
+
+   The separator is chosen rather than fixed, because a ppx setting carries a
+   path, and a comma in the path would otherwise split it. Error only when every
+   separator the compiler allows occurs in some setting. *)
+let ocamlparam ~ours existing =
+  let args s =
+    if s = "" then []
+    else match s.[0] with
+      | (':' | '|' | ';' | ' ' | ',') as c -> List.tl (String.split_on_char c s)
+      | _ -> String.split_on_char ',' s
+  in
+  let theirs =
+    match existing with
+    | None -> []
+    | Some s ->
+      let a = List.filter (fun x -> x <> "") (args s) in
+      if List.length (List.filter (fun x -> x = "_") a) = 1 then a else []
+  in
+  let all = (if theirs = [] then [ "_" ] else theirs) @ ours in
+  let free c = List.for_all (fun a -> not (String.contains a c)) all in
+  match List.find_opt free [ ','; '|'; ';'; ':' ] with
+  | Some ',' -> Ok (String.concat "," all)
+  | Some c -> let sep = String.make 1 c in Ok (sep ^ String.concat sep all)
+  | None ->
+    Error
+      (Printf.sprintf
+         "OCAMLPARAM cannot carry these settings: each of , | ; : occurs in one \
+          of them, and the compiler allows no other separator: %s"
+         (String.concat " " all))

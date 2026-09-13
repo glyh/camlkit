@@ -806,6 +806,23 @@ let test_has_index () =
   Alcotest.(check bool) "a directory that does not exist is not an error" false
     (Merlin.has_index (Filename.concat root "nowhere"))
 
+(* A user's settings survive, and ours come after the `_`. See tickets/060. *)
+let test_ocamlparam () =
+  let p = Wire.Exe.ocamlparam ~ours:[ "ppx=/w --swap-ppx"; "w=-a" ] in
+  let ok what want got =
+    Alcotest.(check (result string string)) what (Ok want) got in
+  ok "nothing set is ours alone" "_,ppx=/w --swap-ppx,w=-a" (p None);
+  ok "a user's settings are kept on both sides of the marker"
+    "g=1,_,O3=1,ppx=/w --swap-ppx,w=-a" (p (Some "g=1,_,O3=1"));
+  ok "their own separator is read" "g=1,_,ppx=/w --swap-ppx,w=-a"
+    (p (Some ":g=1:_"));
+  ok "a value the compiler would refuse is dropped as it drops it"
+    "_,ppx=/w --swap-ppx,w=-a" (p (Some "g=1"));
+  ok "a comma in the path picks another separator"
+    "|_|ppx=/a,b --swap-ppx" (Wire.Exe.ocamlparam ~ours:[ "ppx=/a,b --swap-ppx" ] None);
+  Alcotest.(check bool) "and no separator at all is an error" true
+    (Result.is_error (Wire.Exe.ocamlparam ~ours:[ "ppx=/a,b|c;d:e" ] None))
+
 let test_document_sentinels () =
   let doc = function
     | Ok s -> "doc:" ^ s
@@ -844,7 +861,9 @@ let () =
          Alcotest.test_case "a build tree is not a switch" `Quick
            test_a_build_tree_is_not_a_switch;
          Alcotest.test_case "adoption is refusable" `Quick
-           test_adoption_is_refusable ]);
+           test_adoption_is_refusable;
+         Alcotest.test_case "OCAMLPARAM is merged, not replaced" `Quick
+           test_ocamlparam ]);
       ("msg",
        [ Alcotest.test_case "request" `Quick test_request_roundtrip;
          Alcotest.test_case "response" `Quick test_response_roundtrip ]);

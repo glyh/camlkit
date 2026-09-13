@@ -42,8 +42,8 @@ type asked =
    OCAMLPARAM rather than the project's flags, because a library whose flags
    omit :standard never sees flags set anywhere else, and it reaches the
    output of a project's own pps too. Warnings are off because the rewrite
-   produces ones a dev profile makes fatal, and nothing reads them here.
-   ponytail: a user's own OCAMLPARAM is replaced, not merged. *)
+   produces ones a dev profile makes fatal, and nothing reads them here. A
+   user's own OCAMLPARAM is kept and ours applied after it (tickets/060). *)
 let worker_digest = lazy (Digest.to_hex (Digest.file Sys.executable_name))
 
 let rewritten_build path =
@@ -64,15 +64,21 @@ let rewritten_build path =
     Unix.mkdir dir 0o755;
     Out_channel.with_open_bin stamp (fun oc -> output_string oc mine)
   end;
-  let param =
-    Printf.sprintf "_,ppx=%s %s,w=-a" (Filename.quote Sys.executable_name) Swap.ppx_flag in
-  Printf.sprintf "OCAMLPARAM=%s" (Filename.quote param),
-  Printf.sprintf "--build-dir %s" (Filename.quote dir)
+  let ours =
+    [ Printf.sprintf "ppx=%s %s" (Filename.quote Sys.executable_name) Swap.ppx_flag;
+      "w=-a" ] in
+  Result.map
+    (fun param ->
+       Printf.sprintf "OCAMLPARAM=%s" (Filename.quote param),
+       Printf.sprintf "--build-dir %s" (Filename.quote dir))
+    (Wire.Exe.ocamlparam ~ours (Sys.getenv_opt "OCAMLPARAM"))
 
 let dune_top ?(dir = ".") path =
   if not (is_dune_project path) then Not_a_project
   else
-  let env, build_dir = rewritten_build path in
+  match rewritten_build path with
+  | Error why -> Dune_failed why
+  | Ok (env, build_dir) ->
   (* stderr kept rather than discarded: it is the whole diagnosis when this
      fails, and it was being thrown away at the one point that had it. On the
      way through it is harmless, since only #directory and #load lines are
