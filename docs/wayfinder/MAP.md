@@ -352,8 +352,12 @@ must evaluate it first. Tests are Alcotest.
   — **open.** Hidden functions have cells but no type in scope to check a
   replacement against; the `.cmt` has one.
 - [Swapping a function not written as one](tickets/056-swapping-a-function-not-written-as-one.md)
-  — **open.** `let f = memoize g`, partial applications, externals and values
-  are left as built, because the untyped rewrite cannot see their arity.
+  — **done.** Measured first: 1.4% of fun's top-level functions and 6.7% of
+  mina's are computed by an expression, mostly aliases. The ppx now types a unit
+  that has one, with the context the compiler hands it, and wraps a binding
+  whose type is an arrow on its first parameter. The rewritten unit is typed
+  again and falls back to the syntactic rewrite if it fails. A cold load of fun
+  costs 0.6s more. Externals and values stay out of reach.
 - [Swapping a function inside a functor](tickets/057-swapping-a-function-inside-a-functor.md)
   — **open.** A unit-level cell would be shared by every application, and no
   path names one application.

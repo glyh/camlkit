@@ -5,8 +5,10 @@
    OCaml links a call inside a module directly, so overwriting the function in
    its module's block reaches callers in other modules only. The swap is made
    at build time instead: load builds the project through this file as a ppx,
-   and every top-level function written with parameters checks a cell on entry,
-   calling what the cell holds if something has been put there.
+   and every top-level function checks a cell on entry, calling what the cell
+   holds if something has been put there. A function written with parameters
+   is rewritten from its syntax; one computed by an expression is found by
+   typing the unit (tickets/056).
 
      let f ?(x = 1) (a, b) = body
    becomes
@@ -38,6 +40,20 @@ let lident ~loc path =
 let ident ~loc path = Ast_helper.Exp.ident ~loc (lident ~loc path)
 
 let var ~loc name = Ast_helper.Pat.var ~loc { Location.txt = name; loc }
+
+(* `if` a replacement is held `then` call it with [args] `else` [original]. An
+   immediate is the empty cell. *)
+let dispatch ~loc ~cell args original =
+  let held = Ast_helper.Exp.apply ~loc (ident ~loc [ "Stdlib"; "!" ])
+      [ (Nolabel, ident ~loc [ cell ]) ] in
+  let swapped =
+    Ast_helper.Exp.apply ~loc
+      (Ast_helper.Exp.apply ~loc (ident ~loc [ "Stdlib"; "Obj"; "obj" ])
+         [ (Nolabel, held) ])
+      args in
+  let test = Ast_helper.Exp.apply ~loc (ident ~loc [ "Stdlib"; "Obj"; "is_block" ])
+      [ (Nolabel, held) ] in
+  Ast_helper.Exp.ifthenelse ~loc test swapped (Some original)
 
 (* The part of the rewrite that goes inside a function. [cell] names the unit's
    cell for it. None for an expression that is not written as a function: its
@@ -105,22 +121,87 @@ let rewrite_function ~cell (e : expression) =
     (* [unwraps] is last parameter first, so folding it wraps outwards and the
        first parameter's match ends up outermost, in the original order. *)
     let original = List.fold_left (fun inner u -> u inner) inner unwraps in
-    let held = Ast_helper.Exp.apply ~loc (ident ~loc [ "Stdlib"; "!" ])
-        [ (Nolabel, ident ~loc [ cell ]) ] in
-    let swapped =
-      Ast_helper.Exp.apply ~loc
-        (Ast_helper.Exp.apply ~loc (ident ~loc [ "Stdlib"; "Obj"; "obj" ])
-           [ (Nolabel, held) ])
-        (List.rev args) in
-    let test = Ast_helper.Exp.apply ~loc (ident ~loc [ "Stdlib"; "Obj"; "is_block" ])
-        [ (Nolabel, held) ] in
     Some { e with
            pexp_desc =
              Pexp_function
                (List.rev params, constraint_,
-                Pfunction_body
-                  (Ast_helper.Exp.ifthenelse ~loc test swapped (Some original))) }
+                Pfunction_body (dispatch ~loc ~cell (List.rev args) original)) }
   | _ -> None
+
+(* A function computed by an expression, `let pp = Fmt.list pp_item`, whose
+   type says it is one. [label] is its first parameter's, from that type:
+     let f = let o = <expr> in fun ~l:p -> if held then cell ~l:p else o ~l:p
+   The expression still runs once, when the module initialises, and only the
+   first parameter is taken, so a function that does work between its
+   parameters still does it when it did: what `o p` returns is passed on as it
+   is. The binding stays generalisable exactly when it was, since a let of a
+   non-expansive expression around a function is itself non-expansive. *)
+let rewrite_computed ~cell label (e : expression) =
+  let loc = ghost e.pexp_loc in
+  let o = "__camlkit_o" and p = "__camlkit_p" in
+  let args = [ (label, ident ~loc [ p ]) ] in
+  Ast_helper.Exp.let_ ~loc Nonrecursive [ Ast_helper.Vb.mk ~loc (var ~loc o) e ]
+    (Ast_helper.Exp.function_ ~loc
+       [ { pparam_loc = loc; pparam_desc = Pparam_val (label, None, var ~loc p) } ]
+       None
+       (Pfunction_body
+          (dispatch ~loc ~cell args (Ast_helper.Exp.apply ~loc (ident ~loc [ o ]) args))))
+
+(* Types a unit the way the compiler is about to, in the environment the
+   compiler handed this ppx in its context, without warnings, which the
+   compiler reports itself. None when it does not type here: an unrewritten
+   binding is the answer then, not a failed build. *)
+let typed str =
+  match
+    Warnings.without_warnings (fun () ->
+        Typemod.type_structure (Compmisc.initial_env ()) str)
+  with
+  | (tstr, _, _, _, _) -> Some tstr
+  | exception _ -> None
+
+let same_place (a : Location.t) (b : Location.t) =
+  a.loc_start.pos_cnum = b.loc_start.pos_cnum && a.loc_end.pos_cnum = b.loc_end.pos_cnum
+
+(* The first parameter's label of every top-level binding whose type is a
+   function, by the binding's pattern, through submodules and not into
+   functors, as the rewrite walks. *)
+let arrows (tstr : Typedtree.structure) =
+  let found = ref [] in
+  let rec items (s : Typedtree.structure) = List.iter item s.str_items
+  and item (i : Typedtree.structure_item) =
+    match i.str_desc with
+    | Tstr_value (_, vbs) ->
+      List.iter
+        (fun (vb : Typedtree.value_binding) ->
+           match vb.vb_pat.pat_desc with
+           | Tpat_var (_, name, _) ->
+             (match
+                Types.get_desc
+                  (Ctype.expand_head vb.vb_expr.exp_env vb.vb_pat.pat_type)
+              with
+              | Types.Tarrow (label, _, _, _) ->
+                found := (vb.vb_pat.pat_loc, name.txt, label) :: !found
+              | _ -> ()
+              | exception _ -> ())
+           | _ -> ())
+        vbs
+    | Tstr_module { mb_expr; _ } -> module_expr mb_expr
+    | _ -> ()
+  and module_expr (m : Typedtree.module_expr) =
+    match m.mod_desc with
+    | Tmod_structure s -> items s
+    | Tmod_constraint (m, _, _, _) -> module_expr m
+    | _ -> ()
+  in
+  items tstr;
+  !found
+
+(* Nothing a type could tell apart from a value the syntax already shows. *)
+let obviously_not_a_function (e : expression) =
+  match e.pexp_desc with
+  | Pexp_constant _ | Pexp_construct _ | Pexp_variant _ | Pexp_record _
+  | Pexp_tuple _ | Pexp_array _ | Pexp_function _ -> true
+  | _ -> false
 
 (* A tag for this unit's cell names. A module without an interface exports its
    cells, and an `include` of it would shadow a unit's own cells of the same
@@ -134,49 +215,75 @@ let unit_tag () =
    every application. *)
 let rewrite_structure (str : structure) =
   let tag = unit_tag () in
-  let cells = ref [] in
-  let rec items prefix str = List.map (item prefix) str
-  and item prefix (i : structure_item) =
-    match i.pstr_desc with
-    | Pstr_value (rf, vbs) ->
-      let vb (b : value_binding) =
-        match b.pvb_pat.ppat_desc with
-        | Ppat_var { txt; _ } ->
-          (* The cell is only taken once the function is known to be one. *)
-          let cell = Printf.sprintf "__camlkit_swap_%s_%d" tag (List.length !cells) in
-          (match rewrite_function ~cell b.pvb_expr with
-           | Some e -> cells := (prefix ^ txt, cell) :: !cells; { b with pvb_expr = e }
-           | None -> b)
-        | _ -> b
-      in
-      { i with pstr_desc = Pstr_value (rf, List.map vb vbs) }
-    | Pstr_module ({ pmb_name = { txt = Some name; _ }; _ } as mb) ->
-      let rec body (m : module_expr) =
-        match m.pmod_desc with
-        | Pmod_structure s ->
-          { m with pmod_desc = Pmod_structure (items (prefix ^ name ^ ".") s) }
-        | Pmod_constraint (inner, mty) ->
-          { m with pmod_desc = Pmod_constraint (body inner, mty) }
-        | _ -> m
-      in
-      { i with pstr_desc = Pstr_module { mb with pmb_expr = body mb.pmb_expr } }
-    | _ -> i
+  (* Typed only when a binding needs its type, since this runs in a bytecode
+     worker over every unit a load builds. *)
+  let arrows = lazy (match typed str with Some t -> arrows t | None -> []) in
+  let rewrite ~computed =
+    let cells = ref [] and wrapped = ref 0 in
+    let rec items prefix str = List.map (item prefix) str
+    and item prefix (i : structure_item) =
+      match i.pstr_desc with
+      | Pstr_value (rf, vbs) ->
+        let vb (b : value_binding) =
+          match b.pvb_pat.ppat_desc with
+          | Ppat_var { txt; _ } ->
+            (* The cell is only taken once the function is known to be one. *)
+            let cell = Printf.sprintf "__camlkit_swap_%s_%d" tag (List.length !cells) in
+            let take e = cells := (prefix ^ txt, cell) :: !cells; { b with pvb_expr = e } in
+            (match rewrite_function ~cell b.pvb_expr with
+             | Some e -> take e
+             | None when computed && rf = Nonrecursive
+                         && not (obviously_not_a_function b.pvb_expr) ->
+               (match
+                  List.find_opt
+                    (fun (loc, name, _) -> name = txt && same_place loc b.pvb_pat.ppat_loc)
+                    (Lazy.force arrows)
+                with
+                | Some (_, _, label) ->
+                  incr wrapped; take (rewrite_computed ~cell label b.pvb_expr)
+                | None -> b)
+             | None -> b)
+          | _ -> b
+        in
+        { i with pstr_desc = Pstr_value (rf, List.map vb vbs) }
+      | Pstr_module ({ pmb_name = { txt = Some name; _ }; _ } as mb) ->
+        let rec body (m : module_expr) =
+          match m.pmod_desc with
+          | Pmod_structure s ->
+            { m with pmod_desc = Pmod_structure (items (prefix ^ name ^ ".") s) }
+          | Pmod_constraint (inner, mty) ->
+            { m with pmod_desc = Pmod_constraint (body inner, mty) }
+          | _ -> m
+        in
+        { i with pstr_desc = Pstr_module { mb with pmb_expr = body mb.pmb_expr } }
+      | _ -> i
+    in
+    let str = items "" str in
+    let cells = List.rev !cells in
+    let decls =
+      List.concat_map
+        (fun (_, name) ->
+           parse_structure
+             (Printf.sprintf "let %s = Stdlib.ref (Stdlib.Obj.repr 0)" name))
+        cells in
+    let array =
+      parse_structure
+        (Printf.sprintf "let %s = [| %s |]" cells_name
+           (String.concat "; "
+              (List.map (fun (key, name) -> Printf.sprintf "(%S, %s)" key name) cells)))
+    in
+    (decls @ str @ array, !wrapped)
   in
-  let str = items "" str in
-  let cells = List.rev !cells in
-  let decls =
-    List.concat_map
-      (fun (_, name) ->
-         parse_structure
-           (Printf.sprintf "let %s = Stdlib.ref (Stdlib.Obj.repr 0)" name))
-      cells in
-  let array =
-    parse_structure
-      (Printf.sprintf "let %s = [| %s |]" cells_name
-         (String.concat "; "
-            (List.map (fun (key, name) -> Printf.sprintf "(%S, %s)" key name) cells)))
-  in
-  decls @ str @ array
+  let with_computed, wrapped = rewrite ~computed:true in
+  (* A computed function's wrapper is checked by typing the unit again, and
+     dropped for the whole unit if that fails, so a case this did not foresee
+     costs that unit its computed swaps rather than the load its build. Only
+     paid for by a unit that has one. *)
+  if wrapped = 0 then with_computed
+  else
+    match typed with_computed with
+    | Some _ -> with_computed
+    | None -> fst (rewrite ~computed:false)
 
 let cells_type = "(Stdlib.String.t * Stdlib.Obj.t Stdlib.ref) Stdlib.Array.t"
 
@@ -374,10 +481,9 @@ let expand env (e : expression) (lid : Longident.t Location.loc) replacement =
        made in the session are not." written
   | Some (_, key, false) ->
     fail ~loc
-      "%s cannot be swapped: only top-level functions written with parameters \
-       (let f x = ..., fun, function) are, and %s is not one. A value, a \
-       function computed by an expression, an external, and anything inside a \
-       functor are left as they were built." written key
+      "%s cannot be swapped: %s is not a function load could wrap. A value, \
+       an external, a function defined with let rec by an expression, and \
+       anything inside a functor are left as they were built." written key
   | Some (_, _, true) when not bound ->
     fail ~loc
       "%s cannot be swapped from here: its interface does not export it, so \

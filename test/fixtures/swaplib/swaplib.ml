@@ -8,3 +8,8 @@ type pricer = string -> float
 (* A constraint before `function`, which the rewrite once moved onto the match
    the cases become, so the unit did not build. *)
 let flat (r : float) : pricer = function _ -> r
+(* Functions only the type says are functions. *)
+let scaled = List.map (fun x -> x *. 2.)
+let subtotal items = List.fold_left ( +. ) 0. (scaled items)
+let sum = ListLabels.fold_left ~f:( +. )
+let label = Printf.sprintf "%s: %.2f"

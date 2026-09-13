@@ -1051,11 +1051,20 @@ let test_a_swap_reaches_every_caller () =
   Alcotest.(check bool) "beside a watch in the same phrase too" true
     (has "swapped P.rate" r && has "= 150." r);
   ignore (ev "[%swap Swaplib.rate];;");
-  Alcotest.(check bool) "a constraint before function survives the rewrite" true
-    (has "= 1." (ev "Swaplib.flat 1. \"x\";;"));
+  (* Functions computed by an expression are swapped by their type. See
+     tickets/056. *)
+  let r = ev "Swaplib.flat 1. \"x\";; Swaplib.label \"a\" 1.;; Swaplib.subtotal [1.; 2.];;" in
+  Alcotest.(check bool) "a unit with computed functions still behaves as built" true
+    (has "= 1." r && has "\"a: 1.00\"" r && has "= 6." r);
+  let r = ev "[%swap Swaplib.scaled (fun l -> l)];; Swaplib.subtotal [1.; 2.];;" in
+  Alcotest.(check bool) "a partial application swaps, under a caller in its module" true
+    (has "swapped Swaplib.scaled" r && has "= 3." r);
+  let r = ev "[%swap Swaplib.sum (fun ~init _ -> init)];; Swaplib.sum ~init:5. [1.];;" in
+  Alcotest.(check bool) "and one whose first parameter is labelled" true (has "= 5." r);
+  ignore (ev "[%swap Swaplib.scaled];; [%swap Swaplib.sum];;");
   let r = ev "[%swap Swaplib.base (fun _ -> 1.)];;" in
   Alcotest.(check bool) "a value is refused, saying why" true
-    (has "only top-level functions written with parameters" r);
+    (has "is not a function" r);
   let r = ev "let open Stdlib in [%swap Swaplib.nope (fun x -> x)];;" in
   Alcotest.(check bool) "an unresolved path is refused, not a silent no-op" true
     (has "Unbound value Swaplib.nope" r && has "Nothing was executed" r);
