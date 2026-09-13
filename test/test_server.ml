@@ -1028,7 +1028,7 @@ let test_watch_records_without_stopping () =
     (match watched r with
      | `List ws ->
        List.exists (fun w ->
-           Yojson.Safe.Util.(member "site" w) = `String "same"
+           Yojson.Safe.Util.(member "name" w) = `String "same"
            && Yojson.Safe.Util.(member "hits" w) = `Int 5
            && (match Yojson.Safe.Util.(member "values" w) with
                | `List [ `String "0" ] -> true | _ -> false))
@@ -1119,37 +1119,69 @@ let test_markers_list_and_disarm () =
     (Yojson.Safe.Util.(member "structuredContent" r |> member "unknown")
      = `List [ `String "nosuch" ])
 
-(* A name is the handle a marker is disarmed by and the key a watch's values
-   are printed under, so two markers may not share one. Sharing across types
-   killed the worker: one site's ints were printed with the other's string
-   type. Re-evaluating a definition reuses its names, and stays allowed. *)
-let test_marker_names_do_not_clash () =
+(* A watch name can be written in several places, and each place is a site
+   with its own type and id: one shared type per name printed an int as a
+   string and killed the worker, and comparing types instead refused the
+   ordinary re-sending of a type with a watch on it. A breakpoint name written
+   again is a warning, and one name for both kinds is refused. *)
+let test_marker_sites () =
   with_server @@ fun c ->
   let ev code =
     call c ~id:1 ~tool:"eval"
-      ~args:(`Assoc [ "session", `String "clash"; "code", `String code ]) in
-  let refused r = has "Give this one another name" (text r)
-                  || has "each marker needs its own" (text r) in
-  Alcotest.(check bool) "two in one call are refused" true
-    (refused (ev "let a () = [%watch \"n\" 1];;\nlet b () = [%watch \"n\" 2];;"));
-  Alcotest.(check bool) "and nothing of that call ran" true
-    (has "Unbound value a" (text (ev "a ();;")));
-  ignore (ev "let a () = [%watch \"n\" 12345];;");
-  Alcotest.(check bool) "another type under the name is refused" true
-    (refused (ev "let b () = [%watch \"n\" \"hello\"];;"));
-  Alcotest.(check bool) "another kind under the name is refused" true
-    (refused (ev "let c () = [%break \"n\"];;"));
-  Alcotest.(check bool) "redefining with the same type is not" false
-    (refused (ev "let a () = [%watch \"n\" 7];;"));
-  Alcotest.(check bool) "and the session is alive" true
-    (has "7" (text (ev "a ();;")));
+      ~args:(`Assoc [ "session", `String "sites"; "code", `String code ]) in
+  let markers args =
+    call c ~id:2 ~tool:"markers"
+      ~args:(`Assoc (("session", `String "sites") :: args)) in
+  let watched r =
+    let open Yojson.Safe.Util in
+    member "structuredContent" r |> member "phrases" |> to_list
+    |> List.concat_map (fun p -> match member "watched" p with
+        | `List ws -> ws | _ -> [])
+  in
+  let field k w = Yojson.Safe.Util.member k w in
+  let r = ev "let a () = [%watch \"n\" 12345];;\n\
+              let b () = [%watch \"n\" \"hello\"];;\n\
+              a ();; b ();;" in
+  (match watched r with
+   | [ wa; wb ] ->
+     Alcotest.(check bool) "each value printed with its own site's type" true
+       (field "values" wa = `List [ `String "12345" ]
+        && field "values" wb = `List [ `String "\"hello\"" ]);
+     Alcotest.(check bool) "and each site says where it is" true
+       (field "in" wa = `String "a" && field "in" wb = `String "b"
+        && field "code" wb = `String "\"hello\""
+        && field "id" wa <> field "id" wb)
+   | _ -> Alcotest.fail "expected one watched entry per site");
+  (* Re-sending a type with a watch on it is the ordinary edit loop. *)
+  let chunk = "type t = A | B;;\nlet pick x = [%watch \"pick\" (if x then A else B)];;" in
+  ignore (ev chunk);
+  let r = ev (chunk ^ "\npick true;;") in
+  Alcotest.(check bool) "a type and its watch can be sent again" true
+    (has "val pick" (text r));
+  Alcotest.(check bool) "with a warning that a site was added beside the old one"
+    true (has "added watch \"pick\"" (text r) && has "2 sites in total" (text r));
+  (* One site of a name, off on its own. *)
+  let ida = match watched (ev "a ();;") with
+    | [ w ] -> (match field "id" w with `Int i -> i | _ -> -1) | _ -> -1 in
+  ignore (markers [ "disarm_sites", `List [ `Int ida ] ]);
+  Alcotest.(check int) "a disarmed site records nothing, its sibling still does" 1
+    (List.length (watched (ev "a ();; b ();;")));
+  Alcotest.(check bool) "an unknown site id is reported" true
+    (Yojson.Safe.Util.(member "structuredContent" (markers [ "arm_sites", `List [ `Int 9999 ] ])
+                       |> member "unknown_sites") = `List [ `Int 9999 ]);
+  (* A breakpoint name written again is a warning, not a refusal. *)
+  ignore (ev "let s () = [%break \"stop\"];;");
+  let r = ev "let s () = [%break \"stop\"];;" in
+  Alcotest.(check bool) "a breakpoint defined again warns" true
+    (has "defined again" (text r) && has "val s" (text r));
+  Alcotest.(check bool) "one name for both kinds is refused" true
+    (has "Give this one another name" (text (ev "let w () = [%watch \"stop\" 1];;")));
   (* A check runs nothing, so it registers nothing either. *)
-  ignore (call c ~id:2 ~tool:"eval"
-            ~args:(`Assoc [ "session", `String "clash"; "check", `Bool true;
+  ignore (call c ~id:3 ~tool:"eval"
+            ~args:(`Assoc [ "session", `String "sites"; "check", `Bool true;
                             "code", `String "let d () = [%watch \"checked\" 1];;" ]));
   Alcotest.(check bool) "a checked marker is not registered" false
-    (has "checked" (text (call c ~id:3 ~tool:"markers"
-                             ~args:(`Assoc [ "session", `String "clash" ]))))
+    (has "checked" (text (markers [])))
 
 (* A marker that is not [%break "name"] is not a breakpoint. The compiler would
    call it an uninterpreted extension, which does not say what the right form
@@ -1360,8 +1392,7 @@ let () =
            test_watch_records_without_stopping;
          Alcotest.test_case "markers list and disarm" `Slow
            test_markers_list_and_disarm;
-         Alcotest.test_case "marker names do not clash" `Slow
-           test_marker_names_do_not_clash;
+         Alcotest.test_case "marker sites" `Slow test_marker_sites;
          Alcotest.test_case "a malformed marker says the right form" `Slow
            test_a_malformed_marker_says_the_right_form;
          Alcotest.test_case "a breakpoint the runtime cannot reach says so" `Slow

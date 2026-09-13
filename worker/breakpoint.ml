@@ -75,82 +75,125 @@ let empty () = { items = []; len = 0 }
 let recent r = if r.len <= trail_limit then r.items
   else List.filteri (fun i _ -> i < trail_limit) r.items
 
-type site = {
-  site_name : string;
+(* Where a watch is written: the top-level definition holding it, its line in
+   the call that sent it, and the watched expression's own text. A name may be
+   written at several places, so this is how a caller tells them apart. *)
+type at = { in_def : string option; line : int; code : string }
+
+(* A name, which is what outlives any one place it is written: both kinds count
+   hits and are armed under it. A watch's name is also the default for the
+   sites written under it later, so disarming a name and re-evaluating its
+   definition leaves the new site disarmed too. *)
+type marker = {
+  name : string;
   kind : kind;
   mutable armed : bool;
-  mutable hits : int;            (* lifetime, not this call's *)
+  mutable hits : int;            (* lifetime, every site of the name *)
+}
+
+(* One place a watch is written. A name can be watched at several, each with
+   its own type, so every value is printed with the type of the site that
+   recorded it: one shared type per name printed an int as a string, and the
+   worker died. *)
+type site = {
+  id : int;
+  site_name : string;
+  at : at;
+  mutable site_armed : bool;
+  mutable site_hits : int;
   (* A watch's values, newest first, as the runtime handed them over. Printing
      needs the type, which only the typing pass knows, so they are kept raw and
      printed when the result is built. [trail] is the site's lifetime and
      [this_call] is emptied at the start of every phrase. *)
   trail : recent;
   this_call : recent;
-  (* The type and environment of the watched expression, stashed when the
-     phrase carrying the marker is typed. *)
   mutable printed_as : (Types.type_expr * Env.t) option;
 }
 
-let sites : (string, site) Hashtbl.t = Hashtbl.create 8
+let markers : (string, marker) Hashtbl.t = Hashtbl.create 8
+let sites : (int, site) Hashtbl.t = Hashtbl.create 8
+let last_site = ref 0
 
-(* Registered when a phrase carrying the marker is typed, so a site is listable
-   before it has ever fired. Re-registering keeps the arming and the count: a
-   caller that disarms a site and then re-evaluates its definition means to
-   leave it disarmed. *)
+(* The id the next site written will get. Sites are numbered when a call is
+   typed but only registered once it runs, so a call that fails or is checked
+   uses no numbers. *)
+let next_site () = !last_site + 1
+
+let find_marker name = Hashtbl.find_opt markers name
+
 let register ~kind name =
-  match Hashtbl.find_opt sites name with
-  | Some s -> s
+  match Hashtbl.find_opt markers name with
+  | Some m -> m
   | None ->
-    let s = { site_name = name; kind; armed = true; hits = 0;
-              trail = empty (); this_call = empty (); printed_as = None } in
-    Hashtbl.replace sites name s; s
+    let m = { name; kind; armed = true; hits = 0 } in
+    Hashtbl.replace markers name m; m
+
+let add_site ~id ~name ~at ~printed_as =
+  let m = register ~kind:Watch name in
+  last_site := max !last_site id;
+  Hashtbl.replace sites id
+    { id; site_name = name; at; site_armed = m.armed; site_hits = 0;
+      trail = empty (); this_call = empty (); printed_as }
 
 let known () =
-  List.sort (fun a b -> compare a.site_name b.site_name)
+  List.sort (fun a b -> compare a.name b.name)
+    (Hashtbl.fold (fun _ m acc -> m :: acc) markers [])
+
+let sites_of name =
+  List.sort (fun a b -> compare a.id b.id)
+    (Hashtbl.fold (fun _ s acc -> if s.site_name = name then s :: acc else acc)
+       sites [])
+
+let all_sites () =
+  List.sort (fun a b -> compare a.id b.id)
     (Hashtbl.fold (fun _ s acc -> s :: acc) sites [])
 
-let disarm name =
-  match Hashtbl.find_opt sites name with
+let set_name ~armed name =
+  match Hashtbl.find_opt markers name with
   | None -> false
-  | Some s -> s.armed <- false; true
+  | Some m ->
+    m.armed <- armed;
+    List.iter (fun s -> s.site_armed <- armed) (sites_of name);
+    true
 
-let arm name =
-  match Hashtbl.find_opt sites name with
+let set_site ~armed id =
+  match Hashtbl.find_opt sites id with
   | None -> false
-  | Some s -> s.armed <- true; true
-
-let forget_sites () = Hashtbl.reset sites
-
-let find_site name = Hashtbl.find_opt sites name
+  | Some s -> s.site_armed <- armed; true
 
 (* Emptied per phrase, so a result reports what its own phrase recorded rather
    than everything the site has ever seen. The trail keeps the rest. *)
 let start_call () =
   Hashtbl.iter (fun _ s -> s.this_call.items <- []; s.this_call.len <- 0) sites
 
-(* Called by the rewritten code. Counts every hit; stores a value only when it
-   differs from the newest one in that list. Each list is compared against its
-   own head rather than one shared last value, because this_call starts empty:
-   a shared one made a call that repeated the previous call's final value
-   report nothing, and let two sites of one name drop each other's values. *)
-let record name (v : Obj.t) =
-  let s = register ~kind:Watch name in
-  s.hits <- s.hits + 1;
-  if s.armed then begin
-    let add r =
-      match r.items with
-      | p :: _ when p == v -> ()
-      | l ->
-        r.items <- v :: l;
-        r.len <- r.len + 1;
-        if r.len >= 2 * trail_limit then begin
-          r.items <- recent r;
-          r.len <- trail_limit
-        end
-    in
-    add s.trail;
-    add s.this_call
-  end
+(* Called by the rewritten code, with the site it was written at. Counts every
+   hit; stores a value only when it differs from the newest one in that list.
+   Each list is compared against its own head rather than one shared last
+   value, because this_call starts empty: a shared one made a call that
+   repeated the previous call's final value report nothing. *)
+let record id (v : Obj.t) =
+  match Hashtbl.find_opt sites id with
+  | None -> ()
+  | Some s ->
+    s.site_hits <- s.site_hits + 1;
+    (match Hashtbl.find_opt markers s.site_name with
+     | Some m -> m.hits <- m.hits + 1
+     | None -> ());
+    if s.site_armed then begin
+      let add r =
+        match r.items with
+        | p :: _ when p == v -> ()
+        | l ->
+          r.items <- v :: l;
+          r.len <- r.len + 1;
+          if r.len >= 2 * trail_limit then begin
+            r.items <- recent r;
+            r.len <- trail_limit
+          end
+      in
+      add s.trail;
+      add s.this_call
+    end
 
 (* What a continue with abandon raises inside the parked phrase. The toplevel
    prints an exception by the name it was defined with, which for a worker
@@ -179,7 +222,7 @@ type parked = {
      dropping the tail of it. They typechecked in the original call, and
      toplevel code resolves a global when it is compiled, so a redefinition
      made while parked cannot change what they refer to. *)
-  rest : (Parsetree.toplevel_phrase * string option) list;
+  rest : (Parsetree.toplevel_phrase * string option * string) list;
   index : int;
   (* The rest of the phrase prints into the buffer the original call gave
      execute_phrase, which is inside the continuation and cannot be swapped.

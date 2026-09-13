@@ -182,49 +182,101 @@ type typed = {
   fired : string option;
   sg : Types.signature;
   warns : string;
-  (* The markers the phrase holds, each with a watch's type. Registered only
-     once the whole call is going to run; see commit_markers. *)
-  markers : (string * Breakpoint.kind * (Types.type_expr * Env.t) option) list;
+  (* The breakpoint names and watch sites the phrase holds, each site with
+     its type. Registered only once the whole call is going to run; see
+     commit_markers. *)
+  breaks : string list;
+  watches : ((Location.t * string * int * Breakpoint.at)
+             * (Types.type_expr * Env.t) option) list;
+  (* Said about the phrase's markers rather than by the compiler, and reported
+     with its warnings. *)
+  notes : string;
 }
 
-(* A marker's name is the handle markers disarms by, and a watch's values are
-   printed under the type stored against its name. So two markers in one call
-   may not share a name, and a name already in the session may be used again
-   only by the same kind of marker watching the same type - which is what
-   re-evaluating a definition does. Sharing across types was not merely
-   confusing: the values of one were printed with the other's type, and the
-   worker died. *)
-let marker_clash ~earlier markers =
-  let rec dup seen = function
-    | [] -> None
-    | (name, _, _) :: rest ->
-      if List.mem name seen then Some name else dup (name :: seen) rest
+let kind_name = function
+  | Breakpoint.Break -> "breakpoint" | Breakpoint.Watch -> "watch"
+
+(* A name is one kind of marker, since disarming a name must not silently hit
+   the other kind. Within that, a watch name may be written at any number of
+   places - each site keeps its own type, so nothing about sharing a name is
+   unsafe - and a breakpoint name may be written again, with a warning, since
+   every stop of that name then reports and disarms as one. [earlier] is the
+   markers of this call's phrases before this one. *)
+let marker_check ~earlier ~earlier_sites ~breaks ~watches =
+  let mine =
+    List.map (fun n -> (n, Breakpoint.Break)) breaks
+    @ List.map (fun ((_, n, _, _), _) -> (n, Breakpoint.Watch)) watches in
+  let kind_of name =
+    match Breakpoint.find_marker name with
+    | Some m -> Some m.Breakpoint.kind
+    | None ->
+      List.find_map (fun (n, k) -> if n = name then Some k else None)
+        (earlier @ mine)
   in
-  let kind_name = function
-    | Breakpoint.Break -> "breakpoint" | Breakpoint.Watch -> "watch" in
-  match dup earlier markers with
-  | Some name ->
-    Some (Printf.sprintf
-            "Two markers in this call are named %S. A name is how the markers \
-             tool disarms a marker and what a watch's values are printed \
-             under, so each marker needs its own." name)
-  | None ->
+  match
     List.find_map
-      (fun (name, kind, ty) ->
-         match Breakpoint.find_site name, ty with
-         | Some s, _ when s.Breakpoint.kind <> kind ->
-           Some (Printf.sprintf
-                   "%S is already a %s in this session, so it cannot name a \
-                    %s. Give this one another name." name
-                   (kind_name s.Breakpoint.kind) (kind_name kind))
-         | Some { Breakpoint.printed_as = Some (was, _); _ }, Some (ty, env)
-           when not (Ctype.is_equal env true [ was ] [ ty ]) ->
-           Some (Printf.sprintf
-                   "%S already watches a value of another type in this \
-                    session, and code holding that watch may still run. Give \
-                    this one another name." name)
+      (fun (name, kind) ->
+         match kind_of name with
+         | Some k when k <> kind -> Some (name, k, kind)
          | _ -> None)
-      markers
+      mine
+  with
+  | Some (name, was, kind) ->
+    Error (Printf.sprintf
+             "%S is already a %s, so it cannot name a %s. Disarming a name \
+              turns off everything under it, and one name for both kinds would \
+              turn off the other kind too. Give this one another name."
+             name (kind_name was) (kind_name kind))
+  | None ->
+    let seen name =
+      Breakpoint.find_marker name <> None
+      || List.mem (name, Breakpoint.Break) earlier in
+    let rec again seen_here = function
+      | [] -> []
+      | name :: rest ->
+        if seen name || List.mem name seen_here then name :: again seen_here rest
+        else again (name :: seen_here) rest
+    in
+    (* A watch added under a name that already has sites is said, not judged:
+       whether the older site is dead code is the caller's to know, and
+       disarm_sites is how it cleans up. *)
+    let added =
+      let rec go before = function
+        | [] -> []
+        | ((_, name, id, (at : Breakpoint.at)), _) :: rest ->
+          let others =
+            List.map (fun (s : Breakpoint.site) -> s.Breakpoint.id)
+              (Breakpoint.sites_of name)
+            @ List.filter_map (fun (n, i) -> if n = name then Some i else None)
+                (earlier_sites @ before)
+          in
+          let note =
+            if others = [] then []
+            else
+              [ Printf.sprintf
+                  "Warning: added watch %S #%d (%sline %d), so the name has \
+                   %d sites in total. The others, %s, still record whenever \
+                   their code runs. Disarm any you no longer want with markers \
+                   disarm_sites.\n"
+                  name id
+                  (match at.Breakpoint.in_def with
+                   | None -> "" | Some d -> "in " ^ d ^ ", ")
+                  at.Breakpoint.line
+                  (List.length others + 1)
+                  (String.concat ", " (List.map (Printf.sprintf "#%d") others)) ]
+          in
+          note @ go (before @ [ (name, id) ]) rest
+      in
+      go [] watches
+    in
+    Ok (String.concat ""
+          (List.map
+             (Printf.sprintf
+                "Warning: breakpoint %S is defined again. Any earlier one still \
+                 stops wherever its code runs, and stops of both report and \
+                 disarm under this one name.\n")
+             (List.sort_uniq compare (again [] breaks))
+           @ added))
 
 (* Registered at run rather than at typing, so a call that fails or is only
    checked leaves the registry alone, and before running, so a caller can list
@@ -233,11 +285,12 @@ let marker_clash ~earlier markers =
 let commit_markers typed =
   List.iter
     (fun t ->
+       List.iter (fun n -> ignore (Breakpoint.register ~kind:Breakpoint.Break n))
+         t.breaks;
        List.iter
-         (fun (name, kind, ty) ->
-            let s = Breakpoint.register ~kind name in
-            if ty <> None then s.Breakpoint.printed_as <- ty)
-         t.markers)
+         (fun ((_, name, id, at), printed_as) ->
+            Breakpoint.add_site ~id ~name ~at ~printed_as)
+         t.watches)
     typed
 
 (* Warnings are raised by whoever is typing, through a global formatter, so
@@ -256,13 +309,14 @@ let capturing_warnings f =
   let r = Fun.protect ~finally f in
   (r, Buffer.contents buf)
 
-let typecheck_all ~autorun phrases =
+let typecheck_all ~autorun ~src phrases =
   let env0 = !Toploop.toplevel_env in
   let restore () = Toploop.toplevel_env := env0 in
   let rec go i acc = function
     | [] -> restore (); Ok (List.rev acc)
     | (Parsetree.Ptop_dir _ as d) :: rest ->
-      go (i + 1) ({ tree = d; fired = None; sg = []; warns = ""; markers = [] } :: acc) rest
+      go (i + 1) ({ tree = d; fired = None; sg = []; warns = ""; breaks = []; watches = [];
+               notes = "" } :: acc) rest
     | Parsetree.Ptop_def str0 :: rest ->
       (* A marker cannot be typed as it stands, so it becomes a call with no
          locals first. What is in scope at it is only knowable from the typed
@@ -272,7 +326,13 @@ let typecheck_all ~autorun phrases =
          wrapping does not change. So there is no second rewrite, only a look
          at the tree afterwards. *)
       let str0, watch_sites =
-        if Watch.has_marker str0 then Watch.rewrite str0 else (str0, []) in
+        if not (Watch.has_marker str0) then (str0, [])
+        else
+          let first =
+            List.fold_left (fun n t -> n + List.length t.watches)
+              (Breakpoint.next_site ()) acc in
+          Watch.rewrite ~src ~first str0
+      in
       let breaking = Breakpoint.has_marker str0 in
       let str, marker_locs =
         if breaking then Breakpoint.rewrite_empty str0 else (str0, []) in
@@ -287,20 +347,26 @@ let typecheck_all ~autorun phrases =
       in
       (match typing with
        | Ok (tstr, sg, _, _, env) ->
-         let markers =
-           List.map (fun (_, name) -> (name, Breakpoint.Break, None)) marker_locs
-           @ List.map (fun (name, ty) -> (name, Breakpoint.Watch, ty))
-               (Watch.types tstr watch_sites)
-         in
+         let breaks = List.map snd marker_locs in
+         let watches = Watch.types tstr watch_sites in
          let earlier =
-           List.concat_map (fun t -> List.map (fun (n, _, _) -> n) t.markers) acc
+           List.concat_map
+             (fun t ->
+                List.map (fun n -> (n, Breakpoint.Break)) t.breaks
+                @ List.map (fun ((_, n, _, _), _) -> (n, Breakpoint.Watch))
+                    t.watches)
+             acc
          in
-         (match marker_clash ~earlier markers with
-         | Some message ->
+         let earlier_sites =
+           List.concat_map
+             (fun t -> List.map (fun ((_, n, id, _), _) -> (n, id)) t.watches) acc
+         in
+         (match marker_check ~earlier ~earlier_sites ~breaks ~watches with
+         | Error message ->
            restore ();
            Error Msg.{ phase = Typecheck; phrase_index = i; message;
                        spans = []; lines = []; done_ = [] }
-         | None ->
+         | Ok notes ->
          let env_before = !Toploop.toplevel_env in
          let str', fired = Autorun.rewrite ~enabled:autorun env_before str tstr in
          if breaking && fired <> None then begin
@@ -346,7 +412,8 @@ let typecheck_all ~autorun phrases =
            in
            Toploop.toplevel_env := env;
            go (i + 1)
-             ({ tree = Parsetree.Ptop_def str'; fired; sg; warns; markers } :: acc)
+             ({ tree = Parsetree.Ptop_def str'; fired; sg; warns; breaks; watches;
+                notes } :: acc)
              rest
          end)
        | Error exn ->
@@ -458,16 +525,21 @@ let bind_locals (locals : Breakpoint.local list) =
    own phrase's values rather than everything a site has ever seen; the
    lifetime count travels beside them, because "this has fired 4000 times" is
    what a caller wants before reading any of it. See tickets/049. *)
+let watched_of (s : Breakpoint.site) values =
+  Msg.{ site = s.Breakpoint.site_name; site_id = s.Breakpoint.id;
+        at = { in_def = s.Breakpoint.at.Breakpoint.in_def;
+               line = s.Breakpoint.at.Breakpoint.line;
+               code = s.Breakpoint.at.Breakpoint.code };
+        site_hits = s.Breakpoint.site_hits;
+        values = Watch.printed s values }
+
 let recorded_this_phrase () =
   List.filter_map
     (fun (s : Breakpoint.site) ->
-       match s.Breakpoint.kind, Breakpoint.recent s.Breakpoint.this_call with
-       | Breakpoint.Break, _ | _, [] -> None
-       | Breakpoint.Watch, values ->
-         Some Msg.{ site = s.Breakpoint.site_name;
-                    site_hits = s.Breakpoint.hits;
-                    values = Watch.printed s values })
-    (Breakpoint.known ())
+       match Breakpoint.recent s.Breakpoint.this_call with
+       | [] -> None
+       | values -> Some (watched_of s values))
+    (Breakpoint.all_sites ())
 
 (* Runs phrases from a given point, so a call that stopped can be finished
    later from where it left off. execute_all is this from the beginning. *)
@@ -476,7 +548,7 @@ let rec execute_from cap ~acc ~pos ~measure start phrases =
   match phrases with
   | [] -> Msg.Completed { phrases = List.rev !acc; autorun = Not_an_eval;
                           checked = false }
-  | (phrase, ran) :: rest ->
+  | (phrase, ran, notes) :: rest ->
     let i = start in
       let buf = Buffer.create 256 and wbuf = Buffer.create 64 in
       let ppf = Format.formatter_of_buffer buf in
@@ -536,7 +608,7 @@ let rec execute_from cap ~acc ~pos ~measure start phrases =
                        int_of_float (after -. before) * (Sys.word_size / 8) }
       in
       let record = Msg.{ rendering = Buffer.contents buf;
-                         warnings = Buffer.contents wbuf;
+                         warnings = notes ^ Buffer.contents wbuf;
                          out_start = !pos; out_len = stop - !pos;
                          dropped = 0; ran; cost;
                          watched = recorded_this_phrase () } in
@@ -575,7 +647,7 @@ let execute_all cap ~measure phrases =
    nothing - an evaluated expression is bound by then, so this is a directive -
    has an empty signature and renders as nothing, which the result already
    leaves out. *)
-let checked_phrase t ran =
+let checked_phrase t (ran, notes) =
   let buf = Buffer.create 128 in
   let ppf = Format.formatter_of_buffer buf in
   (* The environment the phrase typed against is gone by now: typecheck_all
@@ -587,7 +659,7 @@ let checked_phrase t ran =
   Format.pp_print_flush ppf ();
   let rendering = match String.trim (Buffer.contents buf) with
     | "" -> "" | s -> s ^ "\n" in
-  Msg.{ rendering; warnings = t.warns; out_start = 0; out_len = 0;
+  Msg.{ rendering; warnings = notes ^ t.warns; out_start = 0; out_len = 0;
         dropped = 0; ran; cost = None; watched = [] }
 
 (* The rules the call ran under, echoed on the way out: a rewrite is otherwise
@@ -658,7 +730,7 @@ let eval cap ~autorun ~check ~cost src =
          rejected request leaves no gap in the numbering. *)
       (* Auto-run first, then implicit names: after a bare expression becomes
          "let _N = ...", it is no longer an expression to rewrite. *)
-      match typecheck_all ~autorun:rules phrases with
+      match typecheck_all ~autorun:rules ~src phrases with
       | Error f -> Msg.Failed f
       | Ok typed ->
         (* Which rule fired is known only from this first pass: by the second
@@ -666,9 +738,10 @@ let eval cap ~autorun ~check ~cost src =
            markers likewise, since the first pass rewrote them away. *)
         let fired = List.map (fun t -> t.fired) typed in
         let first = typed in
+        let notes = List.map (fun t -> t.notes) typed in
         let phrases, next =
           bind_expressions !implicit_counter (List.map (fun t -> t.tree) typed) in
-        (match typecheck_all ~autorun:rules phrases with
+        (match typecheck_all ~autorun:rules ~src phrases with
          | Error f -> Msg.Failed f
          | Ok typed ->
            if check then
@@ -677,7 +750,9 @@ let eval cap ~autorun ~check ~cost src =
                 ran nothing, and the _N a check reports is then the name the
                 same code would really get if it were run next. *)
              with_autorun rules
-               (Msg.Completed { phrases = List.map2 checked_phrase typed fired;
+               (Msg.Completed { phrases =
+                                  List.map2 checked_phrase typed
+                                    (List.combine fired notes);
                                 autorun = Not_an_eval; checked = true })
            else begin
              implicit_counter := next;
@@ -693,7 +768,8 @@ let eval cap ~autorun ~check ~cost src =
                 nothing before this line can be any. See tickets/050. *)
              Capture.reset cap;
              let phrases =
-               List.combine (List.map (fun t -> t.tree) typed) fired in
+               List.map2 (fun t (ran, notes) -> (t.tree, ran, notes)) typed
+                 (List.combine fired notes) in
              with_autorun rules (execute_all cap ~measure:cost phrases)
            end)
 
@@ -761,21 +837,33 @@ let load cap ~libraries ~packages path =
    the same path: without it the only way to re-enable a marker would be to
    redefine its function, which is the trap disarming exists to avoid.
    See docs/wayfinder/tickets/049. *)
-let markers ~disarm ~arm =
+let markers ~disarm ~arm ~disarm_sites ~arm_sites =
   let unknown =
-    List.filter (fun n -> not (Breakpoint.disarm n)) disarm
-    @ List.filter (fun n -> not (Breakpoint.arm n)) arm
+    List.filter (fun n -> not (Breakpoint.set_name ~armed:false n)) disarm
+    @ List.filter (fun n -> not (Breakpoint.set_name ~armed:true n)) arm
   in
-  let of_site (s : Breakpoint.site) =
-    Msg.{ marker = s.Breakpoint.site_name;
+  let unknown_sites =
+    List.filter (fun i -> not (Breakpoint.set_site ~armed:false i)) disarm_sites
+    @ List.filter (fun i -> not (Breakpoint.set_site ~armed:true i)) arm_sites
+  in
+  let of_marker (m : Breakpoint.marker) =
+    Msg.{ marker = m.Breakpoint.name;
           marker_kind =
-            (match s.Breakpoint.kind with
+            (match m.Breakpoint.kind with
              | Breakpoint.Break -> "break" | Breakpoint.Watch -> "watch");
-          armed = s.Breakpoint.armed;
-          hits = s.Breakpoint.hits }
+          armed = m.Breakpoint.armed;
+          hits = m.Breakpoint.hits;
+          sites =
+            List.map
+              (fun (s : Breakpoint.site) ->
+                 let w = watched_of s [] in
+                 { id = w.site_id; where = w.at;
+                   site_armed = s.Breakpoint.site_armed;
+                   hits_here = s.Breakpoint.site_hits })
+              (Breakpoint.sites_of m.Breakpoint.name) }
   in
-  Msg.Markers_listed { markers = List.map of_site (Breakpoint.known ());
-                       unknown }
+  Msg.Markers_listed { markers = List.map of_marker (Breakpoint.known ());
+                       unknown; unknown_sites }
 
 (* --- parked phrases ----------------------------------------------------- *)
 
@@ -871,13 +959,10 @@ let continue_ cap ~id ~abandon =
 let trails () =
   List.filter_map
     (fun (s : Breakpoint.site) ->
-       match s.Breakpoint.kind with
-       | Breakpoint.Break -> None
-       | Breakpoint.Watch ->
-         Some Msg.{ site = s.Breakpoint.site_name;
-                    site_hits = s.Breakpoint.hits;
-                    values = Watch.printed s (Breakpoint.recent s.Breakpoint.trail) })
-    (Breakpoint.known ())
+       match Breakpoint.recent s.Breakpoint.trail with
+       | [] when s.Breakpoint.site_hits = 0 -> None
+       | values -> Some (watched_of s values))
+    (Breakpoint.all_sites ())
 
 let inspect cap ~id =
   Capture.reset cap;
@@ -926,7 +1011,7 @@ let directive cap src =
   match parse src with
   | Error f -> Msg.Failed f
   | Ok phrases ->
-    execute_all cap ~measure:false (List.map (fun p -> (p, None)) phrases)
+    execute_all cap ~measure:false (List.map (fun p -> (p, None, "")) phrases)
 
 (* Directives print to stdout, not to the formatter passed to execute_phrase,
    so the answer arrives in the captured output with an empty rendering. *)

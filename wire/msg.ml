@@ -28,7 +28,9 @@ type request =
   (* List every marker the session knows, and arm or disarm by name. A marker
      cannot be removed - it is compiled into the code holding it - so disarming
      is what "destroy" means here. See docs/wayfinder/tickets/049. *)
-  | Markers of { disarm : string list; arm : string list }
+  | Markers of { disarm : string list; arm : string list;
+                 (* One site of a watch name written in several places. *)
+                 disarm_sites : int list; arm_sites : int list }
   | Load of { path : string; libraries : string list;
               (* findlib packages to load first. A reset empties the session,
                  including anything it had required, and a project's libraries
@@ -61,9 +63,16 @@ type cost = {
 (* What one watch site recorded while a phrase ran. [hits] is the site's
    lifetime count and [values] are this phrase's, printed; see
    docs/wayfinder/tickets/049 for why the two windows differ. *)
+(* Where a watch is written, so the several places one name can be watched
+   are told apart: the top-level definition holding it, its line in the call
+   that sent it, and the watched expression's text. *)
+type at = { in_def : string option; line : int; code : string }
+
 type watched = {
-  site : string;
-  site_hits : int;
+  site : string;                 (* the name *)
+  site_id : int;
+  at : at;
+  site_hits : int;               (* this site's, not the name's *)
   values : string list;
 }
 
@@ -95,6 +104,16 @@ type marker = {
   marker_kind : string;          (* "break" or "watch" *)
   armed : bool;
   hits : int;
+  (* A watch's sites, each armed and counted on its own. Empty for a
+     breakpoint, whose name is the whole of what can be armed. *)
+  sites : marker_site list;
+}
+
+and marker_site = {
+  id : int;
+  where : at;
+  site_armed : bool;
+  hits_here : int;
 }
 
 type phase = Parse | Typecheck | Execute
@@ -144,7 +163,8 @@ type response =
   | Markers_listed of { markers : marker list;
                         (* Names asked for that the session has never seen. A
                            typo in a disarm is otherwise silent. *)
-                        unknown : string list }
+                        unknown : string list;
+                        unknown_sites : int list }
   | Rejected of string       (* e.g. a directive sent to eval *)
 let string_of_phase = function
   | Parse -> "parse" | Typecheck -> "typecheck" | Execute -> "execute"

@@ -145,7 +145,10 @@ let test_response_roundtrip () =
                            cost = Some { wall_ms = 1.5;
                                          allocated_bytes = 4096 };
                            watched =
-                             [ { site = "doubled"; site_hits = 3;
+                             [ { site = "doubled"; site_id = 7;
+                                 at = { in_def = Some "g"; line = 2;
+                                        code = "x * 2" };
+                                 site_hits = 3;
                                  values = [ "2"; "4"; "6" ] } ] } ];
              autorun = Msg.Ran_under [ "lwt"; "async" ]; checked = true });
   check (Msg.Failed { phase = Msg.Typecheck; phrase_index = 1;

@@ -60,7 +60,8 @@ let () =
         | Msg.Continue { id; abandon } -> Eval.continue_ cap ~id ~abandon
         | Msg.Inspect { id } -> Eval.inspect cap ~id
         | Msg.Require packages -> Eval.require cap packages
-        | Msg.Markers { disarm; arm } -> Eval.markers ~disarm ~arm
+        | Msg.Markers { disarm; arm; disarm_sites; arm_sites } ->
+          Eval.markers ~disarm ~arm ~disarm_sites ~arm_sites
         | Msg.Load { path; libraries; packages } ->
           Eval.load cap ~libraries ~packages path
       in

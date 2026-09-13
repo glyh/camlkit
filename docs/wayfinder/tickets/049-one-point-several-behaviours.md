@@ -155,14 +155,36 @@ phrase when there is something watched.
 
 ## Fixed afterwards
 
-**One name, one marker.** Two watches sharing a name shared one stored type,
-so one site's ints were printed with the other's string type and the worker
-died. A call is now refused at typecheck, before anything runs, when two of its
-markers share a name, or when a name already in the session is reused by the
-other kind of marker or for a watch of another type (`Ctype.is_equal`). The
-same kind and type is allowed, because that is what re-evaluating a definition
-does. Markers are registered once a call is going to run rather than while it
-types, so a failed or checked call no longer leaves one in `markers`.
+**A name, and the sites written under it.** Two watches sharing a name shared
+one stored type, so one site's ints were printed with the other's string type
+and the worker died.
+
+The first fix refused a reused name whose watched type differed, comparing with
+`Ctype.is_equal`. It refused ordinary work. Types are recorded while a call is
+typechecked, before it runs, and typing and running each define a call's types
+afresh, so a watch on a type defined in the same call held a type the session
+never had: redefining that function later, or re-sending the chunk after an
+edit, was refused with the type unchanged. Re-sending `type t` is a new type in
+plain OCaml too, so even a correct comparison refuses the edit loop.
+
+Built instead: every place a watch is written is a site with an id, and the
+rewritten code records by id. Each site keeps its own type, where it is written
+(the enclosing definition, its line in the call, the watched text) and its own
+trail, so a value is always printed with the type it was recorded under and
+nothing is compared. A name groups its sites for counting and disarming, and
+`markers` arms or disarms one site by id. A breakpoint name written again is
+accepted with a warning, since every stop of it then reports and disarms as
+one. One name for both kinds is still refused: disarming the name would turn off
+the other kind with it. Markers are registered once a call is going to run, so a
+failed or checked call leaves nothing in `markers`.
+
+Every re-evaluation adds a site, and nothing can tell whether code holding an
+older one is still reachable, so nothing guesses. A watch added under a name
+that already has sites comes back with a warning naming the new site and the
+others, and the caller disarms what it knows to be dead. Replacing a site
+automatically when its definition is sent again was considered and rejected:
+a closure kept from before the redefinition still fires, and a rule that hides
+it is a rule the caller has to learn and can be wrong about.
 
 **The cutoff was one slot shared too widely.** It compared against a single
 last value across calls and sites, so a call repeating the previous call's

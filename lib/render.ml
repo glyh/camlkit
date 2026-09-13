@@ -41,6 +41,19 @@ let bytes n =
   else if n >= 1_000 then Printf.sprintf "%.1f kB" (f /. 1e3)
   else Printf.sprintf "%d B" n
 
+(* Where a site is written, as fields: which definition, which line of the call
+   that sent it, and the watched text. *)
+let at_fields (a : Msg.at) =
+  (match a.Msg.in_def with None -> [] | Some d -> [ ("in", `String d) ])
+  @ [ ("line", `Int a.Msg.line) ]
+  @ field "code" a.Msg.code
+
+let at_text (a : Msg.at) =
+  Printf.sprintf "%sline %d%s"
+    (match a.Msg.in_def with None -> "" | Some d -> "in " ^ d ^ ", ")
+    a.Msg.line
+    (if a.Msg.code = "" then "" else ": " ^ a.Msg.code)
+
 let json_phrase payload (p : Msg.phrase) =
   let out = slice payload p in
   let out =
@@ -59,10 +72,13 @@ let json_phrase payload (p : Msg.phrase) =
          | ws ->
            [ ("watched",
               `List (List.map (fun (w : Msg.watched) ->
-                  `Assoc [ ("site", `String w.Msg.site);
-                           ("hits", `Int w.Msg.site_hits);
-                           ("values",
-                            `List (List.map (fun v -> `String v) w.Msg.values)) ])
+                  `Assoc ([ ("name", `String w.Msg.site);
+                            ("id", `Int w.Msg.site_id) ]
+                          @ at_fields w.Msg.at
+                          @ [ ("hits", `Int w.Msg.site_hits);
+                              ("values",
+                               `List (List.map (fun v -> `String v)
+                                        w.Msg.values)) ]))
                   ws)) ])
      @ (match p.cost with
          | None -> []
@@ -99,7 +115,8 @@ let transcript payload phrases =
       List.iter
         (fun (w : Msg.watched) ->
            Buffer.add_string buf
-             (Printf.sprintf "[watch %S: %s%s]\n" w.Msg.site
+             (Printf.sprintf "[watch %S #%d (%s): %s%s]\n" w.Msg.site
+                w.Msg.site_id (at_text w.Msg.at)
                 (String.concat ", " w.Msg.values)
                 (if w.Msg.site_hits > List.length w.Msg.values then
                    Printf.sprintf " (%d hits in all)" w.Msg.site_hits
@@ -267,17 +284,26 @@ let of_response (response : Msg.response) payload =
                | [] -> []
                | ps -> [ ("phrases", `List (List.map (json_phrase payload) ps)) ]));
       is_error = false }
-  | Msg.Markers_listed { markers; unknown } ->
+  | Msg.Markers_listed { markers; unknown; unknown_sites } ->
+    let plural n = if n = 1 then "" else "s" in
     let line (m : Msg.marker) =
-      Printf.sprintf "  %-20s %-6s %s, %d hit%s" m.Msg.marker m.Msg.marker_kind
+      Printf.sprintf "  %-20s %-6s %s, %d hit%s%s" m.Msg.marker m.Msg.marker_kind
         (if m.Msg.armed then "armed" else "disarmed") m.Msg.hits
-        (if m.Msg.hits = 1 then "" else "s")
+        (plural m.Msg.hits)
+        (String.concat ""
+           (List.map (fun (st : Msg.marker_site) ->
+                Printf.sprintf "\n    #%-4d %s, %d hit%s  (%s)" st.Msg.id
+                  (if st.Msg.site_armed then "armed" else "disarmed")
+                  st.Msg.hits_here (plural st.Msg.hits_here)
+                  (at_text st.Msg.where))
+               m.Msg.sites))
     in
     let body = match markers with
       | [] -> "no markers in this session"
       | ms -> String.concat "\n" (List.map line ms)
     in
-    let note = match unknown with
+    let never = unknown @ List.map (Printf.sprintf "#%d") unknown_sites in
+    let note = match never with
       | [] -> ""
       | ns ->
         Printf.sprintf "\n\nthis session has never seen: %s"
@@ -288,14 +314,28 @@ let of_response (response : Msg.response) payload =
         `Assoc
           (("markers",
             `List (List.map (fun (m : Msg.marker) ->
-                `Assoc [ ("name", `String m.Msg.marker);
-                         ("kind", `String m.Msg.marker_kind);
-                         ("armed", `Bool m.Msg.armed);
-                         ("hits", `Int m.Msg.hits) ]) markers))
+                `Assoc ([ ("name", `String m.Msg.marker);
+                          ("kind", `String m.Msg.marker_kind);
+                          ("armed", `Bool m.Msg.armed);
+                          ("hits", `Int m.Msg.hits) ]
+                        @ (match m.Msg.sites with
+                            | [] -> []
+                            | ss ->
+                              [ ("sites",
+                                 `List (List.map (fun (st : Msg.marker_site) ->
+                                     `Assoc ([ ("id", `Int st.Msg.id) ]
+                                             @ at_fields st.Msg.where
+                                             @ [ ("armed", `Bool st.Msg.site_armed);
+                                                 ("hits", `Int st.Msg.hits_here) ]))
+                                     ss)) ])))
+                markers))
            :: (match unknown with
                | [] -> []
                | ns -> [ ("unknown",
-                          `List (List.map (fun n -> `String n) ns)) ]));
+                          `List (List.map (fun n -> `String n) ns)) ])
+           @ (match unknown_sites with
+               | [] -> []
+               | is -> [ ("unknown_sites", `List (List.map (fun i -> `Int i) is)) ]));
       is_error = false }
   | Msg.Rejected why ->
     { content = why;

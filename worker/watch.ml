@@ -14,7 +14,7 @@
    harvest's trick without its temporary bindings. *)
 
 let hook_name = "__camlkit_watch"
-let hook_type = "string -> Obj.t -> unit"
+let hook_type = "int -> Obj.t -> unit"
 
 (* The binding the wrapper puts the value in, so the expression is evaluated
    once rather than twice. Reserved, like the hooks. *)
@@ -74,21 +74,21 @@ let ident ~loc name =
 
 let obj_repr = Option.get (Longident.unflatten [ "Obj"; "repr" ])
 
-(* let __camlkit_watched = e in hook "name" (Obj.repr __camlkit_watched);
+(* let __camlkit_watched = e in hook <site id> (Obj.repr __camlkit_watched);
    __camlkit_watched
 
    The whole thing keeps the marker's own location, so the typed node found
    there has the watched expression's type: a let-in types as its body, and the
    body is the value. Everything inserted is ghost, so the caller's text keeps
    its line and character numbers, which error spans and backtraces report. *)
-let wrap ~name (e : Parsetree.expression) inner =
+let wrap ~id (e : Parsetree.expression) inner =
   let loc = ghost e.pexp_loc in
   let held_pat = Ast_helper.Pat.var ~loc { Location.txt = held; loc } in
   let held_ref = ident ~loc held in
   let announce =
     Ast_helper.Exp.apply ~loc (ident ~loc hook_name)
       [ (Asttypes.Nolabel,
-         Ast_helper.Exp.constant ~loc (Ast_helper.Const.string name));
+         Ast_helper.Exp.constant ~loc (Ast_helper.Const.int id));
         (Asttypes.Nolabel,
          Ast_helper.Exp.apply ~loc
            (Ast_helper.Exp.ident ~loc { Location.txt = obj_repr; loc })
@@ -115,16 +115,57 @@ let count str =
 
 let has_marker str = count str > 0
 
-(* The rewritten tree, and each site's name with the location its typed node
-   will be found at. *)
-let rewrite str =
+(* The name a top-level definition binds, for saying where a site is: the
+   first variable its first binding introduces. *)
+let defines (item : Parsetree.structure_item) =
+  match item.pstr_desc with
+  | Parsetree.Pstr_value (_, vb :: _) ->
+    let rec name (p : Parsetree.pattern) =
+      match p.ppat_desc with
+      | Parsetree.Ppat_var { txt; _ } -> Some txt
+      | Parsetree.Ppat_constraint (p, _) | Parsetree.Ppat_alias (p, _) -> name p
+      | _ -> None
+    in
+    name vb.Parsetree.pvb_pat
+  | _ -> None
+
+(* The watched expression as the caller wrote it, on one line and cut short:
+   enough to recognise, not a second copy of the source. *)
+let code_of ~src (loc : Location.t) =
+  let a = loc.loc_start.Lexing.pos_cnum and b = loc.loc_end.Lexing.pos_cnum in
+  if a < 0 || b > String.length src || b <= a then ""
+  else
+    let flat =
+      String.concat " "
+        (List.filter (( <> ) "")
+           (String.split_on_char ' '
+              (String.map (function '\n' | '\t' | '\r' -> ' ' | c -> c)
+                 (String.sub src a (b - a)))))
+    in
+    if String.length flat <= 60 then flat else String.sub flat 0 57 ^ "..."
+
+(* The rewritten tree, and each site: where its typed node will be found, its
+   name, the id it is numbered with from [first], and where it is written. *)
+let rewrite ~src ~first str =
   let found = ref [] in
-  let m =
-    mapper ~replace:(fun ~name e inner ->
-        found := (e.Parsetree.pexp_loc, name) :: !found;
-        wrap ~name e inner)
+  let next = ref first in
+  let rewrite_item item =
+    let in_def = defines item in
+    let m =
+      mapper ~replace:(fun ~name e inner ->
+          let id = !next in
+          incr next;
+          let at = { Breakpoint.in_def;
+                     line = e.Parsetree.pexp_loc.loc_start.Lexing.pos_lnum;
+                     code = (match marker e with
+                         | Some (_, i) -> code_of ~src i.Parsetree.pexp_loc
+                         | None -> "") } in
+          found := (e.Parsetree.pexp_loc, name, id, at) :: !found;
+          wrap ~id e inner)
+    in
+    m.Ast_mapper.structure_item m item
   in
-  let str = m.Ast_mapper.structure m str in
+  let str = List.map rewrite_item str in
   (str, List.rev !found)
 
 (* The type and environment at each site, taken from the typed tree the same
@@ -133,7 +174,7 @@ let rewrite str =
    that fails to type, or is only checked, must leave the registry as it was,
    so eval stashes them once the call is going to run. *)
 let types tstr sites =
-  let want = List.map fst sites in
+  let want = List.map (fun (loc, _, _, _) -> loc) sites in
   let found = Hashtbl.create 4 in
   let iter =
     { Tast_iterator.default_iterator with
@@ -148,7 +189,7 @@ let types tstr sites =
           Tast_iterator.default_iterator.expr self e) }
   in
   iter.Tast_iterator.structure iter tstr;
-  List.mapi (fun i (_, name) -> (name, Hashtbl.find_opt found i)) sites
+  List.mapi (fun i site -> (site, Hashtbl.find_opt found i)) sites
 
 (* What a site recorded, printed, oldest first. The values are raw and the type
    is the one stashed above, so this is Toploop's own printer rather than a

@@ -426,7 +426,15 @@ let request_of_call name args =
       | `String s -> [ s ]
       | _ -> []
     in
-    Ok (Msg.Markers { disarm = names "disarm"; arm = names "arm" })
+    let ids key =
+      match Yojson.Safe.Util.member key args with
+      | `List l -> List.filter_map (function `Int i -> Some i | _ -> None) l
+      | `Int i -> [ i ]
+      | _ -> []
+    in
+    Ok (Msg.Markers { disarm = names "disarm"; arm = names "arm";
+                      disarm_sites = ids "disarm_sites";
+                      arm_sites = ids "arm_sites" })
   | "require" -> Result.map (fun p -> Msg.Require p) (arg_strings args "packages")
   | "load" -> assert false                       (* handled before we get here *)
   | "reset" -> assert false                      (* handled before we get here *)

@@ -143,9 +143,11 @@ let markers_tool =
        marker cannot be removed, because it is compiled into the code that \
        holds it, so a marker in a function you call often keeps firing until \
        you disarm it or redefine the function. Disarming a marker and then \
-       re-evaluating its definition leaves it disarmed. A name belongs to one \
-       marker: two in one call cannot share it, and a later call may reuse it \
-       only for the same kind of marker watching the same type.";
+       re-evaluating its definition leaves it disarmed. A watch name can be \
+       written in several places; each place is a site with its own id, shown \
+       with the definition and line it is in, and can be armed on its own. A \
+       breakpoint name written again is accepted with a warning, and a name \
+       cannot be both a breakpoint and a watch.";
     "inputSchema", obj
       [ session_arg;
         ("disarm", `Assoc
@@ -157,7 +159,17 @@ let markers_tool =
         ("arm", `Assoc
            [ "type", `String "array";
              "items", `Assoc [ "type", `String "string" ];
-             "description", `String "Names to turn back on." ]) ];
+             "description", `String "Names to turn back on." ]);
+        ("disarm_sites", `Assoc
+           [ "type", `String "array";
+             "items", `Assoc [ "type", `String "integer" ];
+             "description", `String
+               "Site ids to turn off, for one place a watch name is written \
+                rather than all of them." ]);
+        ("arm_sites", `Assoc
+           [ "type", `String "array";
+             "items", `Assoc [ "type", `String "integer" ];
+             "description", `String "Site ids to turn back on." ]) ];
     "outputSchema", obj
       [ ("markers", `Assoc
            [ "type", `String "array";
