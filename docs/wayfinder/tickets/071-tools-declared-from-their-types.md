@@ -124,10 +124,92 @@ failure constructor in each of nineteen result types, which each tool repeats
 and can omit; and an `isError` result with text only, which drops the fields
 063 just added and leaves a declared schema unconformed.
 
+**Field descriptions are doc comments; the manual stays.** A field's
+`(** ... *)` is already `[@ocaml.doc]`, so the deriver reads it into the
+schema's `description` and no attribute is invented. A tool's prose manual stays
+in `lib/guide.ml` behind `help`, and its description stays a trigger, as 062
+decided. Rejected: a custom `[@doc]`, which duplicates doc comments; and the
+manual as a comment on the args type, which puts pages of prose inside code.
+
+**`Tool.make` and `Tool.deferred`.** A tool that answers inside the call
+returns `(result, failure) Stdlib.result`. A worker tool is given a typed
+`~reply` and `pending` keeps that closure where it keeps a JSON-RPC id today, so
+the select loop is unchanged. Rejected: a callback for every tool, which the
+ten immediate ones never need; and a `Tool.worker` taking a request and a
+decoder, which is shaped around one request per call and does not fit `load`
+resetting and replaying packages first.
+
+**Annotations say what each tool does.**
+
+| tool | readOnly | destructive | idempotent | openWorld |
+| --- | --- | --- | --- | --- |
+| locate, type_at, outline, search_type, document, expand, diagnostics, context, signature, help | true | - | true | false |
+| describe, inspect | true | - | true | false |
+| uses | false | false | true | false |
+| markers | false | false | true | false |
+| require, load | false | false | true | false |
+| reset | false | true | true | false |
+| eval, continue | false | true | false | true |
+
+`uses` is not read-only because it builds dune's index into `_build`; `markers`
+arms and disarms. `eval` and `continue` run arbitrary code, so they keep MCP's
+worst-case defaults. Rejected: `readOnly` alone, which leaves `require` looking
+as destructive as `reset`; and a two-kind rule, which calls `markers` and `uses`
+read-only.
+
+**merlin's answers are decoded into records.** Outline items, enclosings,
+occurrences, search hits and locations get records deriving both ways, and
+merlin's reply is decoded into them. The schema then describes every field,
+`Merlin.trim` becomes the empty-is-absent default, and a change in what merlin
+sends fails as a decode error rather than silently changing our output.
+Rejected: an opaque `Yojson.Safe.t` field, schema `{}`, which leaves five tools
+undescribed on purpose; and typing only our own fields around merlin's.
+
+**`false` is empty; `0` is not.** `false` joins `None`, `[]` and `""` as absent
+by default, which fits `deprecated`, `stale` and `checked`. A number is always
+sent, since `hits: 0` is an answer. A flag whose `false` is the news is inverted:
+`uses` sends `incomplete: true` where it sent `complete: false`, a wire change.
+Rejected: `bool option` for flags, which admits `Some false`; and `0` as empty,
+which hides a marker that never fired.
+
+**Result types live in `lib`, not on `Msg`.** `wire` stays dependent on `unix`
+alone. `lib` defines the MCP result types and maps `Msg` into them, which is what
+`Render` does today, typed. Deriving on `Msg` would make `wire` need yojson, and
+the bytecode worker links `wire` with `-linkall` and loads projects that bring
+their own yojson: ticket 038's clash. `Msg` also carries offsets into the raw
+payload, which a result should not show. Rejected too: a schema-only derive in
+`wire` with hand-written encoders in `lib`, which is 070 again.
+
+**Names are snake_case, a trailing `_` dropped.** `Typecheck` is `"typecheck"`,
+`Not_an_eval` is `"not_an_eval"`, and `end_` is `"end"`, so a keyword can be a
+field. `[@name "..."]` overrides, for merlin's `"Type"` and `"Value"`. Every name
+on the wire today already fits. Rejected: `[@name]` everywhere, and constructor
+names verbatim, which would turn `"ok"` into `"Ok"`.
+
+**Exclusive arguments are a flat schema, decoded to a variant.** `document`'s
+`identifier` against `line` and `col` stays three optional properties, and a
+function turns the record into `By_name` or `At`, or into the "not both"
+failure; the description says the rule. A top-level `oneOf` in `inputSchema`
+would be exact, but clients such as Claude's API reject it. Rejected also:
+splitting `document` in two, which adds a tool against 062.
+
+**Migration: the deriver, then tool by tool.** The ppx with its own tests on
+sample types; `Tool.make` and `Tool.deferred` beside the old path, dispatch
+trying the typed table first; then one commit per tool, `help` and `outline`
+first and `eval` last; then deleting `Tools`' hand-written schemas, the `arg_*`
+helpers and `Render.transcript`. The suite passes at every commit. Rejected:
+one change of about two thousand lines red until the end; and a two-tool pilot,
+since the decisions above are already made.
+
 ## Open
 
-**How `eval` answers later.** Its result arrives from the worker after the call
-returns, through `pending`; the typed reply has to survive that.
+**A top-level `oneOf` in `outputSchema`, against a real client.** The result
+schemas decided above are tagged `oneOf`s at the root. The spec asks only that
+the root be `type: "object"`, and `outputSchema` is used by the client rather
+than sent to a model's API, but ticket 002 is the record that the first real
+client finds what tests do not. Check Claude Code accepts one before the
+deriver emits it; if not, the fallback is the flat union rejected above, kept
+honest by the per-constructor `required` lists moving into the description.
 
-**Where the manual goes.** `[@doc]` gives descriptions per field; ticket 062
-keeps a tool's description short and its manual behind `help`.
+**`content` serialized compact.** Not asked: it follows from ticket 004's token
+rule, where pretty-printing pays for whitespace the model does not need.

@@ -436,7 +436,9 @@ not.
   — **open.** A deriver, as the C# SDK derives from a method: arguments, result
   and annotations from types. Decided: tagged `oneOf` variants, empty absent by
   default, `content` always the serialized structure. `Tool.make` owns
-  `isError`. Open: `eval`'s late reply, where the manual goes.
+  `isError`; merlin decoded into records; types in `lib`, not `wire`; migrated
+  tool by tool. Open: whether Claude Code accepts a top-level `oneOf` output
+  schema.
 - [Testing strategy](tickets/013-testing-strategy.md) — one tier, integration
   tests spawn a real worker and the real server in the default `dune test`.
 
