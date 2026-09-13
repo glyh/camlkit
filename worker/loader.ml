@@ -33,7 +33,7 @@ type asked =
   | Dune_failed of string     (* asked, and dune could not answer *)
   | Answered of string list
 
-let dune_top path =
+let dune_top ?(dir = ".") path =
   if not (is_dune_project path) then Not_a_project
   else
   (* stderr kept rather than discarded: it is the whole diagnosis when this
@@ -41,8 +41,8 @@ let dune_top path =
      way through it is harmless, since only #directory and #load lines are
      read out of the output. *)
   let cmd =
-    Printf.sprintf "cd %s && %s top . 2>&1" (Filename.quote path)
-      (Filename.quote (Lazy.force dune_binary)) in
+    Printf.sprintf "cd %s && %s top %s 2>&1" (Filename.quote path)
+      (Filename.quote (Lazy.force dune_binary)) (Filename.quote dir) in
   let ic = Unix.open_process_in cmd in
   let rec drain acc =
     match input_line ic with
@@ -248,6 +248,37 @@ type route =
   | Nothing_to_do
   | Did of (string list * (string * string) list)
 
+(* The source directory an archive in the build tree was built from:
+   <root>/_build/<context>/<dir>/<name>.cma gives <dir>. *)
+let source_dir archive =
+  let d = Filename.dirname archive in
+  match Str.search_forward (Str.regexp "/_build/[^/]+/?") d 0 with
+  | exception Not_found -> None
+  | _ -> Some (match Str.string_after d (Str.match_end ()) with "" -> "." | r -> r)
+
+(* The archives the wanted libraries need, in an order that loads. Picking the
+   wanted names out of the whole project's list dropped what they depend on,
+   so load of one library failed on an undefined unit from its dependency.
+   dune top of a directory answers with that directory's libraries and their
+   whole closure, so ask per directory and keep the first of each archive.
+   ponytail: a directory holding several libraries loads all of them; filter
+   by dune describe's requires if that ever matters. *)
+let closure path wanted archives =
+  let mine = List.filter (fun a -> List.mem (name_of a) wanted) archives in
+  List.fold_left
+    (fun acc a ->
+       match acc, source_dir a with
+       | Error _, _ -> acc
+       | Ok got, None -> Ok (if List.mem a got then got else got @ [ a ])
+       | Ok got, Some dir ->
+         match dune_top ~dir path with
+         | Answered lines ->
+           Ok (got @ List.filter (fun a -> not (List.mem a got))
+                       (List.filter_map (directive_arg "load") lines))
+         | Dune_failed said -> Error said
+         | Not_a_project -> Ok got)
+    (Ok []) mine
+
 let load_via_dune ~libraries path =
   match dune_top path with
   | Not_a_project -> Scan
@@ -275,12 +306,6 @@ let load_via_dune ~libraries path =
         List.filter (fun w -> not (List.exists (fun a -> name_of a = w) archives))
           wanted
     in
-    let archives =
-      match libraries with
-      | [] -> archives
-      | wanted -> List.filter (fun a -> List.mem (name_of a) wanted) archives
-    in
-    let archives = List.filter (fun a -> not (already_linked ~root:path a)) archives in
     match wanted_missing with
     (* dune answered and does not have them, which the scan used to turn into
        "no .cma archives under ...", a sentence about the wrong thing. *)
@@ -292,6 +317,14 @@ let load_via_dune ~libraries path =
             | [] -> "nothing"
             | names -> String.concat ", " names))
     | [] ->
+    match (match libraries with
+           | [] -> Ok archives
+           | wanted -> closure path wanted archives) with
+    | Error said ->
+      Refuse (Printf.sprintf "dune could not say what %s needs:\n%s"
+                (String.concat ", " libraries) said)
+    | Ok archives ->
+    let archives = List.filter (fun a -> not (already_linked ~root:path a)) archives in
     if archives = [] then Nothing_to_do
     else
     match foreign_build archives with

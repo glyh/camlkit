@@ -22,6 +22,11 @@ loaded = call(1, "load", {"session": "s", "path": project})
 # Toploop left the worker dead on the next phrase.
 after = call(2, "eval", {"session": "s", "code": "Location.none;;"})
 
+# One library by name brings what it depends on. Filtering dune's whole list
+# by name dropped them, and camlkit alone failed on Yojson__Safe.
+one = call(5, "load", {"session": "one", "path": project, "libraries": ["camlkit"]})
+one_used = call(6, "eval", {"session": "one", "code": "Camlkit.Render.bytes 2048;;"})
+
 # The wrapper half of `context`, which needs a dune project and so cannot be
 # reached from dune test either: dune passes -open for a wrapped library, and
 # that open is the one a reader cannot guess.
@@ -53,10 +58,11 @@ print("load said     :", loaded)
 print("without dune  :", refused_text.split("\n")[0],
       "(expect a refusal, not a partial load)")
 print("next phrase   :", after, "(expect a Warnings.loc value)")
+print("one library   :", one, "/", one_used, "(expect camlkit with its deps)")
 print("context said  :", opens.replace("\n", " "))
 print("in context    :", in_context, "(expect a function, not Unbound value)")
 ok = ("ocamltoplevel" not in loaded and "loc_ghost" in after
-      and refused_ok
+      and refused_ok and "not loaded" not in one and "2.0 kB" in one_used
       and "open Camlkit.Render;;" in opens and "Unbound" not in in_context)
 print("PASS" if ok else "FAIL")
 try: p.terminate(); p.wait(timeout=5)
