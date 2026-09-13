@@ -1,5 +1,5 @@
 ---
-status: open
+status: closed
 type: research
 blocked-by: [002, 004, 062]
 assignee: lyh
@@ -65,7 +65,7 @@ the results the suite produces.
 carrying its name, type and encoder. That catches a misspelled field but not a
 field sent by a tool whose schema lacks it.
 
-## Decided so far
+## Decided
 
 With the user, September 2026.
 
@@ -201,15 +201,16 @@ helpers and `Render.transcript`. The suite passes at every commit. Rejected:
 one change of about two thousand lines red until the end; and a two-tool pilot,
 since the decisions above are already made.
 
-## Open
+## Verified
 
-**A top-level `oneOf` in `outputSchema`, against a real client.** The result
-schemas decided above are tagged `oneOf`s at the root. The spec asks only that
-the root be `type: "object"`, and `outputSchema` is used by the client rather
-than sent to a model's API, but ticket 002 is the record that the first real
-client finds what tests do not. Check Claude Code accepts one before the
-deriver emits it; if not, the fallback is the flat union rejected above, kept
-honest by the per-constructor `required` lists moving into the description.
+**A top-level `oneOf` in `outputSchema` works in Claude Code.** Tested on the
+installed build, September 2026, with a temporary change: `describe` declared
+`{"type":"object","oneOf":[{phrases required},{error required}]}` and `help` a
+schema requiring an integer `bogus` it never sends. The tools listed, both
+`describe` branches answered, and so did `help`. So Claude Code accepts the
+schema, and also does not validate results against it: the MUST is ours to
+keep, and nothing downstream reports breaking it. That is the case for the
+deriver rather than against it, since a mismatch would otherwise be silent.
 
 **`content` serialized compact.** Not asked: it follows from ticket 004's token
 rule, where pretty-printing pays for whitespace the model does not need.
