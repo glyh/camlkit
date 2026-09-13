@@ -37,7 +37,8 @@ Markers, for live debugging:
   use inspect to see them and continue to resume or abandon.
 - [%watch "name" expr] records every value of expr and returns it, without
   stopping. A phrase's result carries what its watches recorded during that
-  phrase, in watched; consecutive equal values are stored once with a count.
+  phrase, in watched, with hits counting that phrase's hits too; consecutive
+  equal values are stored once, so hits can be more than the values.
 - Both are compiled into the code holding them and keep firing whenever it
   runs. markers lists them and disarms them.
 - [%swap Module.f replacement] makes every caller of a top-level function in a
@@ -55,7 +56,8 @@ ran, watched, cost, and checked when the call only typechecked.|};
 
   "describe", {|Shows the signature of a module, value or type as a session sees it,
 including modules defined during the session. For an installed package the
-session has not loaded, signature answers without a session.|};
+session has not loaded, signature answers without a session.
+A name the session does not have answers error instead of phrases.|};
 
   "require", {|Loads findlib packages into a session, making their modules available to
 later calls. Packages with C stubs work from a bare environment. A load that
@@ -106,8 +108,8 @@ For a parked phrase: its locals, bound again under their bp_ names (bound, each
 with its type), which recovers an earlier stop's values after a later stop
 overwrote them. Locals that could not be bound are in skipped with the reason.
 
-For watches: each site's recent trail. An eval result reports only what its own
-phrase recorded; this is the history. Works with nothing parked, as long as
+For watches: each site's recent trail and lifetime hits. An eval result
+reports only what its own phrase recorded; this is the history. Works with nothing parked, as long as
 something has been watched.|};
 
   "markers", {|Lists the breakpoints and watches a session knows, and the swaps in force.
@@ -128,7 +130,10 @@ restore puts them back. unknown lists names passed that the session has not
 got, so a typo is not silent.|};
 
   "locate", {|Finds where the name at a position is defined, from source: nothing is
-built or loaded. line is 1-based, col 0-based.|};
+built or loaded. line is 1-based, col 0-based.
+
+location has the defining file and pos. A position with no name on it, or a
+name merlin cannot find, answers error instead, with merlin's reason.|};
 
   "type_at", {|The type of the expression at a position, and of each enclosing expression,
 innermost first, each with the range it covers. From source: no build, no
@@ -152,7 +157,11 @@ carries complete: false and a caveat rather than looking whole.|};
 
 Qualify type names: merlin matches against its own environment, not the
 buffer's, so write "Core.term -> string" even in a file that opens Core, or
-nothing is found. limit counts results after duplicates are removed.|};
+nothing is found. limit counts results after duplicates are removed.
+
+An entry names a value, not a position: file is the path of the interface or
+implementation it comes from, absent when merlin cannot locate it, and name is
+qualified, so document or signature take it directly.|};
 
   "expand", {|The code a ppx generated at a position, as source: what [@@deriving ...] or a
 [%extension] expands to. From the file, with no build and no session.

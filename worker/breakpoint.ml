@@ -103,6 +103,7 @@ type site = {
   at : at;
   mutable site_armed : bool;
   mutable site_hits : int;
+  mutable call_hits : int;       (* since start_call, beside this_call *)
   (* A watch's values, newest first, as the runtime handed them over. Printing
      needs the type, which only the typing pass knows, so they are kept raw and
      printed when the result is built. [trail] is the site's lifetime and
@@ -135,7 +136,7 @@ let add_site ~kind ~id ~name ~at ~printed_as =
   last_site := max !last_site id;
   Hashtbl.replace sites id
     { id; site_name = name; site_kind = kind; at; site_armed = true;
-      site_hits = 0; trail = empty (); this_call = empty (); printed_as }
+      site_hits = 0; call_hits = 0; trail = empty (); this_call = empty (); printed_as }
 
 let find_site id = Hashtbl.find_opt sites id
 
@@ -167,7 +168,9 @@ let set_site ~armed id =
 (* Emptied per phrase, so a result reports what its own phrase recorded rather
    than everything the site has ever seen. The trail keeps the rest. *)
 let start_call () =
-  Hashtbl.iter (fun _ s -> s.this_call.items <- []; s.this_call.len <- 0) sites
+  Hashtbl.iter
+    (fun _ s -> s.this_call.items <- []; s.this_call.len <- 0; s.call_hits <- 0)
+    sites
 
 (* Called by the rewritten code, with the site it was written at. Counts every
    hit; stores a value only when it differs from the newest one in that list.
@@ -179,6 +182,7 @@ let record id (v : Obj.t) =
   | None -> ()
   | Some s ->
     s.site_hits <- s.site_hits + 1;
+    s.call_hits <- s.call_hits + 1;
     (match Hashtbl.find_opt markers s.site_name with
      | Some m -> m.hits <- m.hits + 1
      | None -> ());

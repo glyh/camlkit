@@ -258,6 +258,7 @@ let phrases = function
   | Msg.Loaded _ -> Alcotest.fail "expected phrase results, got a load result"
   | Msg.Stopped _ -> Alcotest.fail "expected success, got a breakpoint"
   | Msg.Markers_listed _ -> Alcotest.fail "expected success, got a marker listing"
+  | Msg.Unknown u -> Alcotest.failf "expected success, got unknown: %s" u
 
 let test_eval_and_state () =
   with_worker @@ fun s ->
@@ -821,6 +822,62 @@ let test_merlin_trim () =
     {|[{"stale":true,"tail":"call","deprecated":true},{"stale":false,"tail":"no"}]|}
     {|[{"stale":true,"tail":"call","deprecated":true},{}]|}
 
+(* merlin answers last first, at every level. See tickets/066. *)
+let test_outline_order () =
+  let j = Yojson.Safe.from_string in
+  let at l c = Printf.sprintf {|{"line":%d,"col":%d}|} l c in
+  let got =
+    Merlin.in_source_order
+      (j (Printf.sprintf
+            {|[{"name":"b","start":%s},
+               {"name":"t","start":%s,"children":[{"name":"Reap","start":%s},
+                                                   {"name":"Nothing","start":%s}]},
+               {"name":"a","start":%s}]|}
+            (at 9 0) (at 3 0) (at 3 20) (at 3 9) (at 1 0))) in
+  Alcotest.(check string) "items and children in the order the file reads"
+    (Yojson.Safe.to_string
+       (j (Printf.sprintf
+             {|[{"name":"a","start":%s},
+                {"name":"t","start":%s,"children":[{"name":"Nothing","start":%s},
+                                                    {"name":"Reap","start":%s}]},
+                {"name":"b","start":%s}]|}
+             (at 1 0) (at 3 0) (at 3 9) (at 3 20) (at 9 0))))
+    (Yojson.Safe.to_string got)
+
+(* A basename becomes a path, once per file, and positions go. See
+   tickets/069. *)
+let test_search_paths () =
+  let j = Yojson.Safe.from_string in
+  let asked = ref [] in
+  let resolve name half =
+    asked := (name, half) :: !asked;
+    if name = "Gone.x" then None else Some ("/lib/" ^ name ^ "." ^ half) in
+  let got =
+    Merlin.with_paths ~resolve
+      (j {|[{"file":"list.mli","start":{"line":1},"end":{"line":1},"name":"List.a","cost":1},
+            {"file":"list.mli","start":{"line":2},"name":"List.b"},
+            {"file":"m.ml","name":"M.f"},
+            {"file":"gone.mli","name":"Gone.x"}]|}) in
+  Alcotest.(check string) "paths in, positions and unresolved files out"
+    (Yojson.Safe.to_string
+       (j {|[{"file":"/lib/List.a.mli","name":"List.a","cost":1},
+             {"file":"/lib/List.a.mli","name":"List.b"},
+             {"file":"/lib/M.f.ml","name":"M.f"},
+             {"name":"Gone.x"}]|}))
+    (Yojson.Safe.to_string got);
+  Alcotest.(check int) "one lookup per file" 3 (List.length !asked)
+
+(* A dead worker says how it ended. See tickets/063. *)
+let test_how_a_worker_ended () =
+  let fields s = Yojson.Safe.to_string (`Assoc (Render.exit_fields s)) in
+  Alcotest.(check string) "an exit is its code" {|{"exit_code":3}|}
+    (fields (Some (Unix.WEXITED 3)));
+  Alcotest.(check string) "a crash is its signal" {|{"signal":"SIGSEGV"}|}
+    (fields (Some (Unix.WSIGNALED Sys.sigsegv)));
+  Alcotest.(check string) "and unknown is nothing" "{}" (fields None);
+  Alcotest.(check string) "in words too" "was killed by SIGSEGV"
+    (Render.how_it_ended (Some (Unix.WSIGNALED Sys.sigsegv)))
+
 (* A user's settings survive, and ours come after the `_`. See tickets/060. *)
 let test_ocamlparam () =
   let p = Wire.Exe.ocamlparam ~ours:[ "ppx=/w --swap-ppx"; "w=-a" ] in
@@ -889,7 +946,13 @@ let () =
          Alcotest.test_case "an index that was not written" `Quick
            test_has_index;
          Alcotest.test_case "fields with nothing to say" `Quick
-           test_merlin_trim ]);
+           test_merlin_trim;
+         Alcotest.test_case "an outline reads top down" `Quick
+           test_outline_order;
+         Alcotest.test_case "a search hit names a path" `Quick
+           test_search_paths;
+         Alcotest.test_case "how a worker ended" `Quick
+           test_how_a_worker_ended ]);
       ("supervision",
        [ Alcotest.test_case "escalation" `Quick test_escalation;
          Alcotest.test_case "interrupt answered" `Quick

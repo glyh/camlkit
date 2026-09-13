@@ -286,3 +286,62 @@ let rec trim = function
          fields)
   | `List items -> `List (List.map trim items)
   | other -> other
+
+(* search-by-type names each hit's file by basename alone, `list.mli`, which no
+   tool taking a file accepts, and its position is into that unusable file. So
+   the position goes, since `name` is qualified and the tools that matter take
+   names, and the file is resolved to a path by [resolve], given a name found
+   in it and "ml" or "mli" for which half. One call per distinct basename,
+   because every hit from one file shares the path. A file that does not
+   resolve is left out rather than left bare. See docs/wayfinder/tickets/069. *)
+let with_paths ~resolve value =
+  let cache = Hashtbl.create 8 in
+  let path base name =
+    match Hashtbl.find_opt cache base with
+    | Some p -> p
+    | None ->
+      let half = if Filename.check_suffix base ".mli" then "mli" else "ml" in
+      let p = resolve name half in
+      Hashtbl.add cache base p; p
+  in
+  match value with
+  | `List items ->
+    `List
+      (List.map
+         (function
+           | `Assoc fields ->
+             let str k = match List.assoc_opt k fields with
+               | Some (`String s) -> Some s | _ -> None in
+             let file = match str "file", str "name" with
+               | Some base, Some name -> path base name
+               | _ -> None in
+             `Assoc
+               (List.filter_map
+                  (fun (k, v) -> match k with
+                     | "start" | "end" -> None
+                     | "file" -> Option.map (fun p -> (k, `String p)) file
+                     | _ -> Some (k, v))
+                  fields)
+           | other -> other)
+         items)
+  | other -> other
+
+(* An outline in the order the file reads. merlin gives items and each item's
+   children last first, so a caller reading down reads upside down, and one
+   taking the first match of a repeated name takes the shadowing one. Only
+   outline: enclosings are innermost first and search results ranked, both on
+   purpose. See docs/wayfinder/tickets/066. *)
+let rec in_source_order = function
+  | `List items ->
+    let start item =
+      let open Yojson.Safe.Util in
+      match member "start" item with
+      | `Assoc _ as p -> (member "line" p, member "col" p)
+      | _ -> (`Null, `Null)
+    in
+    `List (List.stable_sort (fun a b -> compare (start a) (start b))
+             (List.map in_source_order items))
+  | `Assoc fields ->
+    `Assoc (List.map (fun (k, v) ->
+        if k = "children" then (k, in_source_order v) else (k, v)) fields)
+  | other -> other

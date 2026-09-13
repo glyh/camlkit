@@ -13,6 +13,9 @@ type t = {
      dies; reading through this descriptor still works with no name. *)
   capture : Unix.file_descr;
   mutable state : Supervision.state;
+  (* How the worker ended, once it has been seen to: a caller told only that it
+     died cannot tell an exit from a segfault. See tickets/063. *)
+  mutable exited : Unix.process_status option;
 }
 
 (* Installed, the worker sits beside the server as camlkit-worker, which is
@@ -71,10 +74,11 @@ let spawn name =
   { name; pid; capture;
     ic = Unix.in_channel_of_descr from_worker_r;
     oc = Unix.out_channel_of_descr to_worker_w;
-    state = Supervision.Idle }
+    state = Supervision.Idle; exited = None }
 
 let fd t = Unix.descr_of_in_channel t.ic
 let state t = t.state
+let exited t = t.exited
 let is_busy t = Supervision.is_busy t.state
 let deadline t = Supervision.deadline t.state
 
@@ -106,8 +110,15 @@ let send t request ~timeout =
 let receive t =
   match Frame_io.read t.ic with
   | None | (exception Frame_io.Truncated) ->
+    (* Reaped here rather than by the Reap below, which ignores the status.
+       The kill is for a worker that closed its pipe and lives on; one already
+       exiting keeps the status it exited with. *)
+    (try Unix.kill t.pid Sys.sigkill with Unix.Unix_error _ -> ());
+    t.exited <- (try Some (snd (Unix.waitpid [] t.pid))
+                 with Unix.Unix_error _ -> None);
     apply t (Supervision.Vanished "worker exited mid-request");
-    Error "the worker died during evaluation; session state is gone"
+    Error (Printf.sprintf "the worker %s during evaluation; session state is gone"
+             (Render.how_it_ended t.exited))
   | Some { Frame.meta; payload } ->
     apply t Supervision.Replied;
     Ok (Msg.decode_response meta, payload)

@@ -409,27 +409,26 @@ not.
   manual behind a nineteenth tool, `help`. 16.4 KB loaded with the tools
   became 7.2 KB.
 - [Failures that read as answers](tickets/063-failures-that-read-as-answers.md)
-  — **open.** `describe` of an unknown name is `status: "ok"` with
-  "Unknown element.", `locate` puts merlin's failure string in `location`, and a
-  dead worker's exit status is discarded. `signature` and `document` already
-  decode the same strings.
+  — **fixed.** `describe` of an unknown name and `locate` with nothing there
+  answer `error` without `isError`; a dead worker's result carries `exit_code`
+  or `signal`. The four failure shapes are left for their own ticket.
 - [Printed output costs fifty values](tickets/064-printed-output-costs-fifty-values.md)
   — **open.** Output is clamped at 16 KiB while a value's printer stops near 300
   characters; whether a model-facing clamp should be smaller, or keep the tail.
 - [A refused swap prints its machinery](tickets/065-a-refused-swap-prints-its-machinery.md)
-  — **open.** The compiler's module inclusion error names the wrapper the check
-  is built from and the expected type three times before the line that matters.
+  — **fixed.** A swap's own check, recognised by location and by the inclusion
+  error's structure, prints only the value mismatch; the compiler still judges.
 - [outline answers bottom up](tickets/066-outline-answers-bottom-up.md) —
-  **open.** Items and constructors come in reverse source order, as merlin gives
-  them.
+  **fixed.** Items and children are sorted by start, for outline alone.
 - [A warning the build makes an error](tickets/067-a-warning-the-build-makes-an-error.md)
   — **open.** A warning dune's profile promotes lands in `errors` beside type
   errors; likely declined unless it misleads a caller.
 - [A watch counts more than it shows](tickets/068-a-watch-counts-more-than-it-shows.md)
-  — **open.** In an eval result `values` is this phrase's and `hits` the site's
-  lifetime total.
+  — **fixed.** An eval result's `hits` counts its own phrase, as `values` does;
+  `inspect` and `markers` keep the lifetime total.
 - [search_type names a file it does not locate](tickets/069-search-type-names-a-file-it-does-not-locate.md)
-  — **open.** Results carry `list.mli`, which no position-taking tool accepts.
+  — **fixed.** `file` is a path, resolved once per file through `locate`, and
+  the unusable position is gone.
 - [Testing strategy](tickets/013-testing-strategy.md) — one tier, integration
   tests spawn a real worker and the real server in the default `dune test`.
 

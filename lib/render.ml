@@ -107,8 +107,8 @@ let transcript payload phrases =
                             as a promise]\n" rule));
       (* A watch prints nothing of its own while it runs, so without this the
          transcript would show a phrase that recorded a thousand values as one
-         that did nothing. The lifetime count is beside this phrase's values
-         because the two answer different questions. *)
+         that did nothing. The count is over the same window as the values, and
+         said only when repeats or the cap made it larger. *)
       List.iter
         (fun (w : Msg.watched) ->
            Buffer.add_string buf
@@ -116,7 +116,7 @@ let transcript payload phrases =
                 w.Msg.site_id (at_text w.Msg.at)
                 (String.concat ", " w.Msg.values)
                 (if w.Msg.site_hits > List.length w.Msg.values then
-                   Printf.sprintf " (%d hits in all)" w.Msg.site_hits
+                   Printf.sprintf " (%d hits)" w.Msg.site_hits
                  else "")))
         p.watched;
       (* Only when the call asked. A phrase that allocated nothing still says
@@ -320,6 +320,9 @@ let of_response (response : Msg.response) payload =
            @ list_field "unknown" (fun n -> `String n) unknown
            @ list_field "unknown_sites" (fun i -> `Int i) unknown_sites);
       is_error = false }
+  | Msg.Unknown why ->
+    { content = why; structured = `Assoc [ "error", `String why ];
+      is_error = false }
   | Msg.Rejected why ->
     { content = why;
       structured = `Assoc [ "status", `String "rejected"; "reason", `String why ];
@@ -335,6 +338,27 @@ let with_note note t =
     structured = (match t.structured with
         | `Assoc fields -> `Assoc (("note", `String note) :: fields)
         | other -> other) }
+
+(* How a worker ended, as words and as fields: the code of an exit, or the
+   signal that killed it, which is what tells `exit 3` from a segfault. *)
+let signal_name n =
+  List.assoc_opt n
+    [ Sys.sigsegv, "SIGSEGV"; Sys.sigkill, "SIGKILL"; Sys.sigabrt, "SIGABRT";
+      Sys.sigbus, "SIGBUS"; Sys.sigfpe, "SIGFPE"; Sys.sigterm, "SIGTERM";
+      Sys.sigint, "SIGINT"; Sys.sigill, "SIGILL"; Sys.sigpipe, "SIGPIPE" ]
+  |> Option.value ~default:(Printf.sprintf "signal %d" n)
+
+let how_it_ended = function
+  | Some (Unix.WEXITED n) -> Printf.sprintf "exited with code %d" n
+  | Some (Unix.WSIGNALED n) -> "was killed by " ^ signal_name n
+  | Some (Unix.WSTOPPED n) -> "was stopped by " ^ signal_name n
+  | None -> "died"
+
+let exit_fields = function
+  | Some (Unix.WEXITED n) -> [ "exit_code", `Int n ]
+  | Some (Unix.WSIGNALED n) | Some (Unix.WSTOPPED n) ->
+    [ "signal", `String (signal_name n) ]
+  | None -> []
 
 (* The server failing at its own job, as opposed to a phrase failing, which is
    an ordinary result above. *)

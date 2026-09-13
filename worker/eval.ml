@@ -418,7 +418,12 @@ let typecheck_all ~autorun ~src phrases =
              rest
          end)
        | Error exn ->
-         let message, spans, lines = Toplevel.describe_exn exn in
+         let message, spans, lines =
+           match Swap.refusal exn with
+           | Some (loc, text) ->
+             let spans, lines = Toplevel.spans_of_loc loc in
+             ("Error: " ^ text, spans, lines)
+           | None -> Toplevel.describe_exn exn in
          restore ();
          Error Msg.{ phase = Typecheck; phrase_index = i; message; spans; lines;
                      done_ = [] })
@@ -536,10 +541,10 @@ let stopped_at site =
   | Some s -> (s.Breakpoint.site_name, msg_at s.Breakpoint.at)
   | None -> ("", Msg.{ in_def = None; line = 0; code = "" })
 
-let watched_of (s : Breakpoint.site) values =
+let watched_of (s : Breakpoint.site) ~hits values =
   Msg.{ site = s.Breakpoint.site_name; site_id = s.Breakpoint.id;
         at = msg_at s.Breakpoint.at;
-        site_hits = s.Breakpoint.site_hits;
+        site_hits = hits;
         values = Watch.printed s values }
 
 let recorded_this_phrase () =
@@ -547,7 +552,7 @@ let recorded_this_phrase () =
     (fun (s : Breakpoint.site) ->
        match Breakpoint.recent s.Breakpoint.this_call with
        | [] -> None
-       | values -> Some (watched_of s values))
+       | values -> Some (watched_of s ~hits:s.Breakpoint.call_hits values))
     (Breakpoint.all_sites ())
 
 (* Runs phrases from a given point, so a call that stopped can be finished
@@ -896,7 +901,7 @@ let markers ~disarm ~arm ~disarm_sites ~arm_sites ~restore =
           sites =
             List.map
               (fun (s : Breakpoint.site) ->
-                 let w = watched_of s [] in
+                 let w = watched_of s ~hits:s.Breakpoint.site_hits [] in
                  { id = w.site_id; where = w.at;
                    site_armed = s.Breakpoint.site_armed;
                    hits_here = s.Breakpoint.site_hits })
@@ -1004,7 +1009,7 @@ let trails () =
        match Breakpoint.recent s.Breakpoint.trail with
        | _ when s.Breakpoint.site_kind = Breakpoint.Break -> None
        | [] when s.Breakpoint.site_hits = 0 -> None
-       | values -> Some (watched_of s values))
+       | values -> Some (watched_of s ~hits:s.Breakpoint.site_hits values))
     (Breakpoint.all_sites ())
 
 let inspect cap ~id =
@@ -1059,7 +1064,17 @@ let directive cap src =
 
 (* Directives print to stdout, not to the formatter passed to execute_phrase,
    so the answer arrives in the captured output with an empty rendering. *)
-let describe cap path = directive cap (Printf.sprintf "#show %s;;" path)
+let describe cap path =
+  match directive cap (Printf.sprintf "#show %s;;" path) with
+  (* What #show prints for a path it cannot resolve, whichever component is
+     missing: a status of ok around it read as a lookup that worked. See
+     tickets/063. *)
+  | Msg.Completed _ when String.trim (fst (Capture.contents cap)) = "Unknown element." ->
+    Msg.Unknown
+      (Printf.sprintf
+         "no %s in this session; require its package, or signature reads an \
+          installed one without a session" path)
+  | answer -> answer
 
 (* Reports which packages are now loaded rather than an empty phrase result:
    a caller should not have to infer success from the absence of an error. *)

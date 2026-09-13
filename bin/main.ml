@@ -245,8 +245,18 @@ let source_query id name args =
          the number merlin happened to emit. Trimmed back afterwards. *)
       let limit = match requested_limit with
         | Some n -> [ "-limit"; string_of_int (n * 2) ] | None -> [] in
-      Merlin.query ~command:"search-by-type"
-        ~args:(pos @ [ "-query"; query ] @ limit) ~file ()
+      let* hits = Merlin.query ~command:"search-by-type"
+          ~args:(pos @ [ "-query"; query ] @ limit) ~file () in
+      let resolve name half =
+        (* Not the caller's position: see Merlin.neutral_position. *)
+        match Merlin.query ~command:"locate" ~file ()
+                ~args:[ "-position"; Merlin.neutral_position;
+                        "-prefix"; name; "-look-for"; half ] with
+        | Ok (`Assoc _ as v) ->
+          Yojson.Safe.Util.(member "file" v |> to_string_option)
+        | _ -> None
+      in
+      Ok (Merlin.with_paths ~resolve hits)
     | other -> Error ("no such source query: " ^ other)
   in
   (* HACK: papering over duplicate entries from merlin. The bug is upstream,
@@ -342,6 +352,12 @@ let source_query id name args =
                   structured = `Assoc (Render.list_field "errors" Fun.id errors
                                        @ Render.list_field "warnings" Fun.id warnings);
                   is_error = false })
+  (* A location is an object; every failure is a bare string under the same
+     class, "Not a valid identifier" among them, which went out where the
+     object goes. Not isError, as for document. See tickets/063. *)
+  | Ok (`String why) when name = "locate" ->
+    reply id { Render.content = why; structured = `Assoc [ "error", `String why ];
+               is_error = false }
   | Ok value when name = "expand" ->
     (match Merlin.expansion value with
      | Ok (code, deriver) ->
@@ -379,6 +395,8 @@ let source_query id name args =
       | v -> (None, v)
     in
     let value = Merlin.trim (dedup value) in
+    let value =
+      if name = "outline" then Merlin.in_source_order value else value in
     (* Trim only after dedup, so the caller gets the number it asked for. *)
     let value =
       match requested_limit, value with
@@ -745,8 +763,14 @@ let drain_worker name s =
        let r = Render.of_response response payload in
        reply id (match note with None -> r | Some n -> Render.with_note n r)
      | Error e ->
+       let r = Render.infrastructure_failure e in
+       let r = match r.Render.structured with
+         | `Assoc fields ->
+           { r with Render.structured =
+                      `Assoc (fields @ Render.exit_fields (Session.exited s)) }
+         | _ -> r in
        discard name "the worker died during evaluation";
-       reply id (Render.infrastructure_failure e))
+       reply id r)
 
 (* A session killed mid-request still owes its caller an answer. *)
 let reap_dead () =

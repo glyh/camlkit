@@ -1,8 +1,8 @@
 ---
-status: open
+status: resolved
 type: defect
 blocked-by: [004, 032]
-assignee:
+assignee: lyh
 ---
 
 # Failures that read as answers
@@ -44,3 +44,25 @@ failure shapes should become one is the separate surface question, and MAP's
 these has one recorded. The dead worker's exit status is
 already in hand and thrown away: `Session` calls `Unix.waitpid` and ignores
 what it returns.
+
+## Resolved
+
+Each of the three is a negative answer or an ended process said as data; the
+four failure shapes stay as they are, a question for another ticket.
+
+**describe.** The worker recognises `#show`'s "Unknown element." and answers a
+new `Msg.Unknown`, rendered as `{"error"}` without `isError`, like `document`.
+The message names the path and says `require` or `signature` reach a package
+the session lacks. `Frame.format_version` went to 10.
+
+**locate.** No sentinel set was needed: merlin answers a location as an object
+and every failure as a bare string, so any string is the error, in `error`.
+The output schema, which declared `file`, `line` and `col` where the result
+has always carried `location`, was corrected at the same time.
+
+**A dead worker.** `Session.receive` reaps the worker itself at end of input,
+killing first in case it closed its pipe and lives on, and keeps the status.
+The result stays `isError`, since the session is gone, and gains `exit_code`
+or `signal` (`SIGSEGV`), with the same in the text: "the worker exited with
+code 3 during evaluation". A kill already under way when the pipe closes does
+not change a status the process exited with.

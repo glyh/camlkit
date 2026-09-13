@@ -401,6 +401,38 @@ let marker (e : expression) =
 let fail ~loc fmt =
   Printf.ksprintf (fun s -> raise (Location.Error (Location.error ~loc s))) fmt
 
+
+(* The swap checks written so far in this phrase, by location, with the path
+   each was written as. A refusal is the compiler's module inclusion error
+   around a module the caller never wrote; [refusal] recognises one of these and
+   says only the value mismatch inside it. See docs/wayfinder/tickets/065. *)
+let checks : (Location.t * string) list ref = ref []
+
+let refusal exn =
+  let open Includemod.Error in
+  let value_mismatch = function
+    | { incompatibles = [ (_, Core (Value_descriptions d)) ]; _ } -> Some d
+    | _ -> None in
+  match exn with
+  | Typemod.Error (loc, env, Typemod.Not_included (_, all)) ->
+    (match List.assoc_opt loc !checks,
+           (match all with
+            | In_Signature s | In_Module_type { symptom = Signature s; _ } ->
+              value_mismatch s
+            | _ -> None) with
+     | Some written, Some d ->
+       let text =
+         Printtyp.wrap_printing_env ~error:true env (fun () ->
+             Format.asprintf
+               "@[<v>%s cannot be swapped for this replacement.@ %a@]"
+               written
+               (Format_doc.compat
+                  (Includecore.report_value_mismatch "the replacement" written env))
+               d.symptom) in
+       Some (loc, text)
+     | _ -> None)
+  | _ -> None
+
 let find_value env lid =
   match Env.find_value_by_name lid env with
   | (path, _) -> Some path
@@ -509,6 +541,7 @@ let expand env (e : expression) (lid : Longident.t Location.loc) replacement =
            Inclusion of one in the other is the check, so the error reads as
            the compiler's own signature mismatch, located at the replacement. *)
         let m = "Camlkit_swap" in
+        checks := (gloc, written) :: !checks;
         let binding value =
           Ast_helper.Mod.structure ~loc:gloc
             [ Ast_helper.Str.value ~loc:gloc Nonrecursive
@@ -535,6 +568,7 @@ let has_marker str =
 (* Raises Location.Error for a swap that cannot be made, which the typecheck
    pass reports like any other error at that span. *)
 let rewrite env str =
+  checks := [];
   if not (has_marker str) then str
   else
     let envs = envs env str in

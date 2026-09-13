@@ -70,7 +70,7 @@ let describe_tool =
     "Show the signature of a module, value or type a session has. Prefer it \
      to guessing at names."
     [ session_arg; ("path", str "Such as List or List.map.") ]
-    [ ("phrases", phrase_array) ]
+    [ ("phrases", phrase_array); ("error", typed "string") ]
 
 let require_tool =
   tool ~name:"require" ~required:[ "packages" ]
@@ -136,9 +136,7 @@ let error = ("error", typed "string")
 let locate_tool =
   tool ~name:"locate" ~required:[ "file"; "line"; "col" ]
     "Find where the name at a position is defined. No build or session."
-    at
-    [ ("file", typed "string"); ("line", typed "integer");
-      ("col", typed "integer") ]
+    at [ ("location", typed "object"); error ]
 
 let type_at_tool =
   tool ~name:"type_at" ~required:[ "file"; "line"; "col" ]

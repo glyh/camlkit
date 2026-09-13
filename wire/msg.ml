@@ -67,9 +67,10 @@ type cost = {
   allocated_bytes : int;
 }
 
-(* What one watch site recorded while a phrase ran. [hits] is the site's
-   lifetime count and [values] are this phrase's, printed; see
-   docs/wayfinder/tickets/049 for why the two windows differ. *)
+(* What one watch site recorded, and how often it was hit, over one window:
+   the phrase in an eval or continue result, the site's lifetime in inspect.
+   Both halves share it, since a count beside values from another window read
+   as hits collapsed into fewer values. See docs/wayfinder/tickets/068. *)
 
 type watched = {
   site : string;                 (* the name *)
@@ -148,6 +149,8 @@ type response =
   (* Loading is not a phrase result and should not pretend to be one: a caller
      wants the library names as data, not a sentence to parse. *)
   | Loaded of { loaded : string list; failed : (string * string) list }
+  (* A name the session does not have. Not a failure: the question was fine. *)
+  | Unknown of string
   | Failed of failure
   | Interrupted of { phrase_index : int; done_ : phrase list }
   (* A phrase performed [%break] and is parked. Mirrors Interrupted: the

@@ -137,6 +137,22 @@ let test_eval_through_the_loop () =
   let r = call c ~id:2 ~tool:"eval" ~args:(args "x + 1;;") in
   Alcotest.(check bool) "state persists across calls" true (has "43" (text r))
 
+(* A name the session lacks is an answer saying so, not an ok around
+   "Unknown element.". See tickets/063. *)
+let test_describe_an_unknown_name () =
+  with_server @@ fun c ->
+  let describe path = call c ~id:1 ~tool:"describe" ~args:(`Assoc [ "path", `String path ]) in
+  let r = describe "List.map" in
+  Alcotest.(check bool) "a known name has its signature" true
+    (has "val map" (text r));
+  let r = describe "Lwt_unix.sleep" in
+  let sc = Yojson.Safe.Util.member "structuredContent" r in
+  Alcotest.(check bool) "an unknown one has an error naming it" true
+    (match Yojson.Safe.Util.member "error" sc with
+     | `String e -> has "Lwt_unix.sleep" e | _ -> false);
+  Alcotest.(check bool) "no status ok, and not isError" true
+    (Yojson.Safe.Util.member "status" sc = `Null && not (is_error r))
+
 (* Reported from a session: whether an autorun setting had stuck could only be
    found out by evaluating a second probe, and a promise that had been run
    looked exactly like a plain value. Both answers are now in the result. *)
@@ -273,9 +289,13 @@ let test_worker_death_restarts_the_name () =
   with_server @@ fun c ->
   let args code = `Assoc [ "session", `String "s"; "code", `String code ] in
   ignore (call c ~id:1 ~tool:"eval" ~args:(args "let marker = 1;;"));
-  let r = call c ~id:2 ~tool:"eval" ~args:(args "let () = Stdlib.exit 0;;") in
+  let r = call c ~id:2 ~tool:"eval" ~args:(args "let () = Stdlib.exit 3;;") in
   Alcotest.(check bool) "a worker that exits is an infrastructure failure" true
     (is_error r);
+  (* tickets/063: how it ended, which tells an exit from a crash *)
+  Alcotest.(check bool) "with its exit code as a field and in the text" true
+    (Yojson.Safe.Util.(member "structuredContent" r |> member "exit_code") = `Int 3
+     && has "code 3" (text r));
   let r = call c ~id:3 ~tool:"eval" ~args:(args "marker;;") in
   Alcotest.(check bool) "the name works again" false (is_error r);
   Alcotest.(check bool) "and the result says the toplevel is fresh" true
@@ -749,7 +769,16 @@ let test_locate () =
       ~args:(`Assoc [ "file", `String path; "line", `Int 3; "col", `Int 41 ]) in
   let loc = Yojson.Safe.Util.(r |> member "structuredContent" |> member "location") in
   Alcotest.(check int) "greet is defined on line 1" 1
-    Yojson.Safe.Util.(loc |> member "pos" |> member "line" |> to_int)
+    Yojson.Safe.Util.(loc |> member "pos" |> member "line" |> to_int);
+  (* tickets/063: no name there is an error field, not a string where the
+     location goes *)
+  let r = call c ~id:2 ~tool:"locate"
+      ~args:(`Assoc [ "file", `String path; "line", `Int 1; "col", `Int 0 ]) in
+  let sc = Yojson.Safe.Util.member "structuredContent" r in
+  Alcotest.(check bool) "no location" true
+    (Yojson.Safe.Util.member "location" sc = `Null);
+  Alcotest.(check bool) "an error instead, not isError" true
+    (Yojson.Safe.Util.member "error" sc <> `Null && not (is_error r))
 
 (* Reported from a session: project-scope occurrences silently answered from
    one file when dune's index was missing, so a function used elsewhere looked
@@ -815,7 +844,17 @@ let test_search_type_fills_its_limit () =
        let distinct =
          List.sort_uniq compare (List.map Yojson.Safe.to_string got) in
        Alcotest.(check int) "and none of them repeat"
-         (List.length got) (List.length distinct))
+         (List.length got) (List.length distinct);
+       (* tickets/069: a path another tool accepts, and no position into it *)
+       List.iter
+         (fun e ->
+            let open Yojson.Safe.Util in
+            Alcotest.(check bool) "a file is a path" true
+              (match member "file" e with
+               | `String f -> not (Filename.is_relative f) | _ -> false);
+            Alcotest.(check bool) "and there is no position" true
+              (member "start" e = `Null))
+         got)
     [ 3; 8 ]
 
 (* A phrase stops where the caller wrote a marker, its locals become ordinary
@@ -1051,7 +1090,10 @@ let test_a_swap_reaches_every_caller () =
   Alcotest.(check bool) "a polymorphic function swaps" true (has "= 10" r);
   let r = ev "[%swap Swaplib.length (fun (l : int list) -> 0)];;" in
   Alcotest.(check bool) "a less general replacement is refused" true
-    (has "is not included in" r && has "Nothing was executed" r);
+    (has "Type int is not compatible with type 'a" r && has "Nothing was executed" r);
+  (* tickets/065: without the module the check is built from *)
+  Alcotest.(check bool) "and the refusal names no machinery" false
+    (has "sig" r || has "Camlkit_swap" r);
   let r = ev "[%swap Swaplib.rate];; Swaplib.total ~discount:1. \"EU\" [100.];;" in
   Alcotest.(check bool) "the original comes back" true (has "= 119." r);
   (* A path that only means something inside the phrase resolves there. See
@@ -1126,14 +1168,15 @@ let test_watch_records_without_stopping () =
     [ "2"; "4"; "6" ] (values r);
   Alcotest.(check bool) "and the phrase still produced its own value" true
     (has "[2; 4; 6]" (text r));
-  (* This call's values, the site's lifetime count. *)
+  (* This call's values, and this call's hits: a lifetime count beside them
+     read as hits collapsed into fewer values. See tickets/068. *)
   let r = ev "g [7];;" in
   Alcotest.(check (list string)) "only this call's values" [ "14" ] (values r);
-  Alcotest.(check bool) "with the lifetime count beside them" true
-    (hits r = `Int 4);
+  Alcotest.(check bool) "and only this call's hits" true (hits r = `Int 1);
   (* Consecutive duplicates are counted and not stored, so a loop that changes
      nothing stays at one entry. *)
   ignore (ev "let loop () = for _ = 1 to 5 do ignore [%watch \"same\" 0] done;;");
+  ignore (ev "loop ();;");
   let r = ev "loop ();;" in
   Alcotest.(check bool) "an unchanging loop keeps one value and counts five"
     true
@@ -1474,6 +1517,8 @@ let () =
            test_a_result_carries_only_what_it_has_to_say;
          Alcotest.test_case "a raise can be located" `Slow
            test_a_raise_can_be_located;
+         Alcotest.test_case "describe an unknown name" `Slow
+           test_describe_an_unknown_name;
          Alcotest.test_case "type error is not isError" `Slow
            test_type_error_is_not_is_error;
          Alcotest.test_case "unknown tool is isError" `Slow

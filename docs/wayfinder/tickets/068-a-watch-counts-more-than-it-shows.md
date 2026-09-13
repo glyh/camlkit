@@ -1,8 +1,8 @@
 ---
-status: open
+status: resolved
 type: defect
 blocked-by: [049]
-assignee:
+assignee: lyh
 ---
 
 # A watch counts more than it shows
@@ -24,3 +24,12 @@ like, so the shape is ambiguous rather than merely surprising.
 Make the two agree on the window: `hits` in an eval result counts this phrase's
 hits, and the lifetime total stays where it already is, in `markers` and
 `inspect`.
+
+## Resolved
+
+As directed. A site keeps `call_hits` beside `this_call`, counted by `record`
+and emptied by `start_call`, which `continue` also calls, so a resumed phrase
+counts from the resume like its values do. An eval or continue result's `hits`
+is that count; `inspect` and `markers` keep the lifetime total. The transcript
+says `(N hits)` when the count exceeds the values shown, which repeats and the
+cap both cause.
