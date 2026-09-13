@@ -1,8 +1,8 @@
 ---
-status: open
+status: closed
 type: defect
 blocked-by: [054, 059]
-assignee:
+assignee: lyh
 ---
 
 # A swap under an open takes a name
@@ -31,3 +31,10 @@ made the second form work at all. Cosmetic: the swap happens either way.
 marker. Looking through `Pexp_open` and `Pexp_letmodule` bodies down to a
 marker would cover both forms. The same then holds for a sequence ending in a
 swap, which is a question of where to stop rather than a new mechanism.
+
+## Declined
+
+Won't fix. The swap happens and says so in both forms. The extra line is a
+`unit` binding, which is what the phrase is, and it costs one line. Looking
+through `open` and `let module`, and then deciding where a sequence stops,
+would add rules to the rewrite to hide something that is true.
