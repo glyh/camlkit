@@ -29,9 +29,11 @@
   (alcotest (and (>= 1.7) :with-test))
   ; Only to exercise the Lwt half of auto-run; nothing links against it.
   (lwt :with-test)
+  ; Builds [@@deriving mcp] (ppx/), which the server's tool declarations are
+  ; derived with; nothing links ppxlib at run time. See tickets/071. The expand
+  ; tool's test uses it too, with ppx_deriving below.
+  (ppxlib (>= 0.36))
   ; A real deriver for the expand tool's test, built into a standalone driver
-  ; the suite names in a .merlin. Test-only: neither the server nor the worker
-  ; links either of these, and the tool itself needs no ppx at all - it asks
-  ; merlin about whichever ppx the file being examined is configured with.
-  (ppxlib :with-test)
+  ; the suite names in a .merlin. Test-only: the tool itself needs no ppx - it
+  ; asks merlin about whichever ppx the file being examined is configured with.
   (ppx_deriving :with-test)))

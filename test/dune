@@ -5,6 +5,8 @@
 (tests
  (names test_camlkit test_server)
  (libraries camlkit wire alcotest unix yojson str)
+ (preprocess
+  (pps ppx_mcp))
  (deps
   %{exe:../worker/main.bc.exe}
   %{exe:../bin/main.exe}

@@ -21,7 +21,7 @@ depends: [
   "yojson" {>= "2.0"}
   "alcotest" {>= "1.7" & with-test}
   "lwt" {with-test}
-  "ppxlib" {with-test}
+  "ppxlib" {>= "0.36"}
   "ppx_deriving" {with-test}
   "odoc" {with-doc}
 ]

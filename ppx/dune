@@ -1,0 +1,10 @@
+; [@@deriving mcp]: a type's JSON encoder, decoder and schemas from its
+; definition, so a tool's schema cannot drift from what it sends. See
+; docs/wayfinder/tickets/071.
+(library
+ (name ppx_mcp)
+ (kind ppx_deriver)
+ (libraries ppxlib)
+ (ppx_runtime_libraries mcp_derive)
+ (preprocess
+  (pps ppxlib.metaquot)))

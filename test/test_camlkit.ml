@@ -916,9 +916,113 @@ let test_document_sentinels () =
   Alcotest.(check bool) "a non-string answer is refused" true
     (Result.is_error (Merlin.documentation (`Int 1)))
 
+(* --- [@@deriving mcp] ----------------------------------------------------- *)
+
+(* Sample types standing for what the tools will declare. See tickets/071. *)
+type sample_args = {
+  session : string; [@default "main"]
+  (** Session name, default main. *)
+  path : string;
+  (** Such as List.map. *)
+  limit : int option;
+} [@@deriving mcp]
+
+type sample_phase = Parse | Typecheck | Not_an_eval [@@deriving mcp]
+
+type sample_pos = { line : int; col : int } [@@deriving mcp]
+
+type sample_item = {
+  name : string;
+  kind : sample_kind;
+  end_ : sample_pos;
+  deprecated : bool;
+  children : sample_item list;
+}
+and sample_kind = Value | Type [@name "Type"] [@@deriving mcp]
+
+type sample_result =
+  | Ok_ of { phrases : string list; warnings : string } [@name "ok"]
+  | Failed of { phase : sample_phase; message : string }
+  | Stopped
+  | Context of { opens : string list [@keep_empty]; hits : int }
+[@@deriving mcp ~tag:"status"]
+
+let json = Alcotest.testable Yojson.Safe.pp Yojson.Safe.equal
+let j = Yojson.Safe.from_string
+
+let test_derive_encoding () =
+  Alcotest.check json "empty is absent, tag first, numbers kept"
+    (j {|{"status":"ok","phrases":["a"]}|})
+    (sample_result_to_json (Ok_ { phrases = [ "a" ]; warnings = "" }));
+  Alcotest.check json "a constant constructor is its tag alone"
+    (j {|{"status":"stopped"}|}) (sample_result_to_json Stopped);
+  Alcotest.check json "an enum is a snake_case string"
+    (j {|{"status":"failed","phase":"typecheck","message":"m"}|})
+    (sample_result_to_json (Failed { phase = Typecheck; message = "m" }));
+  Alcotest.check json "keep_empty keeps [] and 0 is always sent"
+    (j {|{"status":"context","opens":[],"hits":0}|})
+    (sample_result_to_json (Context { opens = []; hits = 0 }));
+  Alcotest.check json "false is absent, end_ is end, [@name] overrides, recursion"
+    (j {|{"name":"t","kind":"Type","end":{"line":1,"col":2},
+          "children":[{"name":"c","kind":"value","end":{"line":1,"col":3}}]}|})
+    (sample_item_to_json
+       { name = "t"; kind = Type; end_ = { line = 1; col = 2 }; deprecated = false;
+         children = [ { name = "c"; kind = Value; end_ = { line = 1; col = 3 };
+                        deprecated = false; children = [] } ] });
+  Alcotest.check json "Not_an_eval is not_an_eval" (`String "not_an_eval")
+    (sample_phase_to_json Not_an_eval)
+
+let test_derive_decoding () =
+  let args s = sample_args_of_json (j s) in
+  (match args {|{"path":"List.map"}|} with
+   | Ok { session = "main"; path = "List.map"; limit = None } -> ()
+   | _ -> Alcotest.fail "a default and an absent option fill in");
+  (match args {|{"path":"x","limit":3,"session":"s"}|} with
+   | Ok { session = "s"; limit = Some 3; _ } -> ()
+   | _ -> Alcotest.fail "given values are read");
+  Alcotest.(check (result reject string)) "a required field is required"
+    (Error "missing field path") (Result.map (fun _ -> assert false) (args {|{}|}));
+  Alcotest.(check (result reject string)) "and a wrong type names its field"
+    (Error "limit: expected an integer, got \"3\"")
+    (Result.map (fun _ -> assert false) (args {|{"path":"x","limit":"3"}|}));
+  (match sample_result_of_json (j {|{"status":"failed","phase":"parse","message":"m"}|}) with
+   | Ok (Failed { phase = Parse; message = "m" }) -> ()
+   | _ -> Alcotest.fail "a tagged variant decodes by its tag");
+  Alcotest.(check (result reject string)) "an unknown tag is refused"
+    (Error "unknown status nope")
+    (Result.map (fun _ -> assert false) (sample_result_of_json (j {|{"status":"nope"}|})))
+
+let test_derive_schemas () =
+  let open Yojson.Safe.Util in
+  let s = sample_args_schema_in in
+  Alcotest.check json "in: only fields with neither option nor default are required"
+    (j {|["path"]|}) (member "required" s);
+  Alcotest.check json "a doc comment is the description"
+    (`String "Such as List.map.") (s |> member "properties" |> member "path" |> member "description");
+  let out = sample_item_schema_out in
+  Alcotest.check json "out: fields that are never left out are required"
+    (j {|["kind","end"]|}) (member "required" out);
+  Alcotest.check json "a group member is referenced shallowly"
+    (j {|{"type":"array","items":{"type":"object"}}|})
+    (out |> member "properties" |> member "children");
+  let branches = sample_result_schema_out |> member "oneOf" |> to_list in
+  Alcotest.(check int) "one branch per constructor" 4 (List.length branches);
+  Alcotest.check json "each branch requires its tag as a const"
+    (j {|{"type":"object","properties":{"status":{"const":"context"},
+          "opens":{"type":"array","items":{"type":"string"}},"hits":{"type":"integer"}},
+          "required":["status","opens","hits"]}|})
+    (List.nth branches 3);
+  Alcotest.check json "an enum schema lists its values"
+    (j {|{"type":"string","enum":["parse","typecheck","not_an_eval"]}|})
+    sample_phase_schema_out
+
 let () =
   Alcotest.run "camlkit"
-    [ ("frame",
+    [ ("derive",
+       [ Alcotest.test_case "encoding" `Quick test_derive_encoding;
+         Alcotest.test_case "decoding" `Quick test_derive_decoding;
+         Alcotest.test_case "schemas" `Quick test_derive_schemas ]);
+      ("frame",
        [ Alcotest.test_case "roundtrip" `Quick test_frame_roundtrip;
          Alcotest.test_case "empty payload" `Quick test_frame_empty_payload;
          Alcotest.test_case "partial input" `Quick test_frame_partial;
