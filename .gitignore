@@ -1,2 +1,5 @@
 _build/
 *.install
+
+# Machine-specific: which opam switch this checkout builds in.
+.envrc

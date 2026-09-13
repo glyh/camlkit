@@ -35,9 +35,18 @@ The worker is bytecode, and bytecode is version-locked: a worker built with
 OCaml 5.4 cannot load artifacts compiled by 5.3. If you only want to poke at
 installed libraries, any switch will do.
 
+**Evaluate `opam env` first, and check which switch that is.** `opam pin`
+installs into the current switch, and a shell that has not evaluated
+`opam env` answers with the global one. That is how a camlkit built for one
+switch ends up registered against another, and nothing fails at the time:
+the mismatch only shows later, as two switches rebuilding one `_build` in
+turn.
+
 Into your current switch:
 
 ```sh
+eval $(opam env)          # fish: eval (opam env)
+opam switch show          # the switch the next command installs into
 opam pin add camlkit https://github.com/glyh/camlkit.git
 ```
 
@@ -115,6 +124,8 @@ often is not.
 
 ```sh
 cd /path/to/project
+eval $(opam env)          # fish: eval (opam env)
+opam switch show          # must be the switch you installed camlkit into
 
 # current switch
 claude mcp add camlkit "$(opam var bin)/camlkit"
@@ -124,6 +135,12 @@ claude mcp add camlkit "$(opam var bin --switch /path/to/project)/camlkit"
 
 claude mcp list        # expect: camlkit: ... - ✔ Connected
 ```
+
+**Register the binary from the switch the project builds in.** The worker's
+`dune top` builds the project in the worker's own switch before loading it, so
+a client pointed at one switch and a shell building in another will not fail:
+they will rebuild the whole `_build` each time the other one touches it. Check
+what a registered server will actually run with `claude mcp get camlkit`.
 
 Ask opam where the binary is rather than assuming a layout: a global switch
 lives under `~/.opam/<name>/bin` and a local one under `<project>/_opam/bin`,
