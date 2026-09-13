@@ -72,6 +72,15 @@ same argument names for the same things (`session`, `file`, `line`, `col`,
 negative answer rather than `isError` when the question was fine, and a manual
 behind a short description. A deviation needs a reason recorded in its ticket.
 
+**No line and column unless there is no other way.** An agent names things;
+it does not count characters to a cursor, and a position it computes is
+the easiest argument to get wrong. A tool takes a name, such as `M.f`,
+wherever a name can pick out what is meant. It takes `line` and `col` only
+when nothing else can, such as a subexpression or a ppx expansion site that
+has no name, and its ticket says why. `locate`, `type_at`, `uses`,
+`search_type` and `expand` take positions today and are to be moved over
+later.
+
 **Report, don't guess.** When a result could be tidied by a clever rule, such
 as replacing a watch site when its definition is sent again, do not build the
 rule. Report what happened, with the ids and counts that let the calling agent
