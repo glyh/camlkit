@@ -279,10 +279,13 @@ let expand env (e : expression) (lid : Longident.t Location.loc) replacement =
   let bound = find_value env lid.txt <> None in
   match resolve env components with
   | (None | Some (_, _, false)) when not bound ->
-    (* Typed as it stands, so the compiler's own unbound-value error, with its
-       spelling hints, is what the caller reads. *)
-    Ast_helper.Exp.apply ~loc:(ghost loc) (ident ~loc [ "Stdlib"; "ignore" ])
-      [ (Nolabel, Ast_helper.Exp.ident ~loc lid) ]
+    (* Refused here rather than left for the compiler to report: typed inside
+       the phrase, a path reachable only under a local open would type, and
+       the swap would do nothing without saying so. See tickets/059. *)
+    fail ~loc
+      "Unbound value %s. A swap's path is resolved at the session's top \
+       level, not under an open inside the phrase, so write it in full."
+      written
   | None ->
     fail ~loc
       "%s cannot be swapped: it is not in code that load built. Only a dune \

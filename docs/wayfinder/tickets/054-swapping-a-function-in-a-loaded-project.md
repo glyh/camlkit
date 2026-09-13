@@ -98,11 +98,13 @@ per call, and a missed case is the silent stale answer this exists to avoid.
 ## Not built
 
 - A function the interface does not export has a cell but cannot be swapped:
-  there is no type in scope to check a replacement against. The unit's `.cmt`
-  has one.
-- Functors, values, functions computed by an expression (`let f = memoize g`),
-  externals. The syntax does not give their arity or labels.
-- Functions defined in the session.
-- The path in `[%swap]` is resolved in the session's scope, not under a local
-  `open` inside the phrase.
-- A user's own OCAMLPARAM is replaced rather than merged.
+  [Swapping a function the interface hides](055-swapping-a-function-the-interface-hides.md).
+- Values, functions computed by an expression, externals:
+  [Swapping a function not written as one](056-swapping-a-function-not-written-as-one.md).
+- Functor bodies: [Swapping a function inside a functor](057-swapping-a-function-inside-a-functor.md).
+- Functions defined in the session:
+  [Swapping a function defined in the session](058-swapping-a-function-defined-in-the-session.md).
+- A path resolved only under a local `open` is refused; it was first a silent
+  no-op: [A swap path under a local open](059-a-swap-path-under-a-local-open.md).
+- A user's own OCAMLPARAM is replaced rather than merged:
+  [load replaces the user's OCAMLPARAM](060-load-replaces-the-user-s-ocamlparam.md).

@@ -347,6 +347,24 @@ must evaluate it first. Tests are Alcotest.
   module's field was measured to miss calls inside the module; the indirection
   costs 1-2 ns a call, and a fast path proving when overwriting is enough was
   rejected as a whole-program analysis for that saving.
+- [Swapping a function the interface hides](tickets/055-swapping-a-function-the-interface-hides.md)
+  — **open.** Hidden functions have cells but no type in scope to check a
+  replacement against; the `.cmt` has one.
+- [Swapping a function not written as one](tickets/056-swapping-a-function-not-written-as-one.md)
+  — **open.** `let f = memoize g`, partial applications, externals and values
+  are left as built, because the untyped rewrite cannot see their arity.
+- [Swapping a function inside a functor](tickets/057-swapping-a-function-inside-a-functor.md)
+  — **open.** A unit-level cell would be shared by every application, and no
+  path names one application.
+- [Swapping a function defined in the session](tickets/058-swapping-a-function-defined-in-the-session.md)
+  — **open.** Session definitions have no cells; whether redefinition itself
+  should fill one is the surface question.
+- [A swap path under a local open](tickets/059-a-swap-path-under-a-local-open.md)
+  — **open.** The path is resolved at top level; it was a silent no-op under a
+  local open and is now refused.
+- [load replaces the user's OCAMLPARAM](tickets/060-load-replaces-the-user-s-ocamlparam.md)
+  — **open.** Replaced rather than merged, and a comma in the worker's path
+  would break the setting.
 - [Testing strategy](tickets/013-testing-strategy.md) — one tier, integration
   tests spawn a real worker and the real server in the default `dune test`.
 

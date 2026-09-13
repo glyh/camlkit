@@ -1004,6 +1004,9 @@ let test_a_swap_reaches_every_caller () =
   let r = ev "[%swap Swaplib.base (fun _ -> 1.)];;" in
   Alcotest.(check bool) "a value is refused, saying why" true
     (has "only top-level functions written with parameters" r);
+  let r = ev "let open Stdlib in [%swap Swaplib.nope (fun x -> x)];;" in
+  Alcotest.(check bool) "an unresolved path is refused, not a silent no-op" true
+    (has "Unbound value Swaplib.nope" r && has "Nothing was executed" r);
   let r = ev "[%swap List.length (fun _ -> 0)];;" in
   Alcotest.(check bool) "code load did not build is refused" true
     (has "not in code that load built" r)
