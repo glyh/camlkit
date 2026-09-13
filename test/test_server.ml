@@ -978,6 +978,36 @@ let test_a_breakpoint_under_autorun_is_refused () =
     (has "autorun will run as a promise" (text r));
   Alcotest.(check bool) "and nothing ran" true (has "Nothing was executed" (text r))
 
+(* A swap reaches every caller, including one inside the function's own module,
+   which overwriting the module's field cannot. The fixture is built through the
+   worker's ppx, as load builds a project. See docs/wayfinder/tickets/054. *)
+let test_a_swap_reaches_every_caller () =
+  with_server @@ fun c ->
+  let session = `String "sw" in
+  let r = call c ~id:1 ~tool:"require"
+      ~args:(`Assoc [ "session", session; "packages", `List [ `String "swaplib" ] ]) in
+  Alcotest.(check string) "the fixture loads" "ok" (status r);
+  let ev code =
+    text (call c ~id:2 ~tool:"eval"
+            ~args:(`Assoc [ "session", session; "code", `String code ])) in
+  Alcotest.(check bool) "before" true (has "= 120." (ev "Swaplib.total \"EU\" [100.];;"));
+  let r = ev "[%swap Swaplib.rate (fun _ -> 0.5)];; Swaplib.total \"EU\" [100.];;" in
+  Alcotest.(check bool) "a caller in the same module sees the swap" true (has "= 150." r);
+  let r = ev "[%swap Swaplib.length (fun l -> 10 * List.length l)];; \
+              Swaplib.length [\"a\"];;" in
+  Alcotest.(check bool) "a polymorphic function swaps" true (has "= 10" r);
+  let r = ev "[%swap Swaplib.length (fun (l : int list) -> 0)];;" in
+  Alcotest.(check bool) "a less general replacement is refused" true
+    (has "is not included in" r && has "Nothing was executed" r);
+  let r = ev "[%swap Swaplib.rate];; Swaplib.total ~discount:1. \"EU\" [100.];;" in
+  Alcotest.(check bool) "the original comes back" true (has "= 119." r);
+  let r = ev "[%swap Swaplib.base (fun _ -> 1.)];;" in
+  Alcotest.(check bool) "a value is refused, saying why" true
+    (has "only top-level functions written with parameters" r);
+  let r = ev "[%swap List.length (fun _ -> 0)];;" in
+  Alcotest.(check bool) "code load did not build is refused" true
+    (has "not in code that load built" r)
+
 (* A watch records every value flowing through it and never stops, which is the
    complement of a stop: a breakpoint shows the locals once, a watch reads a
    loop body a thousand times. See docs/wayfinder/tickets/049. *)
@@ -1404,6 +1434,8 @@ let () =
            test_two_parked_phrases_need_an_id;
          Alcotest.test_case "a breakpoint under autorun is refused" `Slow
            test_a_breakpoint_under_autorun_is_refused;
+         Alcotest.test_case "a swap reaches every caller" `Slow
+           test_a_swap_reaches_every_caller;
          Alcotest.test_case "a watch records without stopping" `Slow
            test_watch_records_without_stopping;
          Alcotest.test_case "markers list and disarm" `Slow

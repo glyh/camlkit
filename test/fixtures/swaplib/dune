@@ -1,0 +1,15 @@
+; Built through the worker as a ppx, which is what load does to a project, so
+; a test can require it and swap its functions without running dune inside
+; dune. See docs/wayfinder/tickets/054.
+(rule
+ (targets swaplib.cma swaplib.cmi)
+ (deps swaplib.mli swaplib.ml)
+ (action
+  (run ocamlfind ocamlc -w -a -ppx "%{dep:../../../worker/main.bc.exe} --swap-ppx"
+   -a -o swaplib.cma swaplib.mli swaplib.ml)))
+
+(rule
+ (targets META)
+ (action
+  (with-stdout-to META
+   (echo "version = \"1.0\"\ndescription = \"fixture: swappable functions\"\narchive(byte) = \"swaplib.cma\"\n"))))

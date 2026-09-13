@@ -32,6 +32,10 @@ let usage () =
   exit 2
 
 let () =
+  (* A compiler running load's rewritten build, not a server. *)
+  if Array.length Sys.argv > 1 && Sys.argv.(1) = Swap.ppx_flag then begin
+    Swap.run_ppx (); exit 0
+  end;
   (* Before anything shells out: a client spawns us from a shell without
      `opam env`, and dune cannot resolve a project's packages without it. *)
   Wire.Exe.adopt_switch ();

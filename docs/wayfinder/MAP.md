@@ -340,6 +340,13 @@ must evaluate it first. Tests are Alcotest.
   — **open.** `outline`, `uses` and `type_at` forward merlin's empty and default
   fields (`children: []`, `deprecated: false`, `stale: false`, `tail: "no"`) on
   every item, against the absent-not-empty convention.
+- [Swapping a function in a loaded project](tickets/054-swapping-a-function-in-a-loaded-project.md)
+  — **done.** `[%swap M.f replacement]` in `eval` reaches every caller, those in
+  `f`'s own module included, because load builds the project through the worker
+  as a ppx and every top-level function checks a cell on entry. Overwriting the
+  module's field was measured to miss calls inside the module; the indirection
+  costs 1-2 ns a call, and a fast path proving when overwriting is enough was
+  rejected as a whole-program analysis for that saving.
 - [Testing strategy](tickets/013-testing-strategy.md) — one tier, integration
   tests spawn a real worker and the real server in the default `dune test`.
 

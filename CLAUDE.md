@@ -162,6 +162,13 @@ because a marker compiles into the code holding it and keeps firing whenever
 that code runs; `markers` lists them and disarms them, which is the only way to
 stop one short of redefining its function. See ticket 049.
 
+**A loaded project's functions can be swapped.** load builds the project in
+`_build/camlkit` through the worker itself as a ppx, which makes every top-level
+function check a cell on entry, and `[%swap M.f replacement]` in eval fills it
+after checking the replacement against `f`'s type. Callers inside `f`'s own
+module see it too, which overwriting the module's field cannot give. See ticket
+054.
+
 Prefer stability over linking: merlin is shelled out to in single mode rather
 than linked, and the reasoning is a long comment at the top of
 `lib/merlin.ml`; read it before reversing it. `load` and the `uses` index call

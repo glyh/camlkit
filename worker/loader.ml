@@ -33,16 +33,53 @@ type asked =
   | Dune_failed of string     (* asked, and dune could not answer *)
   | Answered of string list
 
+(* The project is built through this worker as a ppx, which is what makes its
+   functions swappable (docs/wayfinder/tickets/054), in a build directory of
+   its own: the rewritten objects must not replace the ones the user's own
+   builds use, and dune does not rebuild for an environment variable it does
+   not track, so sharing a directory would mix the two.
+
+   OCAMLPARAM rather than the project's flags, because a library whose flags
+   omit :standard never sees flags set anywhere else, and it reaches the
+   output of a project's own pps too. Warnings are off because the rewrite
+   produces ones a dev profile makes fatal, and nothing reads them here.
+   ponytail: a user's own OCAMLPARAM is replaced, not merged. *)
+let worker_digest = lazy (Digest.to_hex (Digest.file Sys.executable_name))
+
+let rewritten_build path =
+  let root = if Filename.is_relative path then Filename.concat (Sys.getcwd ()) path else path in
+  let build = Filename.concat root "_build" in
+  let dir = Filename.concat build "camlkit" in
+  (try Unix.mkdir build 0o755 with Unix.Unix_error (Unix.EEXIST, _, _) -> ());
+  (* dune tracks neither the variable nor the ppx binary it names, so a tree
+     built by another worker is kept as if current, and its interfaces then
+     disagree with this one's. Measured, on camlkit loading itself. The tree
+     records which worker built it and is discarded when that changes. *)
+  let stamp = Filename.concat dir "worker" in
+  let mine = Lazy.force worker_digest in
+  let theirs =
+    try In_channel.with_open_bin stamp In_channel.input_all with Sys_error _ -> "" in
+  if theirs <> mine then begin
+    ignore (Sys.command (Printf.sprintf "rm -rf %s" (Filename.quote dir)));
+    Unix.mkdir dir 0o755;
+    Out_channel.with_open_bin stamp (fun oc -> output_string oc mine)
+  end;
+  let param =
+    Printf.sprintf "_,ppx=%s %s,w=-a" (Filename.quote Sys.executable_name) Swap.ppx_flag in
+  Printf.sprintf "OCAMLPARAM=%s" (Filename.quote param),
+  Printf.sprintf "--build-dir %s" (Filename.quote dir)
+
 let dune_top ?(dir = ".") path =
   if not (is_dune_project path) then Not_a_project
   else
+  let env, build_dir = rewritten_build path in
   (* stderr kept rather than discarded: it is the whole diagnosis when this
      fails, and it was being thrown away at the one point that had it. On the
      way through it is harmless, since only #directory and #load lines are
      read out of the output. *)
   let cmd =
-    Printf.sprintf "cd %s && %s top %s 2>&1" (Filename.quote path)
-      (Filename.quote (Lazy.force dune_binary)) (Filename.quote dir) in
+    Printf.sprintf "cd %s && %s %s top %s %s 2>&1" (Filename.quote path) env
+      (Filename.quote (Lazy.force dune_binary)) build_dir (Filename.quote dir) in
   let ic = Unix.open_process_in cmd in
   let rec drain acc =
     match input_line ic with
@@ -249,10 +286,11 @@ type route =
   | Did of (string list * (string * string) list)
 
 (* The source directory an archive in the build tree was built from:
-   <root>/_build/<context>/<dir>/<name>.cma gives <dir>. *)
+   <root>/_build/<context>/<dir>/<name>.cma gives <dir>, and so does the
+   rewritten tree under <root>/_build/camlkit. *)
 let source_dir archive =
   let d = Filename.dirname archive in
-  match Str.search_forward (Str.regexp "/_build/[^/]+/?") d 0 with
+  match Str.search_forward (Str.regexp "/_build/\\(camlkit/\\)?[^/]+/?") d 0 with
   | exception Not_found -> None
   | _ -> Some (match Str.string_after d (Str.match_end ()) with "" -> "." | r -> r)
 

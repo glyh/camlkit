@@ -38,6 +38,7 @@ let install_break_hook () =
     (Obj.repr Breakpoint.local_hook);
   declare Breakpoint.hook_name Breakpoint.hook_type (Obj.repr Breakpoint.hook);
   declare Watch.hook_name Watch.hook_type (Obj.repr Watch.hook);
+  declare Swap.hook_name Swap.hook_type (Obj.repr Swap.hook);
   (* Defined in the session so that abandoning a phrase renders as
      "Exception: Camlkit_abandoned." rather than as this worker's internal
      module path. *)
@@ -308,6 +309,15 @@ let typecheck_all ~autorun ~src phrases =
       go (i + 1) ({ tree = d; fired = None; sg = []; warns = ""; placed = [];
                notes = "" } :: acc) rest
     | Parsetree.Ptop_def str0 :: rest ->
+      (* Swaps first: what they expand to is ordinary code, and a replacement
+         may itself hold a watch or a breakpoint. *)
+      match Swap.rewrite !Toploop.toplevel_env str0 with
+      | exception (Location.Error _ as exn) ->
+        let message, spans, lines = Toplevel.describe_exn exn in
+        restore ();
+        Error Msg.{ phase = Typecheck; phrase_index = i; message; spans; lines;
+                    done_ = [] }
+      | str0 ->
       (* A marker cannot be typed as it stands, so it becomes a call with no
          locals first. What is in scope at it is only knowable from the typed
          tree, which is why the locals arrive in a second rewrite. *)

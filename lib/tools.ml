@@ -68,7 +68,11 @@ let eval_tool =
        phrase to stop there and inspect it, then continue, or \
        [%watch \"name\" expr] to record every value that flows through an \
        expression without stopping at all. Both keep firing whenever the code \
-       holding them runs; the markers tool lists them and turns them off. Pass \
+       holding them runs; the markers tool lists them and turns them off. \
+       [%swap Module.f replacement] makes every caller of a function in a \
+       project brought in by load call the replacement instead, callers inside \
+       its own module included; [%swap Module.f] puts the original back. The \
+       replacement must have the function's type, at least as general. Pass \
        check to typecheck without running.";
     "inputSchema", obj ~required:[ "code" ]
       [ session_arg;
@@ -220,9 +224,10 @@ let load_tool =
     "description", `String
       "Load a dune project's own libraries into a session, so its modules \
        become available. Point it at the project root, the directory holding \
-       dune-project. Build the project first; this loads what is already \
-       compiled. External dependencies come with it, so there is no need to \
-       require them separately. Pass reset after rebuilding: loading a changed \
+       dune-project. The project is built for the session in _build/camlkit, \
+       beside the user's own build, and rewritten so that eval's [%swap] can \
+       replace its functions. External dependencies come with it, so there is \
+       no need to require them separately. Pass reset after rebuilding: loading a changed \
        archive into a session that already has the old one fails on an \
        interface mismatch, so the session must start clean. The worker must \
        have been built with the same OCaml version as the project, because \
