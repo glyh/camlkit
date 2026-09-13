@@ -25,23 +25,21 @@ after = call(2, "eval", {"session": "s", "code": "Location.none;;"})
 # One library by name brings what it depends on. Filtering dune's whole list
 # by name dropped them, and camlkit alone failed on Yojson__Safe.
 one = call(5, "load", {"session": "one", "path": project, "libraries": ["camlkit"]})
-one_used = call(6, "eval", {"session": "one", "code": "Camlkit.Render.bytes 2048;;"})
+one_used = call(6, "eval", {"session": "one", "code": "Camlkit.Render.signal_name Sys.sigsegv;;"})
 
 # A swap through a real load: the rewritten build, not the fixture the suite
-# compiles by hand. transcript calls bytes inside Render, which is the call
-# overwriting a module's field cannot reach. See docs/wayfinder/tickets/054.
+# compiles by hand. how_it_ended calls signal_name inside Render, which is the
+# call overwriting a module's field cannot reach. See docs/wayfinder/tickets/054.
 swapped = call(7, "eval", {"session": "one", "code":
-    '[%swap Camlkit.Render.bytes (fun _ -> "SWAPPED")];;\n'
-    'Camlkit.Render.transcript "" [ { Wire.Msg.rendering = ""; warnings = ""; '
-    'out_start = 0; out_len = 0; dropped = 0; ran = None; watched = []; '
-    'cost = Some { Wire.Msg.wall_ms = 1.; allocated_bytes = 2048 } } ];;'})
+    '[%swap Camlkit.Render.signal_name (fun _ -> "SWAPPED")];;\n'
+    'Camlkit.Render.how_it_ended (Some (Unix.WSIGNALED Sys.sigsegv));;'})
 
 # The wrapper half of `context`, which needs a dune project and so cannot be
 # reached from dune test either: dune passes -open for a wrapped library, and
 # that open is the one a reader cannot guess.
 render = os.path.join(project, "lib", "render.ml")
-opens = call(3, "context", {"file": render})
-in_context = call(4, "eval", {"session": "s", "code": opens + "\ninfrastructure_failure;;"})
+opens = "".join("open %s;;\n" % m for m in json.loads(call(3, "context", {"file": render}))["opens"])
+in_context = call(4, "eval", {"session": "s", "code": opens + "\nhow_it_ended;;"})
 
 # A dune that cannot answer must not fall through to scanning the build tree.
 # The scan finds the project's own libraries plus anything else built there,
@@ -68,12 +66,12 @@ print("without dune  :", refused_text.split("\n")[0],
       "(expect a refusal, not a partial load)")
 print("next phrase   :", after, "(expect a Warnings.loc value)")
 print("one library   :", one, "/", one_used, "(expect camlkit with its deps)")
-print("swap          :", swapped.replace("\n", " "), "(expect SWAPPED allocated)")
+print("swap          :", swapped.replace("\n", " "), "(expect was killed by SWAPPED)")
 print("context said  :", opens.replace("\n", " "))
 print("in context    :", in_context, "(expect a function, not Unbound value)")
 ok = ("ocamltoplevel" not in loaded and "loc_ghost" in after
-      and refused_ok and "not loaded" not in one and "2.0 kB" in one_used
-      and "SWAPPED allocated" in swapped
+      and refused_ok and "partial" not in one and "SIGSEGV" in one_used
+      and "was killed by SWAPPED" in swapped
       and "open Camlkit.Render;;" in opens and "Unbound" not in in_context)
 print("PASS" if ok else "FAIL")
 try: p.terminate(); p.wait(timeout=5)

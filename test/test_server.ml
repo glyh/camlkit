@@ -51,10 +51,22 @@ let call c ~id ~tool ~args =
   result (rpc c ~id ~meth:"tools/call"
             ~params:(`Assoc [ "name", `String tool; "arguments", args ]))
 
-let text r =
+let content r =
   match Yojson.Safe.Util.member "content" r with
   | `List (c :: _) -> Yojson.Safe.Util.(member "text" c |> to_string)
   | _ -> ""
+
+(* What a result says: every string in its structure, unescaped. Since ticket
+   071 the text half is that structure serialized, so reading the strings is
+   how a test asks whether a result mentions something. *)
+let text r =
+  let rec strings = function
+    | `String s -> [ s ]
+    | `Assoc fields -> List.concat_map (fun (_, v) -> strings v) fields
+    | `List items -> List.concat_map strings items
+    | _ -> []
+  in
+  String.concat "\n" (strings (Yojson.Safe.Util.member "structuredContent" r))
 
 let is_error r =
   match Yojson.Safe.Util.member "isError" r with `Bool b -> b | _ -> false
@@ -150,8 +162,8 @@ let test_describe_an_unknown_name () =
   Alcotest.(check bool) "an unknown one has an error naming it" true
     (match Yojson.Safe.Util.member "error" sc with
      | `String e -> has "Lwt_unix.sleep" e | _ -> false);
-  Alcotest.(check bool) "no status ok, and not isError" true
-    (Yojson.Safe.Util.member "status" sc = `Null && not (is_error r))
+  Alcotest.(check bool) "status unknown, not ok, and not isError" true
+    (Yojson.Safe.Util.member "status" sc = `String "unknown" && not (is_error r))
 
 (* Reported from a session: whether an autorun setting had stuck could only be
    found out by evaluating a second probe, and a promise that had been run
@@ -187,15 +199,13 @@ let test_autorun_is_visible_in_the_result () =
   let r = call c ~id:2 ~tool:"require"
       ~args:(`Assoc [ "session", `String "s";
                       "packages", `List [ `String "lwt.unix" ] ]) in
-  if status r <> "ok" then Alcotest.fail "lwt.unix is needed for this test";
+  if status r <> "loaded" then Alcotest.fail "lwt.unix is needed for this test";
   let r = eval ~autorun:[ "lwt" ] "Lwt.return 42;;" in
   let ran =
     member "structuredContent" r |> member "phrases" |> to_list |> List.hd
     |> member "ran" in
   Alcotest.(check bool) "the phrase names the rule that ran it" true
-    (ran = `String "lwt");
-  Alcotest.(check bool) "and the transcript says the promise was run" true
-    (has "[autorun lwt" (text r))
+    (ran = `String "lwt")
 
 (* A failed phrase is a successful call: isError means the server failed at its
    own job, not that the code was wrong. *)
@@ -252,7 +262,8 @@ let test_type_error_is_not_is_error () =
       ~args:(`Assoc [ "session", `String "s"; "code", `String "1 + true;;" ]) in
   Alcotest.(check bool) "not flagged as a tool error" false (is_error r);
   Alcotest.(check string) "but reported as failed" "failed" (status r);
-  Alcotest.(check bool) "and says nothing ran" true (has "Nothing was executed" (text r))
+  Alcotest.(check bool) "at typecheck, so nothing ran" true
+    (Yojson.Safe.Util.(member "structuredContent" r |> member "phase") = `String "typecheck")
 
 let test_unknown_tool_is_is_error () =
   with_server @@ fun c ->
@@ -345,7 +356,7 @@ let test_automatic_toplevel_printers () =
   let r = call c ~id:1 ~tool:"require"
       ~args:(`Assoc [ "session", `String "s";
                       "packages", `List [ `String "mylib" ] ]) in
-  Alcotest.(check string) "the fixture package loads" "ok" (status r);
+  Alcotest.(check string) "the fixture package loads" "loaded" (status r);
   let r = call c ~id:2 ~tool:"eval"
       ~args:(`Assoc [ "session", `String "s"; "code", `String "Mylib.make 5;;" ]) in
   Alcotest.(check bool) "its printer is used, not <abstr>" true
@@ -720,7 +731,7 @@ let test_expand () =
     (has "pp_point" code && has "show_point" code);
   (* tickets/071: the text is the structure, serialized, as the spec asks *)
   Alcotest.(check string) "the text half is the structure serialized"
-    (Yojson.Safe.to_string sc) (text r);
+    (Yojson.Safe.to_string sc) (content r);
   Alcotest.(check bool) "and the node it came from is located" true
     (Yojson.Safe.Util.(member "deriver" sc |> member "start" |> member "line")
      = `Int 1);
@@ -868,7 +879,7 @@ let test_a_phrase_stops_and_resumes () =
   Alcotest.(check string) "stopped rather than completed" "stopped"
     Yojson.Safe.Util.(member "status" structured |> to_string);
   Alcotest.(check bool) "both locals bound" true
-    (has "bp_n : int" (text r) && has "bp_x : int" (text r));
+    (has "bp_n\nint" (text r) && has "bp_x\nint" (text r));
   (* The point of binding them: the caller can compute with them. *)
   let r = call c ~id:2 ~tool:"eval" ~args:(args "bp_x * 3;;") in
   Alcotest.(check bool) "the parked values are usable" true (has "120" (text r));
@@ -905,7 +916,7 @@ let test_resuming_finishes_the_rest_of_the_call () =
                         "let total = ref 0;;\n\
                          for i = 1 to 2 do [%break \"m2\"]; total := !total + i done;;\n\
                          print_endline \"the tail of the call\";;" ]) in
-  Alcotest.(check bool) "stopped in the loop" true (has "Stopped" (text r));
+  Alcotest.(check string) "stopped in the loop" "stopped" (status r);
   ignore (call c ~id:2 ~tool:"continue" ~args:(`Assoc [ "session", `String "bp7" ]));
   let r = call c ~id:3 ~tool:"continue" ~args:(`Assoc [ "session", `String "bp7" ]) in
   Alcotest.(check bool) "the phrase behind the stop ran too" true
@@ -960,7 +971,7 @@ let test_a_local_that_cannot_be_bound_is_named () =
   let structured = Yojson.Safe.Util.member "structuredContent" r in
   let skipped = Yojson.Safe.Util.(member "skipped" structured |> to_list) in
   Alcotest.(check bool) "the typed local is still bound" true
-    (has "bp_y : int" (text r));
+    (has "bp_y\nint" (text r));
   Alcotest.(check bool) "the other one is reported, with a reason" true
     (List.exists (fun s ->
          Yojson.Safe.Util.(member "name" s |> to_string) = "x"
@@ -1055,7 +1066,8 @@ let test_a_breakpoint_under_autorun_is_refused () =
                         "let h () = [%break \"m10\"]; Lwt.return 5 in h ();;" ]) in
   Alcotest.(check bool) "refused, saying why" true
     (has "autorun will run as a promise" (text r));
-  Alcotest.(check bool) "and nothing ran" true (has "Nothing was executed" (text r))
+  Alcotest.(check bool) "and nothing ran" true
+    (Yojson.Safe.Util.(member "structuredContent" r |> member "phase") = `String "typecheck")
 
 (* A swap reaches every caller, including one inside the function's own module,
    which overwriting the module's field cannot. The fixture is built through the
@@ -1065,7 +1077,7 @@ let test_a_swap_reaches_every_caller () =
   let session = `String "sw" in
   let r = call c ~id:1 ~tool:"require"
       ~args:(`Assoc [ "session", session; "packages", `List [ `String "swaplib" ] ]) in
-  Alcotest.(check string) "the fixture loads" "ok" (status r);
+  Alcotest.(check string) "the fixture loads" "loaded" (status r);
   let ev code =
     text (call c ~id:2 ~tool:"eval"
             ~args:(`Assoc [ "session", session; "code", `String code ])) in
@@ -1075,12 +1087,14 @@ let test_a_swap_reaches_every_caller () =
   Alcotest.(check bool) "the swap says what it did, and takes no _N name" true
     (has "swapped Swaplib.rate" r && not (has "unit = ()" r));
   let markers args =
-    text (call c ~id:3 ~tool:"markers" ~args:(`Assoc (("session", session) :: args))) in
+    Yojson.Safe.Util.member "structuredContent"
+      (call c ~id:3 ~tool:"markers" ~args:(`Assoc (("session", session) :: args))) in
+  let field k r = Yojson.Safe.Util.member k r in
   Alcotest.(check bool) "markers lists the swap" true
-    (has "swapped: Swaplib.rate" (markers []));
+    (field "swapped" (markers []) = `List [ `String "Swaplib.rate" ]);
   let r = markers [ "restore", `List [ `String "Swaplib.rate"; `String "Swaplib.nope" ] ] in
   Alcotest.(check bool) "restore puts it back and names what was not swapped" true
-    (not (has "swapped:" r) && has "Swaplib.nope" r);
+    (field "swapped" r = `Null && field "unknown" r = `List [ `String "Swaplib.nope" ]);
   Alcotest.(check bool) "restored through markers" true
     (has "= 120." (ev "Swaplib.total \"EU\" [100.];;"));
   ignore (ev "[%swap Swaplib.rate (fun _ -> 0.5)];;");
@@ -1089,7 +1103,7 @@ let test_a_swap_reaches_every_caller () =
   Alcotest.(check bool) "a polymorphic function swaps" true (has "= 10" r);
   let r = ev "[%swap Swaplib.length (fun (l : int list) -> 0)];;" in
   Alcotest.(check bool) "a less general replacement is refused" true
-    (has "Type int is not compatible with type 'a" r && has "Nothing was executed" r);
+    (has "Type int is not compatible with type 'a" r && has "typecheck" r);
   (* tickets/065: without the module the check is built from *)
   Alcotest.(check bool) "and the refusal names no machinery" false
     (has "sig" r || has "Camlkit_swap" r);
@@ -1126,7 +1140,7 @@ let test_a_swap_reaches_every_caller () =
     (has "is not a function" r);
   let r = ev "let open Stdlib in [%swap Swaplib.nope (fun x -> x)];;" in
   Alcotest.(check bool) "an unresolved path is refused, not a silent no-op" true
-    (has "Unbound value Swaplib.nope" r && has "Nothing was executed" r);
+    (has "Unbound value Swaplib.nope" r && has "typecheck" r);
   let r = ev "[%swap List.length (fun _ -> 0)];;" in
   Alcotest.(check bool) "code load did not build is refused" true
     (has "not in code that load built" r)
@@ -1337,7 +1351,7 @@ let test_marker_sites () =
   ignore (call c ~id:4 ~tool:"continue" ~args:(`Assoc [ "session", `String "sites" ]));
   ignore (markers [ "disarm_sites", `List [ Yojson.Safe.Util.member "id" site ] ]);
   Alcotest.(check bool) "a disarmed breakpoint site does not stop" false
-    (has "Stopped" (text (ev "s ();;")));
+    (status (ev "s ();;") = "stopped");
   (* A new site starts armed, even under a name that was disarmed. *)
   ignore (markers [ "disarm", `List [ `String "pick" ] ]);
   let r = ev "let pick x = [%watch \"pick\" x];; pick 5;;" in

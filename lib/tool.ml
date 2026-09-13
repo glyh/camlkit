@@ -17,6 +17,11 @@ type failure =
 
 let failure ?exit_code ?signal message = Server_error { message; exit_code; signal }
 
+(* A failure outside any tool's call, such as a call that raised. *)
+let failure_rendering message =
+  { Render.content = Yojson.Safe.to_string (failure_to_json (failure message));
+    structured = failure_to_json (failure message); is_error = true }
+
 (* Behaviour hints. Each defaults to MCP's own default, which is the worst
    case, and only a hint that differs from its default is sent. *)
 type hints = {
@@ -31,7 +36,7 @@ type t = {
   declaration : Yojson.Safe.t;
   (* Untyped only at this edge: the arguments as they arrived, and a reply
      that takes the rendering. *)
-  call : Yojson.Safe.t -> reply:(Render.t -> unit) -> unit;
+  call : id:Jsonrpc.Id.t -> Yojson.Safe.t -> reply:(Render.t -> unit) -> unit;
 }
 
 let annotations h =
@@ -78,13 +83,13 @@ let deferred ~name ~doc ?(read_only = false) ?(destructive = true)
   let hints = { read_only; destructive; idempotent; open_world } in
   { name;
     declaration = declare ~name ~doc ~hints args result;
-    call = (fun json ~reply ->
+    call = (fun ~id json ~reply ->
         let reply r = reply (rendered result r) in
         match args.Mcp_derive.of_json json with
         | Error why -> reply (Error (failure ("invalid arguments: " ^ why)))
-        | Ok a -> handler a ~reply) }
+        | Ok a -> handler a ~id ~reply) }
 
 let make ~name ~doc ?read_only ?destructive ?idempotent ?open_world args result
     handler =
   deferred ~name ~doc ?read_only ?destructive ?idempotent ?open_world args result
-    (fun a ~reply -> reply (handler a))
+    (fun a ~id:_ ~reply -> reply (handler a))

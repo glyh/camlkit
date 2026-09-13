@@ -14,10 +14,17 @@ let grace = 2.0
 
 let sessions : (string, Session.t) Hashtbl.t = Hashtbl.create 8
 
-(* JSON-RPC ids waiting on a worker, keyed by session name, with a note to
-   attach to the reply. A session holds at most one, because a second
+(* Calls waiting on a worker, keyed by session name: the JSON-RPC id, which a
+   cancellation names; a note for the first result after a restart; and the
+   call's typed reply. A session holds at most one, because a second
    evaluation is refused rather than queued. *)
-let pending : (string, Jsonrpc.Id.t * string option) Hashtbl.t = Hashtbl.create 8
+type waiting = {
+  id : Jsonrpc.Id.t;
+  note : string option;
+  answer : (Session_result.t, Tool.failure) result -> unit;
+}
+
+let pending : (string, waiting) Hashtbl.t = Hashtbl.create 8
 
 (* findlib packages a session has required. A reset empties the toplevel,
    including those, and a project's own libraries usually cannot load without
@@ -53,17 +60,6 @@ let reply id (r : Render.t) =
 let reply_error id (e : Jsonrpc.Response.Error.t) =
   Mcp.respond stdout (Jsonrpc.Packet.Response (Jsonrpc.Response.error id e))
 
-let arg_string args name =
-  match Yojson.Safe.Util.member name args with
-  | `String s -> Ok s
-  | `Null -> Error (Printf.sprintf "missing required argument %S" name)
-  | _ -> Error (Printf.sprintf "argument %S must be a string" name)
-
-(* --- source queries ------------------------------------------------------ *)
-
-(* These ask merlin about code as written, so they need no session and no
-   worker: they answer inside this call rather than going through pending. *)
-
 (* The manual behind a tool's description, which stays a trigger. An unknown
    name is a negative answer that lists what there is, not a failure. See
    ticket 062. *)
@@ -95,65 +91,7 @@ let help_tool =
            Ok { none with tools = Guide.topics;
                           error = Printf.sprintf "no manual for %S" name })
 
-(* Tools declared from their types. The rest still go through Tools and the
-   dispatch below until each moves here. See ticket 071. *)
-let typed_tools = help_tool :: Queries.all
-
-(* --- tool calls --------------------------------------------------------- *)
-
-let arg_strings args name =
-  match Yojson.Safe.Util.member name args with
-  | `List items ->
-    (try Ok (List.map Yojson.Safe.Util.to_string items)
-     with _ -> Error (Printf.sprintf "argument %S must be a list of strings" name))
-  | `Null -> Error (Printf.sprintf "missing required argument %S" name)
-  | _ -> Error (Printf.sprintf "argument %S must be a list of strings" name)
-
-let request_of_call name args =
-  match name with
-  | "eval" ->
-    let autorun =
-      match Yojson.Safe.Util.member "autorun" args with
-      | `List l ->
-        Msg.Rules (List.filter_map (function `String s -> Some s | _ -> None) l)
-      | _ -> Msg.Default_rules
-    in
-    let check = Yojson.Safe.Util.member "check" args = `Bool true in
-    let cost = Yojson.Safe.Util.member "cost" args = `Bool true in
-    (match arg_string args "code" with
-     | Error _ as e -> e
-     | Ok source -> Ok (Msg.Eval { source; autorun; check; cost }))
-  | "describe" -> Result.map (fun p -> Msg.Describe p) (arg_string args "path")
-  | "continue" ->
-    let id = match Yojson.Safe.Util.member "id" args with
-      | `Int i -> Some i | _ -> None in
-    Ok (Msg.Continue { id; abandon =
-                               Yojson.Safe.Util.member "abandon" args = `Bool true })
-  | "inspect" ->
-    let id = match Yojson.Safe.Util.member "id" args with
-      | `Int i -> Some i | _ -> None in
-    Ok (Msg.Inspect { id })
-  | "markers" ->
-    let names key =
-      match Yojson.Safe.Util.member key args with
-      | `List l -> List.filter_map (function `String s -> Some s | _ -> None) l
-      | `String s -> [ s ]
-      | _ -> []
-    in
-    let ids key =
-      match Yojson.Safe.Util.member key args with
-      | `List l -> List.filter_map (function `Int i -> Some i | _ -> None) l
-      | `Int i -> [ i ]
-      | _ -> []
-    in
-    Ok (Msg.Markers { disarm = names "disarm"; arm = names "arm";
-                      disarm_sites = ids "disarm_sites";
-                      arm_sites = ids "arm_sites";
-                      restore = names "restore" })
-  | "require" -> Result.map (fun p -> Msg.Require p) (arg_strings args "packages")
-  | "load" -> assert false                       (* handled before we get here *)
-  | "reset" -> assert false                      (* handled before we get here *)
-  | other -> Error (Printf.sprintf "no such tool: %s" other)
+(* --- session tools ------------------------------------------------------- *)
 
 (* A session is created on first use. A name whose session died is reusable,
    because a name is only a handle and refusing it forever would make an agent
@@ -184,135 +122,241 @@ let discard name why =
    | None -> ());
   Hashtbl.replace restarted name why
 
+(* A name is a handle, and most callers want one session. Defaulting it means
+   a one-off evaluation needs no invented name. *)
+let session_name s = if String.trim s = "" then default_session else s
+
+(* Sends a request and parks the call until the worker answers. [note]
+   replaces the restart note, for a call that already says what happened. *)
+let send ~id ~reply ?note name request =
+  match session_for name with
+  | Error e -> reply (Error (Tool.failure e))
+  | Ok (s, restart_note) ->
+    let note = match note with Some _ -> note | None -> restart_note in
+    (* Deadlines are the server's business; the worker knows nothing of them,
+       and a describe or require is bounded by the same clock. *)
+    match Session.send s request ~timeout:eval_timeout with
+    | Error e -> reply (Error (Tool.failure e))
+    | Ok () -> Hashtbl.replace pending name { id; note; answer = reply }
+
+type eval_args = {
+  session : string; [@default "main"]
+  (** Session name, default main. *)
+  code : string;
+  (** OCaml phrases, each ending in ;;. *)
+  check : bool; [@default false]
+  (** Typecheck only; nothing runs. *)
+  cost : bool; [@default false]
+  (** Report time and allocation per phrase. *)
+  autorun : string list option;
+  (** Promise libraries whose bare promises are run; [] returns the promise. *)
+} [@@deriving mcp]
+
+let eval_tool =
+  Tool.deferred ~name:"eval"
+    ~doc:"Run OCaml in a persistent session: try code, see a value, check a type. \
+          Every phrase must typecheck or none run, and #directives are rejected. \
+          [%break], [%watch] and [%swap] debug live code."
+    eval_args_mcp Session_result.t_mcp
+    (fun a ~id ~reply ->
+       let autorun = match a.autorun with
+         | Some rules -> Msg.Rules rules | None -> Msg.Default_rules in
+       send ~id ~reply (session_name a.session)
+         (Msg.Eval { source = a.code; autorun; check = a.check; cost = a.cost }))
+
+type describe_args = {
+  session : string; [@default "main"]
+  (** Session name, default main. *)
+  path : string;
+  (** Such as List or List.map. *)
+} [@@deriving mcp]
+
+let describe_tool =
+  Tool.deferred ~name:"describe" ~read_only:true ~idempotent:true ~open_world:false
+    ~doc:"Show the signature of a module, value or type a session has. Prefer it \
+          to guessing at names."
+    describe_args_mcp Session_result.t_mcp
+    (fun a ~id ~reply -> send ~id ~reply (session_name a.session) (Msg.Describe a.path))
+
+type require_args = {
+  session : string; [@default "main"]
+  (** Session name, default main. *)
+  packages : string list;
+} [@@deriving mcp]
+
+let require_tool =
+  Tool.deferred ~name:"require" ~destructive:false ~idempotent:true ~open_world:false
+    ~doc:"Load findlib packages into a session."
+    require_args_mcp Session_result.t_mcp
+    (fun a ~id ~reply ->
+       let name = session_name a.session in
+       (* Remembered, so a later reset-load can restore them instead of making
+          the caller say them twice. *)
+       remember_required name a.packages;
+       send ~id ~reply name (Msg.Require a.packages))
+
+type load_args = {
+  session : string; [@default "main"]
+  (** Session name, default main. *)
+  path : string option;
+  (** Project root; defaults to the server's project. *)
+  libraries : string list; [@default []]
+  (** Omit to load all. *)
+  reset : bool; [@default false]
+  (** Empty the session first. *)
+} [@@deriving mcp]
+
+let load_tool =
+  Tool.deferred ~name:"load" ~destructive:false ~idempotent:true ~open_world:false
+    ~doc:"Load a dune project's own libraries into a session. Pass reset after \
+          rebuilding."
+    load_args_mcp Session_result.t_mcp
+    (fun a ~id ~reply ->
+       let name = session_name a.session in
+       (* Reloading a rebuilt archive into a session that still holds the old
+          one fails on an interface mismatch, so the reset has to happen in
+          that order, server-side, before the request reaches a worker. *)
+       if a.reset then begin
+         discard name "reset was requested before loading";
+         (* Not the generic restart note, which says the required packages are
+            gone while this call is about to put them back. *)
+         Hashtbl.remove restarted name
+       end;
+       (* Only replayed after a reset: otherwise the session still has them. *)
+       let packages =
+         if a.reset then Option.value ~default:[] (Hashtbl.find_opt required name)
+         else [] in
+       let note =
+         if not a.reset then None
+         else
+           Some (Printf.sprintf
+                   "Session %S was reset before loading: earlier bindings are \
+                    gone.%s" name
+                   (match packages with
+                    | [] -> ""
+                    | ps -> Printf.sprintf " Re-required %s." (String.concat ", " ps)))
+       in
+       (* Defaulting to where the server runs: a client starts it in the
+          project it is working on, so the usual load names nothing. *)
+       match
+         match a.path with
+         | Some p -> Some p
+         | None -> Wire.Exe.project_root_of (Sys.getcwd ())
+       with
+       | None ->
+         reply (Error (Tool.failure
+                         "no path, and the directory the server runs in is not \
+                          inside a dune project. Give the project root."))
+       | Some path ->
+         send ~id ~reply ?note name
+           (Msg.Load { path; libraries = a.libraries; packages }))
+
+type reset_args = {
+  session : string; [@default "main"]
+  (** Session name, default main. *)
+  code : string; [@default ""]
+  (** Evaluated in the fresh toplevel. *)
+} [@@deriving mcp]
+
+let reset_tool =
+  Tool.deferred ~name:"reset" ~idempotent:true ~open_world:false
+    ~doc:"Empty a session back to a clean toplevel, optionally running code in it."
+    reset_args_mcp Session_result.t_mcp
+    (fun a ~id ~reply ->
+       let name = session_name a.session in
+       (* Clears the restart note too, since the caller asked for the fresh
+          toplevel, and what was required: an explicit reset means empty. *)
+       discard name "reset was requested";
+       Hashtbl.remove restarted name;
+       Hashtbl.remove required name;
+       if String.trim a.code = "" then
+         (* Bare reset is server-side only: no worker round trip. *)
+         reply (Ok (Session_result.Reset
+                      { note = Printf.sprintf "Session %S is now empty." name }))
+       else
+         (* The preamble rides on the reset rather than following it, so
+            nothing can reach the empty toplevel in between. Nothing is
+            remembered: the next reset empties this one too. *)
+         send ~id ~reply name
+           ~note:(Printf.sprintf
+                    "Session %S was reset; what follows is the code the reset \
+                     carried, evaluated in the empty toplevel." name)
+           (Msg.Eval { source = a.code; autorun = Msg.Default_rules; check = false;
+                       cost = false }))
+
+type continue_args = {
+  session : string; [@default "main"]
+  (** Session name, default main. *)
+  id : int option;
+  (** Parked phrase; omit when there is one. *)
+  abandon : bool; [@default false]
+  (** Raise inside the phrase instead of resuming. *)
+} [@@deriving mcp]
+
+let continue_tool =
+  Tool.deferred ~name:"continue"
+    ~doc:"Resume or abandon a phrase parked at [%break]."
+    continue_args_mcp Session_result.t_mcp
+    (fun a ~id ~reply ->
+       send ~id ~reply (session_name a.session)
+         (Msg.Continue { id = a.id; abandon = a.abandon }))
+
+type inspect_args = {
+  session : string; [@default "main"]
+  (** Session name, default main. *)
+  id : int option;
+  (** Parked phrase; omit when there is one. *)
+} [@@deriving mcp]
+
+let inspect_tool =
+  Tool.deferred ~name:"inspect" ~read_only:true ~idempotent:true ~open_world:false
+    ~doc:"See a parked phrase's locals and every watch's recorded values, without \
+          resuming."
+    inspect_args_mcp Session_result.t_mcp
+    (fun a ~id ~reply ->
+       send ~id ~reply (session_name a.session) (Msg.Inspect { id = a.id }))
+
+(* A marker is compiled into the code holding it, so it fires whenever that
+   code runs. This is what stops one. See docs/wayfinder/tickets/049. *)
+type markers_args = {
+  session : string; [@default "main"]
+  (** Session name, default main. *)
+  disarm : string list; [@default []]
+  (** Names to turn off. *)
+  arm : string list; [@default []]
+  (** Names to turn on. *)
+  disarm_sites : int list; [@default []]
+  (** Site ids to turn off. *)
+  arm_sites : int list; [@default []]
+  (** Site ids to turn on. *)
+  restore : string list; [@default []]
+  (** Swapped paths to put back. *)
+} [@@deriving mcp]
+
+let markers_tool =
+  Tool.deferred ~name:"markers" ~destructive:false ~idempotent:true ~open_world:false
+    ~doc:"List, arm and disarm a session's breakpoints and watches; restore \
+          swapped functions."
+    markers_args_mcp Session_result.t_mcp
+    (fun a ~id ~reply ->
+       send ~id ~reply (session_name a.session)
+         (Msg.Markers { disarm = a.disarm; arm = a.arm; disarm_sites = a.disarm_sites;
+                        arm_sites = a.arm_sites; restore = a.restore }))
+
+(* Every tool, declared from its types. See ticket 071. *)
+let tools =
+  [ eval_tool; describe_tool; require_tool; load_tool; reset_tool; continue_tool;
+    inspect_tool; markers_tool; help_tool ]
+  @ Queries.all
+
 let handle_call id params =
   let name = match Yojson.Safe.Util.member "name" params with
     | `String s -> s | _ -> "" in
   let args = match Yojson.Safe.Util.member "arguments" params with
     | `Assoc _ as a -> a | _ -> `Assoc [] in
-  match List.find_opt (fun (t : Tool.t) -> t.name = name) typed_tools with
-  | Some t -> t.call args ~reply:(reply id)
-  | None ->
-  (* A name is a handle, and most callers want one session. Defaulting it
-     means a one-off evaluation needs no invented name; a caller that wants
-     two independent toplevels still says so. *)
-  let session_name =
-    match Yojson.Safe.Util.member "session" args with
-    | `String s when String.trim s <> "" -> s
-    | _ -> default_session
-  in
-  begin
-    if name = "load" then begin
-      let strings key =
-        match Yojson.Safe.Util.member key args with
-        | `List l -> List.filter_map (function `String s -> Some s | _ -> None) l
-        | _ -> [] in
-      (* Reloading a rebuilt archive into a session that still holds the old
-         one fails on an interface mismatch, so the reset has to happen in
-         that order, server-side, before the request reaches a worker. *)
-      let resetting = Yojson.Safe.Util.member "reset" args = `Bool true in
-      if resetting then begin
-        discard session_name "reset was requested before loading";
-        (* Not the generic restart note: that one says the required packages
-           are gone, while this call is about to put them back. Suppress it
-           and say what actually happened instead, because a successful
-           reset-load otherwise reads exactly like one that reused the
-           session, and the caller would have to probe a binding to tell. *)
-        Hashtbl.remove restarted session_name
-      end;
-      let asked = strings "packages" in
-      remember_required session_name asked;
-      (* Only replay after a reset: otherwise the session still has them. *)
-      let packages =
-        if resetting then Option.value ~default:[] (Hashtbl.find_opt required session_name)
-        else asked in
-      let reset_note =
-        if not resetting then None
-        else
-          Some (Printf.sprintf
-                  "Session %S was reset before loading: earlier bindings are \
-                   gone.%s" session_name
-                  (match packages with
-                   | [] -> ""
-                   | ps -> Printf.sprintf " Re-required %s."
-                             (String.concat ", " ps)))
-      in
-      (* Defaulting to where the server runs: a client starts it in the
-         project it is working on, so the usual load names nothing. *)
-      match
-        match Yojson.Safe.Util.member "path" args with
-        | `String p -> Ok p
-        | _ ->
-          (match Wire.Exe.project_root_of (Sys.getcwd ()) with
-           | Some root -> Ok root
-           | None ->
-             Error
-               "no path, and the directory the server runs in is not inside a \
-                dune project. Give the project root.")
-      with
-      | Error e -> reply id (Render.infrastructure_failure e)
-      | Ok path ->
-        let request = Msg.Load { path; libraries = strings "libraries"; packages } in
-        match session_for session_name with
-        | Error e -> reply id (Render.infrastructure_failure e)
-        | Ok (s, note) ->
-          let note = match reset_note with Some _ -> reset_note | None -> note in
-          match Session.send s request ~timeout:eval_timeout with
-          | Error e -> reply id (Render.infrastructure_failure e)
-          | Ok () -> Hashtbl.replace pending session_name (id, note)
-    end else
-    if name = "reset" then begin
-      (* Clears the restart note too, since the caller asked for the fresh
-         toplevel. *)
-      discard session_name "reset was requested";
-      Hashtbl.remove restarted session_name;
-      (* An explicit reset means empty, including what was required. *)
-      Hashtbl.remove required session_name;
-      match Yojson.Safe.Util.member "code" args with
-      (* Bare reset is server-side only: no worker round trip. *)
-      | `String code when String.trim code <> "" ->
-        (* The preamble rides on the reset rather than following it, so
-           nothing can reach the empty toplevel in between. It is an ordinary
-           eval otherwise, which is why the result is an eval's: the caller
-           needs to see whether its own code typechecked. Nothing is
-           remembered - a session carries no preamble, and the next reset
-           empties this one too. *)
-        (match session_for session_name with
-         | Error e -> reply id (Render.infrastructure_failure e)
-         | Ok (s, _) ->
-           let note =
-             Printf.sprintf
-               "Session %S was reset; what follows is the code the reset \
-                carried, evaluated in the empty toplevel." session_name
-           in
-           (match Session.send s (Msg.Eval { source = code; autorun = Msg.Default_rules; check = false;
-                          cost = false })
-                    ~timeout:eval_timeout with
-            | Error e -> reply id (Render.infrastructure_failure e)
-            | Ok () -> Hashtbl.replace pending session_name (id, Some note)))
-      | _ ->
-        reply id { Render.content =
-                     Printf.sprintf "Session %S is now empty." session_name;
-                   structured = `Assoc [ "status", `String "reset" ];
-                   is_error = false }
-    end else
-    match request_of_call name args with
-    | Error e -> reply id (Render.infrastructure_failure e)
-    | Ok request ->
-      (* Remember what the session was told to require, so a later reset-load
-         can restore it instead of making the caller say it twice. *)
-      (match request with
-       | Msg.Require ps -> remember_required session_name ps
-       | Msg.Eval _ | Msg.Describe _ | Msg.Load _
-       | Msg.Continue _ | Msg.Inspect _ | Msg.Markers _ -> ());
-      match session_for session_name with
-      | Error e -> reply id (Render.infrastructure_failure e)
-      | Ok (s, note) ->
-        (* Deadlines are the server's business; the worker knows nothing of
-           them, and a describe or require is bounded by the same clock. *)
-        match Session.send s request ~timeout:eval_timeout with
-        | Error e -> reply id (Render.infrastructure_failure e)
-        | Ok () -> Hashtbl.replace pending session_name (id, note)
-  end
+  match List.find_opt (fun (t : Tool.t) -> t.name = name) tools with
+  | Some t -> t.call ~id args ~reply:(reply id)
+  | None -> reply id (Tool.failure_rendering (Printf.sprintf "no such tool: %s" name))
 
 (* Ids are matched exactly, with no coercion between an integer and its
    decimal spelling: a client knows what it issued. JSON-RPC permits either
@@ -341,7 +385,7 @@ let handle_cancelled params =
     | `String r -> " (" ^ r ^ ")" | _ -> "" in
   let find p =
     Hashtbl.fold
-      (fun name (id, _) acc -> if acc = None && p id requested then Some name else acc)
+      (fun name (w : waiting) acc -> if acc = None && p w.id requested then Some name else acc)
       pending None
   in
   match find id_matches with
@@ -358,8 +402,8 @@ let handle_cancelled params =
       in
       let candidates =
         Hashtbl.fold
-          (fun name (id, _) acc ->
-             Printf.sprintf "session %S is waiting on %s" name (describe id) :: acc)
+          (fun name (w : waiting) acc ->
+             Printf.sprintf "session %S is waiting on %s" name (describe w.id) :: acc)
           pending []
       in
       log "ignoring notifications/cancelled for %s: no request was issued with \
@@ -395,10 +439,10 @@ let handle_packet (packet : Jsonrpc.Packet.t) =
      with exn ->
        let why = Printexc.to_string exn in
        log "a tool call raised: %s" why;
-       reply id (Render.infrastructure_failure
+       reply id (Tool.failure_rendering
                    ("camlkit failed while answering this call: " ^ why)))
   | Jsonrpc.Packet.Request r ->
-    (match Mcp.dispatch ~tools:typed_tools ~call:(fun _ -> assert false) r with
+    (match Mcp.dispatch ~tools ~call:(fun _ -> assert false) r with
      | Ok result ->
        Mcp.respond stdout (Jsonrpc.Packet.Response (Jsonrpc.Response.ok r.id result))
      | Error e -> reply_error r.id e)
@@ -422,7 +466,7 @@ let drain_worker name s =
   let answer = Session.receive s in
   match Hashtbl.find_opt pending name with
   | None -> log "a worker answered with nothing waiting on it"
-  | Some (id, note) ->
+  | Some w ->
     Hashtbl.remove pending name;
     if Hashtbl.mem cancelled name then begin
       (* Read and discard: the caller is gone, but the session is not, and an
@@ -434,17 +478,11 @@ let drain_worker name s =
     end else
     (match answer with
      | Ok (response, payload) ->
-       let r = Render.of_response response payload in
-       reply id (match note with None -> r | Some n -> Render.with_note n r)
+       w.answer (Ok (Session_result.of_response ?note:w.note response payload))
      | Error e ->
-       let r = Render.infrastructure_failure e in
-       let r = match r.Render.structured with
-         | `Assoc fields ->
-           { r with Render.structured =
-                      `Assoc (fields @ Render.exit_fields (Session.exited s)) }
-         | _ -> r in
+       let exit_code, signal = Render.exit_status (Session.exited s) in
        discard name "the worker died during evaluation";
-       reply id r)
+       w.answer (Error (Tool.failure ?exit_code ?signal e)))
 
 (* A session killed mid-request still owes its caller an answer. *)
 let reap_dead () =
@@ -457,13 +495,13 @@ let reap_dead () =
         Hashtbl.remove cancelled name;
         discard name why
       | Supervision.Dead why when Hashtbl.mem pending name ->
-        let id, _ = Hashtbl.find pending name in
+        let w = Hashtbl.find pending name in
         Hashtbl.remove pending name;
         discard name why;
-        reply id (Render.infrastructure_failure
-                    ("the session was stopped: " ^ why ^
-                     ". Its toplevel state is gone; the next call under this \
-                      name starts a fresh one."))
+        w.answer (Error (Tool.failure
+                           ("the session was stopped: " ^ why ^
+                            ". Its toplevel state is gone; the next call under \
+                             this name starts a fresh one.")))
       | _ -> ())
     (Hashtbl.copy sessions)
 

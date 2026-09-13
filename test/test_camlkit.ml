@@ -888,12 +888,12 @@ let test_search_paths () =
 
 (* A dead worker says how it ended. See tickets/063. *)
 let test_how_a_worker_ended () =
-  let fields s = Yojson.Safe.to_string (`Assoc (Render.exit_fields s)) in
-  Alcotest.(check string) "an exit is its code" {|{"exit_code":3}|}
-    (fields (Some (Unix.WEXITED 3)));
-  Alcotest.(check string) "a crash is its signal" {|{"signal":"SIGSEGV"}|}
-    (fields (Some (Unix.WSIGNALED Sys.sigsegv)));
-  Alcotest.(check string) "and unknown is nothing" "{}" (fields None);
+  let status = Alcotest.(pair (option int) (option string)) in
+  Alcotest.check status "an exit is its code" (Some 3, None)
+    (Render.exit_status (Some (Unix.WEXITED 3)));
+  Alcotest.check status "a crash is its signal" (None, Some "SIGSEGV")
+    (Render.exit_status (Some (Unix.WSIGNALED Sys.sigsegv)));
+  Alcotest.check status "and unknown is neither" (None, None) (Render.exit_status None);
   Alcotest.(check string) "in words too" "was killed by SIGSEGV"
     (Render.how_it_ended (Some (Unix.WSIGNALED Sys.sigsegv)))
 

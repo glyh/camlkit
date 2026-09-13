@@ -34,12 +34,8 @@ let initialize_result params =
   | `String v -> result_for v
   | _ -> discover_result
 
-(* Typed tools first, then the hand-declared ones not yet moved over. *)
-let tools_list (typed : Tool.t list) =
-  let moved t = List.exists (fun (d : Tool.t) ->
-      Yojson.Safe.Util.member "name" t = `String d.name) typed in
-  `Assoc [ "tools", `List (List.map (fun (t : Tool.t) -> t.declaration) typed
-                           @ List.filter (fun t -> not (moved t)) Tools.all) ]
+let tools_list (tools : Tool.t list) =
+  `Assoc [ "tools", `List (List.map (fun (t : Tool.t) -> t.declaration) tools) ]
 
 let text s = `Assoc [ "type", `String "text"; "text", `String s ]
 
