@@ -23,9 +23,10 @@
    signature the worker touches is identical across them. A sequence of
    applications keeps that true. *)
 let hook_name = "__camlkit_break"
-(* The site's name crosses into the hook, because that is what a registry can
-   count, arm and disarm. See docs/wayfinder/tickets/049. *)
-let hook_type = "string -> unit"
+(* The site's id crosses into the hook: a name can be written in several
+   places, and the site is what is counted, armed and reported. See
+   docs/wayfinder/tickets/049. *)
+let hook_type = "int -> unit"
 let local_hook_name = "__camlkit_break_local"
 let local_hook_type = "string -> string -> Obj.t -> unit"
 
@@ -34,10 +35,10 @@ let local_hook_type = "string -> string -> Obj.t -> unit"
    handed back at all. *)
 type local = { name : string; ty : string; value : Obj.t }
 
-(* The site's name travels with the stop: a parked phrase is reported by the
-   marker it stopped at, and an id alone says which hit rather than which
-   marker. *)
-type _ Effect.t += Stop : string * local list -> unit Effect.t
+(* The site travels with the stop: a parked phrase is reported by the marker
+   and the place it stopped at, and a parked id alone says which hit rather
+   than which marker. *)
+type _ Effect.t += Stop : int * local list -> unit Effect.t
 
 (* Filled by the calls the rewrite puts before the stop, drained by it. A
    phrase is evaluated sequentially and a stop is reached at most once at a
@@ -75,29 +76,30 @@ let empty () = { items = []; len = 0 }
 let recent r = if r.len <= trail_limit then r.items
   else List.filteri (fun i _ -> i < trail_limit) r.items
 
-(* Where a watch is written: the top-level definition holding it, its line in
-   the call that sent it, and the watched expression's own text. A name may be
-   written at several places, so this is how a caller tells them apart. *)
+(* Where a marker is written: the top-level definition holding it, its line in
+   the call that sent it, and for a watch the watched expression's own text. A
+   name may be written at several places, so this is how a caller tells them
+   apart. *)
 type at = { in_def : string option; line : int; code : string }
 
-(* A name, which is what outlives any one place it is written: both kinds count
-   hits and are armed under it. A watch's name is also the default for the
-   sites written under it later, so disarming a name and re-evaluating its
-   definition leaves the new site disarmed too. *)
+(* A name, which groups the places it is written: its hits are theirs, and
+   arming or disarming it does all of them. It holds no arming of its own, so
+   a site written later starts armed, and the warning that reports it says so. *)
 type marker = {
   name : string;
   kind : kind;
-  mutable armed : bool;
   mutable hits : int;            (* lifetime, every site of the name *)
 }
 
-(* One place a watch is written. A name can be watched at several, each with
-   its own type, so every value is printed with the type of the site that
-   recorded it: one shared type per name printed an int as a string, and the
-   worker died. *)
+(* One place a marker is written. A name can be written at several; a watch's
+   sites each keep their own type, so every value is printed with the type of
+   the site that recorded it: one shared type per name printed an int as a
+   string, and the worker died. A breakpoint's site is what a stop reports and
+   what can be disarmed on its own. *)
 type site = {
   id : int;
   site_name : string;
+  site_kind : kind;
   at : at;
   mutable site_armed : bool;
   mutable site_hits : int;
@@ -125,15 +127,17 @@ let register ~kind name =
   match Hashtbl.find_opt markers name with
   | Some m -> m
   | None ->
-    let m = { name; kind; armed = true; hits = 0 } in
+    let m = { name; kind; hits = 0 } in
     Hashtbl.replace markers name m; m
 
-let add_site ~id ~name ~at ~printed_as =
-  let m = register ~kind:Watch name in
+let add_site ~kind ~id ~name ~at ~printed_as =
+  ignore (register ~kind name);
   last_site := max !last_site id;
   Hashtbl.replace sites id
-    { id; site_name = name; at; site_armed = m.armed; site_hits = 0;
-      trail = empty (); this_call = empty (); printed_as }
+    { id; site_name = name; site_kind = kind; at; site_armed = true;
+      site_hits = 0; trail = empty (); this_call = empty (); printed_as }
+
+let find_site id = Hashtbl.find_opt sites id
 
 let known () =
   List.sort (fun a b -> compare a.name b.name)
@@ -151,8 +155,7 @@ let all_sites () =
 let set_name ~armed name =
   match Hashtbl.find_opt markers name with
   | None -> false
-  | Some m ->
-    m.armed <- armed;
+  | Some _ ->
     List.iter (fun s -> s.site_armed <- armed) (sites_of name);
     true
 
@@ -209,11 +212,11 @@ let abandoned_binding = "__camlkit_abandoned"
    continuation returns a step of its own. *)
 type step =
   | Ran of bool
-  | Broke of string * local list * (unit, step) Effect.Deep.continuation
+  | Broke of int * local list * (unit, step) Effect.Deep.continuation
 
 type parked = {
   id : int;
-  name : string;
+  site : int;
   k : (unit, step) Effect.Deep.continuation;
   locals : local list;
   (* The phrases of the same call that have not run yet, and the index of the
@@ -249,22 +252,27 @@ let the_only_one () = match ids () with [ id ] -> Some id | _ -> None
    one declared above and nothing else of ours is reachable from a session. *)
 let local_hook name ty value = pending := { name; ty; value } :: !pending
 
-let hook name : unit =
+let hook id : unit =
   let locals = List.rev !pending in
   pending := [];
-  let site = register ~kind:Break name in
-  site.hits <- site.hits + 1;
+  match Hashtbl.find_opt sites id with
+  | None -> ()
+  | Some site ->
+  site.site_hits <- site.site_hits + 1;
+  (match Hashtbl.find_opt markers site.site_name with
+   | Some m -> m.hits <- m.hits + 1
+   | None -> ());
   (* A disarmed marker is still compiled into the code and still reached; it
      just does nothing, which is the whole of what disarming can mean when the
      call is in the caller's own function body. The locals are dropped with it,
      since nothing will read them. *)
-  if not site.armed then ()
+  if not site.site_armed then ()
   else
   (* An effect cannot be performed in a frame the runtime entered: a signal
      handler, or a callback arriving from C. The raw Unhandled exception names
      this worker's internals and tells a caller nothing, so it is turned into
      a sentence here, at the only place that knows what was being attempted. *)
-  try Effect.perform (Stop (name, locals))
+  try Effect.perform (Stop (id, locals))
   with Effect.Unhandled _ ->
     failwith
       "a breakpoint was reached in a frame the runtime entered, such as a \
@@ -341,15 +349,17 @@ let unit_expr ~loc =
 let string_expr ~loc s =
   Ast_helper.Exp.constant ~loc (Ast_helper.Const.string s)
 
-let to_empty_call ~name (e : Parsetree.expression) =
+let int_expr ~loc i = Ast_helper.Exp.constant ~loc (Ast_helper.Const.int i)
+
+let to_empty_call ~id (e : Parsetree.expression) =
   let loc = ghost e.pexp_loc in
   Ast_helper.Exp.apply ~loc (ident ~loc hook_name)
-    [ (Asttypes.Nolabel, string_expr ~loc name) ]
+    [ (Asttypes.Nolabel, int_expr ~loc id) ]
 
 (* Second pass: the same call, now carrying the locals harvested for it. The
    list is built here rather than in the worker because the values have to be
    read where they are in scope, which is only inside the phrase. *)
-let to_call ~loc ~name locals =
+let to_call ~loc ~id locals =
   let loc = ghost loc in
   let str s = string_expr ~loc s in
   let announce (name, ty) =
@@ -365,7 +375,7 @@ let to_call ~loc ~name locals =
     (fun local rest -> Ast_helper.Exp.sequence ~loc (announce local) rest)
     locals
     (Ast_helper.Exp.apply ~loc (ident ~loc hook_name)
-       [ (Asttypes.Nolabel, string_expr ~loc name) ])
+       [ (Asttypes.Nolabel, int_expr ~loc id) ])
 
 (* Nothing is printed back to source: the tree is mapped and everything
    inserted carries a ghost location, so the caller's own text keeps its line
@@ -387,34 +397,75 @@ let count_markers str =
 
 let has_marker str = count_markers str > 0
 
-(* The marker locations, in order, alongside the rewritten tree. They are how
-   the second pass finds what the first pass inserted: a typedtree
-   constructor's arity differs across the compiler versions this supports,
-   while a location does not. *)
-(* The marker locations paired with their names, in order. Both are how the
-   second pass finds what the first pass inserted, and the name is what the
-   registry and the hook are keyed by. *)
-let rewrite_empty str =
-  let found = ref [] in
-  let m =
-    mapper ~replace:(fun ~name e ->
-        found := (e.Parsetree.pexp_loc, name) :: !found;
-        to_empty_call ~name e)
+(* The name a top-level definition binds, for saying where a site is: the
+   first variable its first binding introduces. *)
+let defines (item : Parsetree.structure_item) =
+  match item.pstr_desc with
+  | Parsetree.Pstr_value (_, vb :: _) ->
+    let rec name (p : Parsetree.pattern) =
+      match p.ppat_desc with
+      | Parsetree.Ppat_var { txt; _ } -> Some txt
+      | Parsetree.Ppat_constraint (p, _) | Parsetree.Ppat_alias (p, _) -> name p
+      | _ -> None
+    in
+    name vb.Parsetree.pvb_pat
+  | _ -> None
+
+(* A piece of the caller's source on one line and cut short: enough to
+   recognise, not a second copy of it. *)
+let code_of ~src (loc : Location.t) =
+  let a = loc.loc_start.Lexing.pos_cnum and b = loc.loc_end.Lexing.pos_cnum in
+  if a < 0 || b > String.length src || b <= a then ""
+  else
+    let flat =
+      String.concat " "
+        (List.filter (( <> ) "")
+           (String.split_on_char ' '
+              (String.map (function '\n' | '\t' | '\r' -> ' ' | c -> c)
+                 (String.sub src a (b - a)))))
+    in
+    if String.length flat <= 60 then flat else String.sub flat 0 57 ^ "..."
+
+(* Maps each top-level item with a mapper built for it, so a replacement knows
+   which definition it is in. *)
+let per_item make str =
+  List.map
+    (fun item -> let m = make (defines item) in m.Ast_mapper.structure_item m item)
+    str
+
+(* First pass. Each marker is numbered from [first], in order, and comes back
+   with its location - how the second pass finds what the first inserted: a
+   typedtree constructor's arity differs across the compiler versions this
+   supports, while a location does not - its name, its id and where it is
+   written. *)
+let rewrite_empty ~first str =
+  let found = ref [] and next = ref first in
+  let str =
+    per_item
+      (fun in_def ->
+         mapper ~replace:(fun ~name e ->
+             let id = !next in
+             incr next;
+             let at = { in_def; code = "";
+                        line = e.Parsetree.pexp_loc.loc_start.Lexing.pos_lnum } in
+             found := (e.Parsetree.pexp_loc, name, id, at) :: !found;
+             to_empty_call ~id e))
+      str
   in
-  let str = m.Ast_mapper.structure m str in
   (str, List.rev !found)
 
 (* Locals are taken in order of appearance, which is the order the markers are
-   met in both trees, so the two passes line up without matching locations. *)
-let rewrite_with locals_per_marker str =
-  let remaining = ref locals_per_marker in
+   met in both trees, so the two passes line up without matching locations.
+   The ids go with them, so the second tree calls the same sites. *)
+let rewrite_with ids_and_locals str =
+  let remaining = ref ids_and_locals in
   let m =
-    mapper ~replace:(fun ~name e ->
+    mapper ~replace:(fun ~name:_ e ->
         match !remaining with
-        | [] -> to_empty_call ~name e
-        | locals :: rest ->
+        | [] -> e
+        | (id, locals) :: rest ->
           remaining := rest;
-          to_call ~loc:e.pexp_loc ~name locals)
+          to_call ~loc:e.pexp_loc ~id locals)
   in
   m.Ast_mapper.structure m str
 

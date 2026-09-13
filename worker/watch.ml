@@ -115,57 +115,26 @@ let count str =
 
 let has_marker str = count str > 0
 
-(* The name a top-level definition binds, for saying where a site is: the
-   first variable its first binding introduces. *)
-let defines (item : Parsetree.structure_item) =
-  match item.pstr_desc with
-  | Parsetree.Pstr_value (_, vb :: _) ->
-    let rec name (p : Parsetree.pattern) =
-      match p.ppat_desc with
-      | Parsetree.Ppat_var { txt; _ } -> Some txt
-      | Parsetree.Ppat_constraint (p, _) | Parsetree.Ppat_alias (p, _) -> name p
-      | _ -> None
-    in
-    name vb.Parsetree.pvb_pat
-  | _ -> None
-
-(* The watched expression as the caller wrote it, on one line and cut short:
-   enough to recognise, not a second copy of the source. *)
-let code_of ~src (loc : Location.t) =
-  let a = loc.loc_start.Lexing.pos_cnum and b = loc.loc_end.Lexing.pos_cnum in
-  if a < 0 || b > String.length src || b <= a then ""
-  else
-    let flat =
-      String.concat " "
-        (List.filter (( <> ) "")
-           (String.split_on_char ' '
-              (String.map (function '\n' | '\t' | '\r' -> ' ' | c -> c)
-                 (String.sub src a (b - a)))))
-    in
-    if String.length flat <= 60 then flat else String.sub flat 0 57 ^ "..."
-
 (* The rewritten tree, and each site: where its typed node will be found, its
    name, the id it is numbered with from [first], and where it is written. *)
 let rewrite ~src ~first str =
   let found = ref [] in
   let next = ref first in
-  let rewrite_item item =
-    let in_def = defines item in
-    let m =
+  let str =
+    Breakpoint.per_item
+      (fun in_def ->
       mapper ~replace:(fun ~name e inner ->
           let id = !next in
           incr next;
           let at = { Breakpoint.in_def;
                      line = e.Parsetree.pexp_loc.loc_start.Lexing.pos_lnum;
                      code = (match marker e with
-                         | Some (_, i) -> code_of ~src i.Parsetree.pexp_loc
+                         | Some (_, i) -> Breakpoint.code_of ~src i.Parsetree.pexp_loc
                          | None -> "") } in
           found := (e.Parsetree.pexp_loc, name, id, at) :: !found;
-          wrap ~id e inner)
-    in
-    m.Ast_mapper.structure_item m item
+          wrap ~id e inner))
+      str
   in
-  let str = List.map rewrite_item str in
   (str, List.rev !found)
 
 (* The type and environment at each site, taken from the typed tree the same

@@ -238,14 +238,15 @@ let of_response (response : Msg.response) payload =
       is_error = false }
   (* A stop is not a completion and does not pretend to be one: the caller has
      to know the phrase is still waiting, and with which id. *)
-  | Msg.Stopped { id; name; phrase_index; bound; skipped; done_ } ->
+  | Msg.Stopped { id; name; site_id; site_at; phrase_index; bound; skipped;
+                  done_ } ->
     let names =
       String.concat ", "
         (List.map (fun (b : Msg.binding) ->
              Printf.sprintf "%s : %s" b.Msg.bound b.Msg.bound_type) bound) in
     let head =
-      Printf.sprintf "Stopped at [%%break %S]%s, id %d.%s%s"
-        name
+      Printf.sprintf "Stopped at [%%break %S] #%d (%s)%s, id %d.%s%s"
+        name site_id (at_text site_at)
         (if phrase_index >= 0 then Printf.sprintf " in phrase %d" (phrase_index + 1)
          else "")
         id
@@ -265,7 +266,8 @@ let of_response (response : Msg.response) payload =
       structured =
         `Assoc
           ([ ("status", `String "stopped"); ("id", `Int id);
-             ("marker", `String name) ]
+             ("marker", `String name);
+             ("site", `Assoc (("id", `Int site_id) :: at_fields site_at)) ]
            @ (match bound with
                | [] -> []
                | bs ->

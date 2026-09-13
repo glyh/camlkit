@@ -167,15 +167,20 @@ never had: redefining that function later, or re-sending the chunk after an
 edit, was refused with the type unchanged. Re-sending `type t` is a new type in
 plain OCaml too, so even a correct comparison refuses the edit loop.
 
-Built instead: every place a watch is written is a site with an id, and the
-rewritten code records by id. Each site keeps its own type, where it is written
-(the enclosing definition, its line in the call, the watched text) and its own
-trail, so a value is always printed with the type it was recorded under and
-nothing is compared. A name groups its sites for counting and disarming, and
-`markers` arms or disarms one site by id. A breakpoint name written again is
-accepted with a warning, since every stop of it then reports and disarms as
-one. One name for both kinds is still refused: disarming the name would turn off
-the other kind with it. Markers are registered once a call is going to run, so a
+Built instead: every place a marker is written is a site with an id, and the
+rewritten code calls the hook with that id. Each site keeps where it is written
+(the enclosing definition, its line in the call, a watch's text); a watch site
+also keeps its own type and trail, so a value is always printed with the type it
+was recorded under and nothing is compared, and a stop reports the site it
+reached. A name groups its sites for counting and disarming, and `markers` arms
+or disarms one site by id. Breakpoints got sites too once a name written twice
+turned out to leave no way to disarm one of the two, or to tell which one
+stopped. One name for both kinds is still refused: disarming the name would turn
+off the other kind with it.
+
+A new site always starts armed. It used to inherit its name's last arming, so
+redefining a disarmed marker kept it disarmed; that was a rule a caller could
+not see in the result. The warning that reports the site says it is armed. Markers are registered once a call is going to run, so a
 failed or checked call leaves nothing in `markers`.
 
 Every re-evaluation adds a site, and nothing can tell whether code holding an

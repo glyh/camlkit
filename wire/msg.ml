@@ -50,6 +50,11 @@ type binding = {
   bound_type : string;  (* its type, or the whole declaration for a type or module *)
 }
 
+(* Where a marker is written, so the several places one name can be written
+   are told apart: the top-level definition holding it, its line in the call
+   that sent it, and for a watch the watched expression's text. *)
+type at = { in_def : string option; line : int; code : string }
+
 (* What running a phrase cost, when the call asked. Wall clock is the half that
    invites a wrong conclusion - a first call pays for lazy initialisation, a
    toplevel is not a release build, and nothing is repeated - so the tool says
@@ -63,10 +68,6 @@ type cost = {
 (* What one watch site recorded while a phrase ran. [hits] is the site's
    lifetime count and [values] are this phrase's, printed; see
    docs/wayfinder/tickets/049 for why the two windows differ. *)
-(* Where a watch is written, so the several places one name can be watched
-   are told apart: the top-level definition holding it, its line in the call
-   that sent it, and the watched expression's text. *)
-type at = { in_def : string option; line : int; code : string }
 
 type watched = {
   site : string;                 (* the name *)
@@ -156,6 +157,10 @@ type response =
                  (* The marker's name. The id says which hit; this says which
                     marker, which is what a caller disarms by. *)
                  name : string;
+                 (* Which place the name is written at it stopped, since a
+                    name can be written at several. *)
+                 site_id : int;
+                 site_at : at;
                  phrase_index : int;
                  bound : binding list;
                  skipped : (string * string) list;

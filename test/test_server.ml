@@ -1172,8 +1172,24 @@ let test_marker_sites () =
   (* A breakpoint name written again is a warning, not a refusal. *)
   ignore (ev "let s () = [%break \"stop\"];;");
   let r = ev "let s () = [%break \"stop\"];;" in
-  Alcotest.(check bool) "a breakpoint defined again warns" true
-    (has "defined again" (text r) && has "val s" (text r));
+  Alcotest.(check bool) "a breakpoint written again warns" true
+    (has "added breakpoint \"stop\"" (text r) && has "val s" (text r));
+  (* Its sites are told apart: the stop names the one it reached, and one can
+     be turned off without the other. *)
+  let r = ev "s ();;" in
+  let site = Yojson.Safe.Util.(member "structuredContent" r |> member "site") in
+  Alcotest.(check bool) "a stop names its site" true
+    (Yojson.Safe.Util.member "in" site = `String "s");
+  ignore (call c ~id:4 ~tool:"continue" ~args:(`Assoc [ "session", `String "sites" ]));
+  ignore (markers [ "disarm_sites", `List [ Yojson.Safe.Util.member "id" site ] ]);
+  Alcotest.(check bool) "a disarmed breakpoint site does not stop" false
+    (has "Stopped" (text (ev "s ();;")));
+  (* A new site starts armed, even under a name that was disarmed. *)
+  ignore (markers [ "disarm", `List [ `String "pick" ] ]);
+  let r = ev "let pick x = [%watch \"pick\" x];; pick 5;;" in
+  Alcotest.(check bool) "a new site under a disarmed name is armed, and says so"
+    true (has "armed)" (text r) && has "5" (text r)
+          && watched r <> []);
   Alcotest.(check bool) "one name for both kinds is refused" true
     (has "Give this one another name" (text (ev "let w () = [%watch \"stop\" 1];;")));
   (* A check runs nothing, so it registers nothing either. *)
