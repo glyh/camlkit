@@ -654,7 +654,18 @@ let test_diagnostics () =
   (* And the file on disk is untouched by having asked about an edit. *)
   let r = ask () in
   Alcotest.(check bool) "the file itself still compiles" true
-    (has "no errors" (text r))
+    (has "no errors" (text r));
+  (* A dune project that was never built has no configuration, and merlin
+     says so in a message with no position. Reading one used to raise, which
+     took the whole server down with it. *)
+  let project = Filename.dirname path in
+  let marker = Filename.concat project "dune-project" in
+  Out_channel.with_open_text marker (fun oc -> output_string oc "(lang dune 3.0)\n");
+  let r = Fun.protect ~finally:(fun () -> Sys.remove marker) (fun () -> ask ()) in
+  Alcotest.(check bool) "a message with no position is reported" true
+    (has "No config found" (text r));
+  Alcotest.(check bool) "and the server is still there" true
+    (has "no errors" (text (ask ())))
 
 let test_expand () =
   with_server @@ fun c ->
@@ -810,7 +821,23 @@ let test_a_phrase_stops_and_resumes () =
   Alcotest.(check bool) "inspect prints them" true (has "bp_x : int = 40" (text r));
   let r = call c ~id:4 ~tool:"continue"
       ~args:(`Assoc [ "session", `String "bp" ]) in
-  Alcotest.(check bool) "the rest of the phrase ran" true (has "41" (text r))
+  Alcotest.(check bool) "the rest of the phrase ran" true (has "41" (text r));
+  (* A resumed phrase reports what its watches recorded after the stop, which
+     the stop could not, and not the warnings the stop already reported. *)
+  let r = call c ~id:5 ~tool:"eval"
+      ~args:(args "let () = let f = function [] -> () in f [];\n\
+                   for i = 1 to 3 do\n\
+                     if i = 2 then [%break \"m1b\"]; ignore [%watch \"i\" i] done;;") in
+  Alcotest.(check bool) "the stop reports the warning" true
+    (has "Warning 8" (text r));
+  let r = call c ~id:6 ~tool:"continue"
+      ~args:(`Assoc [ "session", `String "bp" ]) in
+  let p = Yojson.Safe.Util.(member "structuredContent" r |> member "phrases"
+                            |> index 0) in
+  Alcotest.(check bool) "the resume reports the watches after the stop" true
+    (Yojson.Safe.Util.member "watched" p <> `Null && has "3" (text r));
+  Alcotest.(check bool) "and not the warning again" false
+    (has "Warning 8" (text r))
 
 (* A stop suspends the call, not only the phrase that stopped. The phrases
    waiting behind it were dropped silently before this: the loop finished, the
@@ -1012,6 +1039,10 @@ let test_watch_records_without_stopping () =
   let r = ev "for i = 1 to 5 do ignore [%watch \"fresh\" (string_of_int (i / 10))] done;;" in
   Alcotest.(check (list string)) "an equal fresh value prints once"
     [ "\"0\"" ] (values r);
+  (* A long run keeps the newest hundred, in order, however it is trimmed. *)
+  let vs = values (ev "for i = 1 to 250 do ignore [%watch \"many\" i] done;;") in
+  Alcotest.(check (pair int string)) "the newest hundred" (100, "151")
+    (List.length vs, List.hd vs);
   (* A call repeating the last call's final value still reports it. *)
   Alcotest.(check (list string)) "a repeated call reports its value"
     [ "14" ] (values (ev "g [7];;"));

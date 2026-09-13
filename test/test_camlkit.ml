@@ -311,7 +311,17 @@ let test_a_warning_arrives_once () =
        (out c);
      Alcotest.(check int) "with the warning still reported once" 1
        (count "Warning 8" b.Msg.warnings)
-   | _ -> Alcotest.fail "expected three phrase records")
+   | _ -> Alcotest.fail "expected three phrase records");
+  (* The toplevel separates a report from what follows with a blank line and
+     resets that only in its own loop, so one warning used to make every later
+     rendering and warning in the session start with a newline. *)
+  let r, _ = ask s (ev (warns ^ " let z = 2;;")) in
+  List.iter
+    (fun (p : Msg.phrase) ->
+       Alcotest.(check bool) "nothing starts with a stray newline" false
+         (String.starts_with ~prefix:"\n" p.Msg.rendering
+          || String.starts_with ~prefix:"\n" p.Msg.warnings))
+    (phrases r)
 
 let test_type_error_executes_nothing () =
   with_worker @@ fun s ->

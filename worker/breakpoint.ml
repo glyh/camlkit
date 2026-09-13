@@ -63,6 +63,18 @@ type kind = Break | Watch
    ponytail: one fixed cap; make it per call if anyone needs more. *)
 let trail_limit = 100
 
+(* Newest first, with its length kept so that recording is not a walk. The
+   list may run to twice the limit before it is cut back, which makes a
+   recording O(1) amortised: cutting on every hit copied a full list each time,
+   and a watch reached a million times allocated 5 GB doing it. Read it through
+   [recent], never [items]. *)
+type recent = { mutable items : Obj.t list; mutable len : int }
+
+let empty () = { items = []; len = 0 }
+
+let recent r = if r.len <= trail_limit then r.items
+  else List.filteri (fun i _ -> i < trail_limit) r.items
+
 type site = {
   site_name : string;
   kind : kind;
@@ -72,8 +84,8 @@ type site = {
      needs the type, which only the typing pass knows, so they are kept raw and
      printed when the result is built. [trail] is the site's lifetime and
      [this_call] is emptied at the start of every phrase. *)
-  mutable trail : Obj.t list;
-  mutable this_call : Obj.t list;
+  trail : recent;
+  this_call : recent;
   (* The type and environment of the watched expression, stashed when the
      phrase carrying the marker is typed. *)
   mutable printed_as : (Types.type_expr * Env.t) option;
@@ -90,7 +102,7 @@ let register ~kind name =
   | Some s -> s
   | None ->
     let s = { site_name = name; kind; armed = true; hits = 0;
-              trail = []; this_call = []; printed_as = None } in
+              trail = empty (); this_call = empty (); printed_as = None } in
     Hashtbl.replace sites name s; s
 
 let known () =
@@ -114,9 +126,7 @@ let find_site name = Hashtbl.find_opt sites name
 (* Emptied per phrase, so a result reports what its own phrase recorded rather
    than everything the site has ever seen. The trail keeps the rest. *)
 let start_call () =
-  Hashtbl.iter (fun _ s -> s.this_call <- []) sites
-
-let cap n l = if List.length l > n then List.filteri (fun i _ -> i < n) l else l
+  Hashtbl.iter (fun _ s -> s.this_call.items <- []; s.this_call.len <- 0) sites
 
 (* Called by the rewritten code. Counts every hit; stores a value only when it
    differs from the newest one in that list. Each list is compared against its
@@ -127,12 +137,19 @@ let record name (v : Obj.t) =
   let s = register ~kind:Watch name in
   s.hits <- s.hits + 1;
   if s.armed then begin
-    let add = function
-      | p :: _ as l when p == v -> l
-      | l -> cap trail_limit (v :: l)
+    let add r =
+      match r.items with
+      | p :: _ when p == v -> ()
+      | l ->
+        r.items <- v :: l;
+        r.len <- r.len + 1;
+        if r.len >= 2 * trail_limit then begin
+          r.items <- recent r;
+          r.len <- trail_limit
+        end
     in
-    s.trail <- add s.trail;
-    s.this_call <- add s.this_call
+    add s.trail;
+    add s.this_call
   end
 
 (* What a continue with abandon raises inside the parked phrase. The toplevel
@@ -164,11 +181,10 @@ type parked = {
      made while parked cannot change what they refer to. *)
   rest : (Parsetree.toplevel_phrase * string option) list;
   index : int;
-  (* The rest of the phrase prints into the buffers the original call gave
+  (* The rest of the phrase prints into the buffer the original call gave
      execute_phrase, which is inside the continuation and cannot be swapped.
      They are held here so the call that resumes can read what was added. *)
   buf : Buffer.t;
-  wbuf : Buffer.t;
   seen : int;                    (* bytes of buf already reported *)
 }
 

@@ -295,14 +295,21 @@ let source_query id name args =
               (fun item ->
                  let open Yojson.Safe.Util in
                  let at k f =
-                   match member k item |> member f with `Int n -> n | _ -> 0 in
+                   match member k item with
+                   | `Assoc _ as p -> (match member f p with `Int n -> n | _ -> 0)
+                   | _ -> 0 in
                  let message =
                    match member "message" item with `String m -> m | _ -> "" in
                  let indented =
                    String.concat "\n    " (String.split_on_char '\n' message) in
-                 Printf.sprintf "  %d:%d-%d:%d\n    %s"
-                   (at "start" "line") (at "start" "col")
-                   (at "end" "line") (at "end" "col") indented)
+                 (* A message about the file as a whole, such as merlin finding
+                    no build configuration, has no position at all. *)
+                 match member "start" item with
+                 | `Null -> Printf.sprintf "  %s" indented
+                 | _ ->
+                   Printf.sprintf "  %d:%d-%d:%d\n    %s"
+                     (at "start" "line") (at "start" "col")
+                     (at "end" "line") (at "end" "col") indented)
               items)
        in
        let section label = function
@@ -658,7 +665,15 @@ let handle_packet (packet : Jsonrpc.Packet.t) =
   | Jsonrpc.Packet.Notification _ -> ()          (* nothing to answer *)
   | Jsonrpc.Packet.Request ({ id; method_ = "tools/call"; params } as _r) ->
     let params = match params with Some (`Assoc _ as a) -> a | _ -> `Assoc [] in
-    handle_call id params
+    (* One call's surprise is that call's failure. Uncaught, it ended the
+       server and every session with it: a merlin diagnostic with no position
+       did exactly that. *)
+    (try handle_call id params
+     with exn ->
+       let why = Printexc.to_string exn in
+       log "a tool call raised: %s" why;
+       reply id (Render.infrastructure_failure
+                   ("camlkit failed while answering this call: " ^ why)))
   | Jsonrpc.Packet.Request r ->
     (match Mcp.dispatch ~call:(fun _ -> assert false) r with
      | Ok result ->

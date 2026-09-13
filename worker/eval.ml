@@ -72,6 +72,17 @@ let init () =
   Clflags.real_paths := false;          (* -short-paths *)
   Clflags.debug := true;                (* -g: see ticket 034 *)
   Toploop.initialize_toplevel_env ();
+  (* Location counts the lines it has reported, and the toplevel puts a blank
+     line before any report or result that follows one, resetting the count
+     only in its own read loop, which this worker does not run. Here every
+     report and every result goes into a buffer of its own, so the separator
+     is never wanted: one warning made every later rendering and warning in
+     the session start with a newline. Reset around each report instead. *)
+  (let default = !Location.report_printer in
+   Location.report_printer := fun () ->
+     let p = default () in
+     { p with Location.pp = (fun self ppf r ->
+           Location.reset (); p.Location.pp self ppf r; Location.reset ()) });
   (* utop used to do this for us. Without it Topfind has no configuration and
      every require fails; the byte predicate matters because this worker is
      bytecode and would otherwise be offered native archives. *)
@@ -450,7 +461,7 @@ let bind_locals (locals : Breakpoint.local list) =
 let recorded_this_phrase () =
   List.filter_map
     (fun (s : Breakpoint.site) ->
-       match s.Breakpoint.kind, s.Breakpoint.this_call with
+       match s.Breakpoint.kind, Breakpoint.recent s.Breakpoint.this_call with
        | Breakpoint.Break, _ | _, [] -> None
        | Breakpoint.Watch, values ->
          Some Msg.{ site = s.Breakpoint.site_name;
@@ -535,7 +546,7 @@ let rec execute_from cap ~acc ~pos ~measure start phrases =
       | Breakpoint.Broke (name, locals, k) ->
         let bound, skipped = bind_locals locals in
         let id = Breakpoint.fresh_id () in
-        Breakpoint.park { Breakpoint.id; name; k; locals; buf; wbuf;
+        Breakpoint.park { Breakpoint.id; name; k; locals; buf;
                           seen = Buffer.length buf; rest; index = i };
         Msg.Stopped { id; name; phrase_index = i; bound; skipped;
                       done_ = List.rev !acc }
@@ -792,7 +803,9 @@ let resolve id =
 (* The rest of a resumed phrase prints into the buffers the original call
    handed execute_phrase, which are inside the continuation and cannot be
    swapped. They were kept with the continuation, so what the rest of the
-   phrase adds is read from them here. *)
+   phrase adds is read from them here. Its warnings are not: typing raised
+   them before it ran, and the stop already reported them. What the watches
+   recorded since resuming is, since the stop's result could not have. *)
 let record_of_parked cap (p : Breakpoint.parked) =
   let rendering =
     let all = Buffer.contents p.Breakpoint.buf in
@@ -800,9 +813,9 @@ let record_of_parked cap (p : Breakpoint.parked) =
     else String.sub all p.Breakpoint.seen
            (String.length all - p.Breakpoint.seen)
   in
-  Msg.{ rendering; warnings = Buffer.contents p.Breakpoint.wbuf;
+  Msg.{ rendering; warnings = "";
         out_start = 0; out_len = Capture.mark cap;
-        dropped = 0; ran = None; cost = None; watched = [] }
+        dropped = 0; ran = None; cost = None; watched = recorded_this_phrase () }
 
 let continue_ cap ~id ~abandon =
   Capture.reset cap;
@@ -810,6 +823,7 @@ let continue_ cap ~id ~abandon =
   | Error why -> Msg.Rejected why
   | Ok p ->
     Breakpoint.forget p.Breakpoint.id;
+    Breakpoint.start_call ();
     interrupted := false;
     over_limit := false;
     let step =
@@ -862,7 +876,7 @@ let trails () =
        | Breakpoint.Watch ->
          Some Msg.{ site = s.Breakpoint.site_name;
                     site_hits = s.Breakpoint.hits;
-                    values = Watch.printed s s.Breakpoint.trail })
+                    values = Watch.printed s (Breakpoint.recent s.Breakpoint.trail) })
     (Breakpoint.known ())
 
 let inspect cap ~id =

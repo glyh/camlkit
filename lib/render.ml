@@ -170,13 +170,17 @@ let of_response (response : Msg.response) payload =
     let before = transcript payload f.done_ in
     { content = Printf.sprintf "%s%s%s\n\n%s\n\n%s"
           before where at (String.trim f.message) aftermath;
-      structured = `Assoc [ "status", `String "failed";
-                            "phase", `String (Msg.string_of_phase f.phase);
-                            "phrase", `Int (f.phrase_index + 1);
-                            "message", `String f.message;
-                            "spans", spans_json f.spans;
-                            "lines", spans_json f.lines;
-                            "phrases", `List (List.map (json_phrase payload) f.done_) ];
+      (* A runtime failure has no span, and a first phrase has nothing done
+         before it: absent then, like any other field with nothing to say. *)
+      structured =
+        `Assoc ([ "status", `String "failed";
+                  "phase", `String (Msg.string_of_phase f.phase);
+                  "phrase", `Int (f.phrase_index + 1);
+                  "message", `String f.message ]
+                @ (if f.spans = [] then [] else [ "spans", spans_json f.spans ])
+                @ (if f.lines = [] then [] else [ "lines", spans_json f.lines ])
+                @ (if f.done_ = [] then []
+                   else [ "phrases", `List (List.map (json_phrase payload) f.done_) ]));
       is_error = false }
   | Msg.Interrupted { phrase_index; done_ } ->
     { content = Printf.sprintf
