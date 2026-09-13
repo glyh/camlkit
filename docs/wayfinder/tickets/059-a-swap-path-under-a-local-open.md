@@ -1,8 +1,8 @@
 ---
-status: open
+status: resolved
 type: defect
 blocked-by: [054]
-assignee:
+assignee: lyh
 ---
 
 # A swap path under a local open
@@ -27,3 +27,26 @@ well-typed phrase.
 Breakpoints already take the environment at a marker from a first typing
 pass. The swap could do the same: type the phrase with the marker replaced by
 `ignore M.f`, read the environment at that node, and resolve there.
+
+## Decided
+
+**As directed, and every swap is probed, not only an unbound one.** Before
+expansion the phrase is typed once with each swap as `ignore <path>`, and the
+environment at each is read with `Breakpoint.marker_envs`. Probing only when the
+path fails at top level would still be wrong when a top-level module and one
+under the open share a name, where the open wins.
+
+**The probe strips the other markers too:** a watch becomes its expression and
+a breakpoint `()`. Otherwise any phrase holding one would fail the probe for a
+reason that has nothing to do with the swap.
+
+**A probe that fails keeps the session's environment**, which is the old
+behaviour and the old refusals. An unbound path fails the probe, so its error is
+still "Unbound value", now without the sentence about opens.
+
+**Aliases are normalised before the cell array is read,** so
+`let module S = Swaplib in [%swap S.rate ...]` works: `S` is a local name
+`Toploop.eval_value_path` cannot evaluate, and `Swaplib` behind it is global.
+
+Tested under a local open, through a local module, and beside a watch in the
+same phrase.

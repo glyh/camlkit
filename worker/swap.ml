@@ -301,13 +301,48 @@ let resolve env components =
       let key = String.concat "." (List.filteri (fun i _ -> i >= k) components) in
       match find_value env (Option.get (Longident.unflatten (prefix @ [ cells_name ]))) with
       | Some path ->
-        (match (Obj.obj (Toploop.eval_value_path env path)
+        (match (Obj.obj (Toploop.eval_value_path env (Env.normalize_value_path None env path))
                 : (string * Obj.t ref) array) with
          | cells -> Some (prefix, key, Array.exists (fun (k, _) -> k = key) cells)
          | exception _ -> try_prefix (k - 1))
       | None -> try_prefix (k - 1)
   in
   try_prefix (n - 1)
+
+(* The environment at each swap, so a path written under an open or a local
+   module inside the phrase resolves the way the compiler will read it there
+   (tickets/059). The phrase is typed once with each swap as `ignore <path>`,
+   a watch as its expression and a breakpoint as (), and the environment at
+   each swap read off the typed tree. A phrase that does not type this way,
+   an unbound path among the reasons, keeps the session's environment, where
+   the refusals below say what is wrong. *)
+let envs env str =
+  let m =
+    { Ast_mapper.default_mapper with
+      expr = (fun self e ->
+          match marker e, Watch.marker e with
+          | Some (Ok (lid, _)), _ ->
+            Ast_helper.Exp.apply ~loc:e.pexp_loc
+              (ident ~loc:(ghost e.pexp_loc) [ "Stdlib"; "ignore" ])
+              [ (Nolabel, Ast_helper.Exp.ident ~loc:lid.loc lid) ]
+          | _, Some (_, inner) -> self.Ast_mapper.expr self inner
+          | _ when Breakpoint.is_marker e ->
+            Ast_helper.Exp.construct ~loc:e.pexp_loc (lident ~loc:e.pexp_loc [ "()" ]) None
+          | _ -> Ast_mapper.default_mapper.expr self e) } in
+  let locs = ref [] in
+  ignore (Ast_mapper.default_mapper.structure
+            { Ast_mapper.default_mapper with
+              expr = (fun self e ->
+                  if marker e <> None then locs := e.pexp_loc :: !locs;
+                  Ast_mapper.default_mapper.expr self e) } str);
+  match
+    Warnings.without_warnings (fun () ->
+        Typemod.type_toplevel_phrase env (m.Ast_mapper.structure m str))
+  with
+  | (tstr, _, _, _, _) ->
+    List.combine !locs (Breakpoint.marker_envs tstr !locs)
+    |> List.filter_map (fun (l, e) -> Option.map (fun e -> (l, e)) e)
+  | exception _ -> []
 
 let expand env (e : expression) (lid : Longident.t Location.loc) replacement =
   let loc = lid.loc in
@@ -316,13 +351,10 @@ let expand env (e : expression) (lid : Longident.t Location.loc) replacement =
   let bound = find_value env lid.txt <> None in
   match resolve env components with
   | (None | Some (_, _, false)) when not bound ->
-    (* Refused here rather than left for the compiler to report: typed inside
-       the phrase, a path reachable only under a local open would type, and
-       the swap would do nothing without saying so. See tickets/059. *)
-    fail ~loc
-      "Unbound value %s. A swap's path is resolved at the session's top \
-       level, not under an open inside the phrase, so write it in full."
-      written
+    (* Refused here rather than left for the compiler to report, which would
+       otherwise type the path where the swap could not resolve it, and the
+       swap would do nothing without saying so. See tickets/059. *)
+    fail ~loc "Unbound value %s." written
   | None ->
     fail ~loc
       "%s cannot be swapped: it is not in code that load built. Only a dune \
@@ -388,12 +420,17 @@ let has_marker str =
 let rewrite env str =
   if not (has_marker str) then str
   else
+    let envs = envs env str in
+    let env_at (e : expression) =
+      match List.find_opt (fun (l, _) -> Breakpoint.same_place l e.pexp_loc) envs with
+      | Some (_, env) -> env
+      | None -> env in
     let m =
       { Ast_mapper.default_mapper with
         expr = (fun self e ->
             match marker e with
             | Some (Ok (lid, replacement)) ->
-              expand env e lid (Option.map (self.Ast_mapper.expr self) replacement)
+              expand (env_at e) e lid (Option.map (self.Ast_mapper.expr self) replacement)
             | Some (Error ()) ->
               fail ~loc:e.pexp_loc
                 "A swap is written [%%swap Module.f replacement], or \

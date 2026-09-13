@@ -361,8 +361,9 @@ must evaluate it first. Tests are Alcotest.
   — **open.** Session definitions have no cells; whether redefinition itself
   should fill one is the surface question.
 - [A swap path under a local open](tickets/059-a-swap-path-under-a-local-open.md)
-  — **open.** The path is resolved at top level; it was a silent no-op under a
-  local open and is now refused.
+  — **fixed.** The path is resolved in the environment at the swap, read from a
+  first typing pass with the swap as `ignore <path>`, so a local open or a local
+  module reaches it.
 - [load replaces the user's OCAMLPARAM](tickets/060-load-replaces-the-user-s-ocamlparam.md)
   — **fixed.** Merged after the user's `_`, the way the compiler parses it, and
   the separator is chosen so a comma in the worker's path does not split it.

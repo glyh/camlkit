@@ -1013,6 +1013,21 @@ let test_a_swap_reaches_every_caller () =
     (has "is not included in" r && has "Nothing was executed" r);
   let r = ev "[%swap Swaplib.rate];; Swaplib.total ~discount:1. \"EU\" [100.];;" in
   Alcotest.(check bool) "the original comes back" true (has "= 119." r);
+  (* A path that only means something inside the phrase resolves there. See
+     tickets/059. *)
+  ignore (ev "module Shop = struct module P = Swaplib end;;");
+  let r = ev "let open Shop in [%swap P.rate (fun _ -> 0.5)];; \
+              Swaplib.total \"EU\" [100.];;" in
+  Alcotest.(check bool) "a path under a local open swaps" true
+    (has "swapped P.rate" r && has "= 150." r);
+  let r = ev "let module S = Swaplib in [%swap S.rate];; Swaplib.total \"EU\" [100.];;" in
+  Alcotest.(check bool) "and one through a local module restores" true
+    (has "restored S.rate" r && has "= 120." r);
+  let r = ev "let open Shop in [%swap P.rate (fun _ -> 0.5)]; \
+              [%watch \"w59\" (Swaplib.total \"EU\" [100.])];;" in
+  Alcotest.(check bool) "beside a watch in the same phrase too" true
+    (has "swapped P.rate" r && has "= 150." r);
+  ignore (ev "[%swap Swaplib.rate];;");
   let r = ev "[%swap Swaplib.base (fun _ -> 1.)];;" in
   Alcotest.(check bool) "a value is refused, saying why" true
     (has "only top-level functions written with parameters" r);
