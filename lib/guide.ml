@@ -49,6 +49,10 @@ Markers, for live debugging:
   build cannot, and the error says which. The replacement must have the
   function's type, at least as general.
 
+status is ok; failed, with phase, phrase (1-based), message, spans and lines;
+interrupted; stopped, at a [%break]; or rejected, with reason. A result is also
+the text of the call, serialized.
+
 Result fields, each absent when it has nothing to say: rendering (what the
 toplevel printed, where bindings are read), warnings, output (what the phrase
 printed, ending with [output truncated, N more characters] past the limit),
@@ -57,13 +61,14 @@ ran, watched, cost, and checked when the call only typechecked.|};
   "describe", {|Shows the signature of a module, value or type as a session sees it,
 including modules defined during the session. For an installed package the
 session has not loaded, signature answers without a session.
-A name the session does not have answers error instead of phrases.|};
+A name the session does not have answers status unknown, with error.|};
 
   "require", {|Loads findlib packages into a session, making their modules available to
 later calls. Packages with C stubs work from a bare environment. A load that
 resets the session puts back the packages required before it.
 
-Result: loaded, and failed with each library and its error.|};
+Result: status loaded with the libraries loaded, or status partial with failed
+listing each library that was not and its error.|};
 
   "load", {|Loads a dune project's own libraries into a session.
 

@@ -430,15 +430,14 @@ not.
   — **fixed.** `file` is a path, resolved once per file through `locate`, and
   the unusable position is gone.
 - [Output schemas drift from results](tickets/070-output-schemas-drift-from-results.md)
-  — **open.** `locate` declared fields it never sent; `eval` declares none of
-  its failure fields. No test compares a result's keys with its schema.
+  — **fixed** by 071: no hand-written schema is left, and the input side's
+  undeclared `load` argument went with them.
 - [Tools declared from their types](tickets/071-tools-declared-from-their-types.md)
-  — **open.** A deriver, as the C# SDK derives from a method: arguments, result
-  and annotations from types. Decided: tagged `oneOf` variants, empty absent by
-  default, `content` always the serialized structure. `Tool.make` owns
-  `isError`; merlin decoded into records; types in `lib`, not `wire`; migrated
-  tool by tool. Claude Code accepts a top-level `oneOf` output schema and validates
-  no result against it.
+  — **built.** `[@@deriving mcp]` gives every tool's arguments, result, schemas
+  and annotations; content is the structure serialized. Claude Code accepts a
+  top-level `oneOf` and validates nothing, so conformance is ours. Departures:
+  `anyOf` for result or failure, one shared session result, and `require` and
+  `load` now say `loaded`.
 - [Testing strategy](tickets/013-testing-strategy.md) — one tier, integration
   tests spawn a real worker and the real server in the default `dune test`.
 

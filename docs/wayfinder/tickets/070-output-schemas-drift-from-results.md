@@ -1,8 +1,8 @@
 ---
-status: open
+status: resolved
 type: defect
 blocked-by: [002, 062, 071]
-assignee:
+assignee: lyh
 ---
 
 # Output schemas drift from results
@@ -39,3 +39,15 @@ produces, every top-level key of `structuredContent` is declared in that tool's
 `outputSchema`. Then declare what it finds missing. Whether a shared failure
 shape belongs in every schema is the surface question 063 left open, and may
 be worth settling first.
+
+## Resolved
+
+By building [Tools declared from their types](071-tools-declared-from-their-types.md).
+Every tool's arguments and result are types with `[@@deriving mcp]`, and
+`Tool.make` or `Tool.deferred` builds the declaration from them; there is no
+hand-written schema left, and `lib/tools.ml` is gone. The fields this ticket
+found undeclared are now declared because they are constructors of the result
+type: `eval`'s `status`, `phase`, `message`, `reason`, `note`, `id`, and the
+failure's `exit_code` and `signal`, and `markers`' `unknown_sites`. The input
+side had drifted too, and in the other direction: `load` read a `packages`
+argument its schema never listed. The typed `load` does not read it.

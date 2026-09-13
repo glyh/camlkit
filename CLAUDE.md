@@ -82,8 +82,9 @@ Two processes, one shared codec library.
 | --- | --- |
 | `wire/` | frame codec (`frame.ml`), channel I/O (`frame_io.ml`), IPC message types (`msg.ml`) |
 | `worker/` | the toplevel: capture, two-pass evaluation, printers, loader, request loop; `breakpoint.ml`, `watch.ml` and `swap.ml` are the three markers, `autorun.ml` the promise rewrite |
-| `lib/` | session supervision, tool declarations, rendering, merlin |
-| `bin/main.ml` | the server's `Unix.select` loop and tool dispatch |
+| `ppx/` | `[@@deriving mcp]`: a type's JSON codec and schemas; `ppx/runtime` is what the generated code calls |
+| `lib/` | session supervision, `tool.ml` (a tool from its types), `queries.ml` (the session-less tools), `session_result.ml`, merlin |
+| `bin/main.ml` | the server's `Unix.select` loop and the session tools |
 
 Neither process runs Eio, Lwt or threads. The server is a single `select`
 loop waking on stdin, any worker's answer, or the earliest deadline. The
@@ -125,19 +126,24 @@ test is whether the interesting logic can be tested without a pipe, a clock
 or a subprocess. `worker/eval.ml` is the unavoidable exception, since
 `Toploop` and `Typemod` work through global compiler state.
 
-**Results are structural.** A tool result carries typed fields in
-`structuredContent`, not prose the caller has to parse back. Counts are
-numbers, errors carry spans and line ranges as data, a failure names the
-failing thing in a field. Human-readable text ships alongside, never instead.
-Structure that merely restates the text is not worth its bytes.
+**Results are structural, and tools are declared from their types.** A tool
+result carries typed fields in `structuredContent`, not prose the caller has to
+parse back. Counts are numbers, errors carry spans and line ranges as data, a
+failure names the failing thing in a field. Each tool's arguments and result
+are OCaml types with `[@@deriving mcp]`, and `Tool.make` or `Tool.deferred`
+builds the declaration, schemas, annotations and decoding from them, so a
+schema cannot drift from what is sent; the client does not check (ticket 071).
+The text half is the structure serialized, as the spec asks, and nothing is
+written beside it. A field's doc comment is its schema description.
 
 **A result pays for itself in tokens.** A field with nothing to say is absent,
-not present and empty. A qualifier folds into what it qualifies: truncated
-output ends with `[output truncated, N more characters]` rather than carrying
-a flag beside it. A default is not echoed back, and nothing is carried twice:
+not present and empty: the deriver leaves out `None`, `[]`, `""` and `false`
+unless a field says `[@keep_empty]`, and always sends a number. A qualifier
+folds into what it qualifies: truncated output ends with
+`[output truncated, N more characters]` rather than carrying a flag beside it. A default is not echoed back, and nothing is carried twice:
 a phrase's bindings are read out of its rendering, not repeated beside it. The
-converse still holds where there is no text to read - a breakpoint's locals
-are fields, because a stop prints nothing. See ticket 004.
+converse still holds where there is no rendering to read - a breakpoint's
+locals are fields, because a stop prints nothing. See tickets 004 and 071.
 
 **A call says only what is unusual.** The session name defaults to `main` and
 `load` defaults to the project the server was started in, so a one-off

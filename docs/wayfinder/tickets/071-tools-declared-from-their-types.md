@@ -214,3 +214,42 @@ deriver rather than against it, since a mismatch would otherwise be silent.
 
 **`content` serialized compact.** Not asked: it follows from ticket 004's token
 rule, where pretty-printing pays for whitespace the model does not need.
+
+## Built
+
+September 2026, in five commits: the deriver, `Tool` with `help`, the ten
+session-less tools, and the eight session tools. The suite passes, and so do
+`scripts/load-check.py` and `scripts/cancel-check.py`.
+
+Where the build departed from the decisions, and why:
+
+**The output schema joins result and failure with `anyOf`, not `oneOf`.** A
+record result whose fields are all optional, such as `help`'s, also matches a
+failure object, and `oneOf` fails on two matches. A tagged variant's own
+branches stay a `oneOf`, since their tags make them exclusive.
+
+**The eight session tools share one result type, `Session_result.t`.** The
+worker's responses were already rendered by one function for any tool, and
+typing that once is the laziest faithful move. The cost is that `describe`'s
+schema admits a stop it can never produce; each branch still says which fields
+go with its status. Marked `ponytail:` in the file.
+
+**Four wire changes the shared type forced.** Two statuses cannot share a tag:
+`require` and `load` report `loaded` (or `partial`), since `ok` is `eval`'s.
+`describe` of an unknown name and `markers` now carry a `status`, `unknown`
+and `markers`, as every branch of a tagged variant does. A bare `reset` is
+`status: "reset"` with its sentence in `note`.
+
+**`autorun: []` is an option, not a list.** `[]` means run no promises and has
+to be sent, which the empty rule would have dropped; `Some []` is sent.
+
+**`context`'s `opens` is an option rather than `[@keep_empty]`.** `None` when
+the file could not be read, `Some []` when a session needs no opens, which says
+both without sending `opens: []` beside an error.
+
+**merlin's records share field names in one module**, so a few uses in the
+server needed a type annotation. The deriver annotates its own code.
+
+**A decode failure from merlin is a server failure,** "unexpected merlin
+answer", with the field path, rather than a result: the question was fine and
+the server could not read the answer.
