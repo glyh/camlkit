@@ -99,16 +99,34 @@ let test_tools_listed () =
                       |> List.map (fun t -> member "name" t |> to_string)) in
   Alcotest.(check (slist string compare)) "the tools"
     [ "context"; "continue"; "describe"; "diagnostics"; "document"; "eval";
-      "expand"; "inspect"; "load"; "locate"; "markers"; "outline"; "require";
-      "reset"; "search_type"; "signature"; "type_at"; "uses" ] names;
+      "expand"; "help"; "inspect"; "load"; "locate"; "markers"; "outline";
+      "require"; "reset"; "search_type"; "signature"; "type_at"; "uses" ] names;
   let schemas =
     Yojson.Safe.Util.(member "tools" r |> to_list
                       |> List.filter (fun t -> member "outputSchema" t <> `Null)
                       |> List.map (fun t -> member "name" t |> to_string)) in
   Alcotest.(check (slist string compare)) "every tool declares an output schema"
     [ "context"; "continue"; "describe"; "diagnostics"; "document"; "eval";
-      "expand"; "inspect"; "load"; "locate"; "markers"; "outline"; "require";
-      "reset"; "search_type"; "signature"; "type_at"; "uses" ] schemas
+      "expand"; "help"; "inspect"; "load"; "locate"; "markers"; "outline";
+      "require"; "reset"; "search_type"; "signature"; "type_at"; "uses" ] schemas
+
+(* A description is a trigger and its detail lives in the manual, so a tool
+   without a manual has lost that detail rather than moved it. *)
+let test_every_tool_has_a_manual () =
+  with_server @@ fun c ->
+  let r = result (rpc c ~id:1 ~meth:"tools/list" ~params:(`Assoc [])) in
+  let names =
+    Yojson.Safe.Util.(member "tools" r |> to_list
+                      |> List.map (fun t -> member "name" t |> to_string)
+                      |> List.filter (( <> ) "help")) in
+  List.iteri
+    (fun i name ->
+       let r = call c ~id:(i + 2) ~tool:"help"
+           ~args:(`Assoc [ "tool", `String name ]) in
+       Alcotest.(check bool) (name ^ " has a manual") true
+         (Yojson.Safe.Util.(member "structuredContent" r |> member "manual")
+          <> `Null))
+    names
 
 let test_eval_through_the_loop () =
   with_server @@ fun c ->
@@ -1447,7 +1465,9 @@ let () =
        [ Alcotest.test_case "both handshakes" `Slow test_handshake;
          Alcotest.test_case "initialize agrees on the client version" `Slow
            test_initialize_agrees_on_the_client_version;
-         Alcotest.test_case "tools listed" `Slow test_tools_listed ]);
+         Alcotest.test_case "tools listed" `Slow test_tools_listed;
+         Alcotest.test_case "every tool has a manual" `Slow
+           test_every_tool_has_a_manual ]);
       ("tools",
        [ Alcotest.test_case "eval through the loop" `Slow test_eval_through_the_loop;
          Alcotest.test_case "a result carries only what it has to say" `Slow

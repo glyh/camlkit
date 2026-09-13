@@ -1,598 +1,215 @@
 (* MCP tool declarations. Each carries an outputSchema so results arrive as
    structuredContent rather than as prose the agent must re-parse: the worker
    already separates the toplevel's rendering from program output, warnings
-   and error spans, and flattening that would throw the structure away. *)
+   and error spans, and flattening that would throw the structure away.
 
-let session_arg =
-  ("session", `Assoc [ "type", `String "string";
-                       "description", `String "Session name, defaulting to \
-                         \"main\". Sessions are independent toplevels and \
-                         state persists between calls, so name one only to \
-                         keep work apart from what is already in main." ])
+   A description is a trigger: when to reach for the tool, and the one mistake
+   that would make a call wrong. It is loaded with the tool whether or not the
+   tool is used, so everything else lives in Guide and is read through help.
+   See docs/wayfinder/tickets/062. *)
 
-let obj ?(required = []) props =
-  `Assoc [ "type", `String "object";
-           "properties", `Assoc props;
-           "required", `List (List.map (fun r -> `String r) required) ]
+let str d = `Assoc [ "type", `String "string"; "description", `String d ]
+let int d = `Assoc [ "type", `String "integer"; "description", `String d ]
+let bool d = `Assoc [ "type", `String "boolean"; "description", `String d ]
+let typed t = `Assoc [ "type", `String t ]
+let list ?description item =
+  `Assoc ([ "type", `String "array"; "items", `Assoc [ "type", `String item ] ]
+          @ match description with
+          | Some d -> [ "description", `String d ] | None -> [])
+let array = typed "array"
 
-(* Every field here is absent when it has nothing to say: no bindings, no
-   rendering, no warnings, no output. A result is read by a model, so an empty
-   string costs tokens for no information. *)
-let phrase_schema =
-  `Assoc [ "type", `String "object";
-           "properties", `Assoc [
-             "rendering", `Assoc [ "type", `String "string";
-               "description", `String "What the toplevel printed about the \
-                 phrase, verbatim: each name it bound with its type and its \
-                 value, as a utop transcript. This is where a phrase's \
-                 bindings are read." ];
-             "warnings", `Assoc [ "type", `String "string" ];
-             "output", `Assoc [ "type", `String "string";
-               "description", `String "What the phrase printed. If it printed \
-                 more than the limit, this ends with [output truncated, N \
-                 more characters]." ];
-             "ran", `Assoc [ "type", `String "string";
-               "description", `String "The autorun rule that rewrote this \
-                 phrase, if one did: the expression was a promise and was run \
-                 rather than returned. Absent when nothing was rewritten." ];
-             "watched", `Assoc [ "type", `String "array";
-               "description", `String "What the watches reached while this \
-                 phrase ran: each site's name, the values it recorded during \
-                 this phrase, and hits, which is its lifetime count rather \
-                 than this phrase's. Consecutive equal values are counted and \
-                 stored once, so a loop that changes nothing shows one value \
-                 and many hits. Absent for a phrase that reached none." ];
-             "cost", `Assoc [ "type", `String "object";
-               "description", `String "wall_ms and allocated_bytes for this \
-                 phrase, present only when the call asked for them. Both \
-                 cover compiling, running and printing the phrase, not \
-                 running it alone: a phrase that does little is mostly this \
-                 floor, around 70 kB and a fraction of a millisecond, and one \
-                 that prints a large value is mostly the printing. Compare \
-                 two of these only when the work dwarfs that, which in \
-                 practice means a loop inside the phrase. wall_ms is a single \
-                 un-repeated run of bytecode and is not what a release build \
-                 would cost." ] ] ]
+let tool ~name ?(required = []) description inputs outputs =
+  let obj props =
+    `Assoc [ "type", `String "object";
+             "properties", `Assoc props;
+             "required", `List (List.map (fun r -> `String r) required) ] in
+  `Assoc [ "name", `String name;
+           "description",
+           `String (if name = "help" then description
+                    else description ^ " Manual: help " ^ name ^ ".");
+           "inputSchema", obj inputs;
+           "outputSchema",
+           `Assoc [ "type", `String "object"; "properties", `Assoc outputs;
+                    "required", `List [] ] ]
+
+let session_arg = ("session", str "Session name, default main.")
+
+(* Every field is absent when it has nothing to say. What each means is in the
+   eval manual. *)
+let phrase_array =
+  `Assoc [ "type", `String "array";
+           "items", `Assoc [ "type", `String "object";
+                             "properties", `Assoc [
+                               "rendering", typed "string";
+                               "warnings", typed "string";
+                               "output", typed "string";
+                               "ran", typed "string";
+                               "watched", array;
+                               "cost", typed "object" ] ] ]
+
+let status = ("status", typed "string")
+let loaded = [ ("loaded", list "string"); ("failed", array) ]
 
 let eval_tool =
-  `Assoc [
-    "name", `String "eval";
-    "description", `String
-      "Evaluate OCaml phrases in a session. Accepts several phrases in one \
-       call, and nothing runs unless every one of them parses and typechecks, \
-       so a failure leaves no partial state behind. That also means a phrase \
-       cannot use something an earlier phrase in the same call put on the \
-       search path; put such a change in its own call. Directives such as \
-       #require are not accepted: loading a library is the require and load \
-       tools, and showing a signature is describe. Write [%break \"name\"] in a \
-       phrase to stop there and inspect it, then continue, or \
-       [%watch \"name\" expr] to record every value that flows through an \
-       expression without stopping at all. Both keep firing whenever the code \
-       holding them runs; the markers tool lists them and turns them off. \
-       [%swap Module.f replacement] makes every caller of a function in a \
-       project brought in by load call the replacement instead, callers inside \
-       its own module included; [%swap Module.f] puts the original back, and \
-       the markers tool lists the swaps in force. Only functions can be \
-       swapped: a top-level function of that project, including one computed \
-       by an expression such as let pp = Fmt.list item. A value, an external, \
-       a function inside a functor, and anything load did not build cannot. \
-       The replacement must have the function's type, at least as general. Pass \
-       check to typecheck without running.";
-    "inputSchema", obj ~required:[ "code" ]
-      [ session_arg;
-        ("code", `Assoc [ "type", `String "string";
-                          "description", `String "OCaml source. Phrases are \
-                            terminated with ;; as usual." ]);
-        ("autorun", `Assoc
-           [ "type", `String "array";
-             "items", `Assoc [ "type", `String "string" ];
-             "description", `String
-               "For this call only. A bare expression whose type is a promise \
-                is run rather than returned, which is what the default \
-                [\"lwt\", \"async\"] does and what a session without those \
-                libraries is unaffected by. Pass [] to get the promise \
-                itself instead." ]);
-        ("check", `Assoc
-           [ "type", `String "boolean";
-             "description", `String
-               "Typecheck against this session and stop there: report each \
-                phrase's type and nothing runs, so the session is unchanged \
-                and no implicit name is used up. Use it for a candidate \
-                rather than a step, or to ask what an expression's type would \
-                be here. A rendering then says val f : int -> int with no \
-                value, because there is no value without running it." ]);
-        ("cost", `Assoc
-           [ "type", `String "boolean";
-             "description", `String
-               "Report what each phrase cost: wall clock, and bytes allocated \
-                from the runtime's own counters. Ask for it when you are \
-                comparing two implementations, not by habit. The reading \
-                covers compiling, running and printing the phrase, so there is \
-                a floor of roughly 70 kB and a fraction of a millisecond that \
-                is the toplevel's own work, and printing a large value costs \
-                far more than that. Put the work in a loop inside the phrase \
-                and the floor stops mattering: a phrase allocating 100000 \
-                refs measures 1.61 MB against 1.6 MB expected. The allocation \
-                is the sound half, being a count rather than a timing; the \
-                wall clock is one un-repeated run of code the toplevel \
-                compiled, which pays for any lazy initialisation it triggers \
-                and is not what a release build would cost." ]) ];
-    "outputSchema", obj [ ("phrases", `Assoc [ "type", `String "array";
-                                               "items", phrase_schema ]);
-                          ("autorun", `Assoc
-                             [ "type", `String "array";
-                               "items", `Assoc [ "type", `String "string" ];
-                               "description", `String
-                                 "The rules this call ran under, when they \
-                                  were not the default. A rewritten phrase \
-                                  credits its rule in the phrase's ran \
-                                  field." ]);
-                          ("checked", `Assoc
-                             [ "type", `String "boolean";
-                               "description", `String
-                                 "Present when the call only typechecked. \
-                                  Nothing ran and the session is \
-                                  unchanged." ]) ] ]
-
-let phrase_array =
-  `Assoc [ "type", `String "array"; "items", phrase_schema ]
-
-(* A marker is compiled into the code holding it, so it fires whenever that
-   code runs and nothing can remove it short of redefining the function. This
-   is what stops one: a flag the marker reads when it is reached. See
-   docs/wayfinder/tickets/049. *)
-let markers_tool =
-  `Assoc [
-    "name", `String "markers";
-    "description", `String
-      "The breakpoints and watches this session knows: each one's name, \
-       whether it is armed, and how many times it has been reached in its \
-       lifetime. Pass disarm to turn one off and arm to turn it back on. A \
-       marker cannot be removed, because it is compiled into the code that \
-       holds it, so a marker in a function you call often keeps firing until \
-       you disarm it or redefine the function. A name can be written in \
-       several places; each place is a site with its own id, shown with the \
-       definition and line it is in, and can be armed on its own. Writing a \
-       name again adds a site, which starts armed, and the eval that adds it \
-       warns with the site and the total. A name cannot be both a breakpoint \
-       and a watch. The functions swapped with [%swap] are listed too, and \
-       restore puts them back.";
-    "inputSchema", obj
-      [ session_arg;
-        ("disarm", `Assoc
-           [ "type", `String "array";
-             "items", `Assoc [ "type", `String "string" ];
-             "description", `String
-               "Names to turn off. A disarmed marker is still reached and \
-                does nothing." ]);
-        ("arm", `Assoc
-           [ "type", `String "array";
-             "items", `Assoc [ "type", `String "string" ];
-             "description", `String "Names to turn back on." ]);
-        ("disarm_sites", `Assoc
-           [ "type", `String "array";
-             "items", `Assoc [ "type", `String "integer" ];
-             "description", `String
-               "Site ids to turn off, for one place a name is written rather \
-                than all of them." ]);
-        ("arm_sites", `Assoc
-           [ "type", `String "array";
-             "items", `Assoc [ "type", `String "integer" ];
-             "description", `String "Site ids to turn back on." ]);
-        ("restore", `Assoc
-           [ "type", `String "array";
-             "items", `Assoc [ "type", `String "string" ];
-             "description", `String
-               "Swapped functions to put back, by the path the swap was \
-                written with." ]) ];
-    "outputSchema", obj
-      [ ("markers", `Assoc
-           [ "type", `String "array";
-             "description", `String
-               "Each with name, kind, armed and hits. hits is the site's \
-                lifetime count, not this call's. Absent when there are none." ]);
-        ("swapped", `Assoc
-           [ "type", `String "array";
-             "items", `Assoc [ "type", `String "string" ];
-             "description", `String
-               "Functions a swap has replaced, by the path it was written \
-                with. Absent when none are." ]);
-        ("unknown", `Assoc
-           [ "type", `String "array";
-             "items", `Assoc [ "type", `String "string" ];
-             "description", `String
-               "Names passed to disarm, arm or restore that this session has \
-                not got, so a typo is not silent. Absent when there are none." ]) ] ]
+  tool ~name:"eval" ~required:[ "code" ]
+    "Run OCaml in a persistent session: try code, see a value, check a type. \
+     Every phrase must typecheck or none run, and #directives are rejected. \
+     [%break], [%watch] and [%swap] debug live code."
+    [ session_arg;
+      ("code", str "OCaml phrases, each ending in ;;.");
+      ("check", bool "Typecheck only; nothing runs.");
+      ("cost", bool "Report time and allocation per phrase.");
+      ("autorun", list "string"
+         ~description:"Promise libraries whose bare promises are run; [] \
+                       returns the promise.") ]
+    [ ("phrases", phrase_array); ("autorun", list "string");
+      ("checked", typed "boolean") ]
 
 let describe_tool =
-  `Assoc [
-    "name", `String "describe";
-    "description", `String
-      "Show the signature of a module, value or type in a session, including \
-       modules defined during the session. Prefer this over guessing at names.";
-    "inputSchema", obj ~required:[ "path" ]
-      [ session_arg;
-        ("path", `Assoc [ "type", `String "string";
-                          "description", `String "A module path such as \
-                            List, or a value such as List.map." ]) ];
-    "outputSchema", obj [ ("phrases", phrase_array) ] ]
+  tool ~name:"describe" ~required:[ "path" ]
+    "Show the signature of a module, value or type a session has. Prefer it \
+     to guessing at names."
+    [ session_arg; ("path", str "Such as List or List.map.") ]
+    [ ("phrases", phrase_array) ]
 
 let require_tool =
-  `Assoc [
-    "name", `String "require";
-    "description", `String
-      "Load findlib packages into a session, making their modules available \
-       to later evaluations.";
-    "inputSchema", obj ~required:[ "packages" ]
-      [ session_arg;
-        ("packages", `Assoc [ "type", `String "array";
-                              "items", `Assoc [ "type", `String "string" ] ]) ];
-    "outputSchema", obj
-      [ ("status", `Assoc [ "type", `String "string" ]);
-        ("loaded", `Assoc [ "type", `String "array";
-                            "items", `Assoc [ "type", `String "string" ] ]);
-        ("failed", `Assoc [ "type", `String "array";
-                            "items", obj [ ("library", `Assoc [ "type", `String "string" ]);
-                                           ("error", `Assoc [ "type", `String "string" ]) ] ]) ] ]
+  tool ~name:"require" ~required:[ "packages" ]
+    "Load findlib packages into a session."
+    [ session_arg; ("packages", list "string") ]
+    (status :: loaded)
 
 let load_tool =
-  `Assoc [
-    "name", `String "load";
-    "description", `String
-      "Load a dune project's own libraries into a session, so its modules \
-       become available. Point it at the project root, the directory holding \
-       dune-project. The project is built for the session in _build/camlkit, \
-       beside the user's own build, and rewritten so that eval's [%swap] can \
-       replace its functions. External dependencies come with it, so there is \
-       no need to require them separately. Pass reset after rebuilding: loading a changed \
-       archive into a session that already has the old one fails on an \
-       interface mismatch, so the session must start clean. The worker must \
-       have been built with the same OCaml version as the project, because \
-       bytecode is version-locked.";
-    "inputSchema", obj
-      [ session_arg;
-        ("path", `Assoc [ "type", `String "string";
-                          "description", `String "Project root, or a \
-                            directory inside its _build tree. Defaults to the \
-                            project the server was started in, which is the \
-                            usual case." ]);
-        ("libraries", `Assoc [ "type", `String "array";
-                               "items", `Assoc [ "type", `String "string" ];
-                               "description", `String "Library names to load. \
-                                 Omit to load everything found." ]);
-        ("reset", `Assoc [ "type", `String "boolean";
-                           "description", `String "Empty the session first. \
-                             Use after rebuilding the project." ]) ];
-    "outputSchema", obj
-      [ ("status", `Assoc [ "type", `String "string" ]);
-        ("loaded", `Assoc [ "type", `String "array";
-                            "items", `Assoc [ "type", `String "string" ];
-                            "description", `String "Library names now loaded." ]);
-        ("failed", `Assoc [ "type", `String "array";
-                            "items", obj [ ("library", `Assoc [ "type", `String "string" ]);
-                                           ("error", `Assoc [ "type", `String "string" ]) ] ]) ] ]
+  tool ~name:"load"
+    "Load a dune project's own libraries into a session. Pass reset after \
+     rebuilding."
+    [ session_arg;
+      ("path", str "Project root; defaults to the server's project.");
+      ("libraries", list "string" ~description:"Omit to load all.");
+      ("reset", bool "Empty the session first.") ]
+    (status :: loaded)
 
 let reset_tool =
-  `Assoc [
-    "name", `String "reset";
-    "description", `String
-      "Discard a session and start it clean. Its bindings and loaded packages \
-       are gone. Use this to get back to a known state rather than inventing \
-       a new session name, which leaves the old toplevel running. Pass code \
-       to evaluate it in the fresh toplevel in the same call, which is how a \
-       preamble of helpers is put back; the result is then an eval's.";
-    "inputSchema", obj ~required:[]
-      [ session_arg;
-        ("code", `Assoc [ "type", `String "string";
-                          "description", `String "OCaml source to evaluate \
-                            in the empty toplevel, in this call. \
-                            Nothing is remembered: a session carries \
-                            no preamble, so the next reset empties \
-                            this too unless it carries the code \
-                            again." ]) ];
-    "outputSchema", obj [ ("status", `Assoc [ "type", `String "string" ]);
-                          ("phrases", `Assoc [ "type", `String "array";
-                                               "items", phrase_schema;
-                                               "description", `String
-                                                 "Present only when the \
-                                                  reset carried code." ]) ] ]
+  tool ~name:"reset"
+    "Empty a session back to a clean toplevel, optionally running code in it."
+    [ session_arg; ("code", str "Evaluated in the fresh toplevel.") ]
+    [ status; ("phrases", phrase_array) ]
 
-(* Breakpoints. A phrase stops where the caller wrote [%break], and the rest
-   of it waits as a value rather than as a blocked process, so the session
-   stays usable while it is parked. See docs/wayfinder/tickets/035. *)
-
-let id_arg =
-  ("id", `Assoc [ "type", `String "integer";
-                  "description", `String "Which parked phrase. Omit when the \
-                    session has exactly one, which is the usual case." ])
+let id_arg = ("id", int "Parked phrase; omit when there is one.")
 
 let continue_tool =
-  `Assoc [
-    "name", `String "continue";
-    "description", `String
-      "Resume a phrase parked at a breakpoint, or abandon it. The result is \
-       an ordinary evaluation result: what the rest of the phrase printed and \
-       what it came to, or another stop if it hit a second breakpoint. \
-       Abandon raises inside the phrase instead of resuming it, so the rest \
-       does not run but whatever it set up to release on the way out is \
-       released.";
-    "inputSchema", obj ~required:[]
-      [ session_arg; id_arg;
-        ("abandon", `Assoc [ "type", `String "boolean";
-                             "description", `String "Raise inside the phrase \
-                               rather than resuming it." ]) ];
-    "outputSchema", obj [ ("phrases", phrase_array);
-                          ("status", `Assoc [ "type", `String "string" ]) ] ]
+  tool ~name:"continue"
+    "Resume or abandon a phrase parked at [%break]."
+    [ session_arg; id_arg;
+      ("abandon", bool "Raise inside the phrase instead of resuming.") ]
+    [ ("phrases", phrase_array); status ]
 
 let inspect_tool =
-  `Assoc [
-    "name", `String "inspect";
-    "description", `String
-      "Show what the markers have gathered, without resuming anything. The \
-       locals of a parked phrase, bound again under their bp_ names, which is \
-       how an earlier stop's values are recovered after a later stop \
-       overwrote them. And every watch's whole trail, which is what a result \
-       does not carry: an eval reports only what its own phrase recorded, \
-       while this reports the recent history of each site. Works with nothing \
-       parked, as long as something has been watched.";
-    "inputSchema", obj [ session_arg; id_arg ];
-    "outputSchema", obj
-      [ ("id", `Assoc [ "type", `String "integer" ]);
-        ("bound", `Assoc [ "type", `String "array";
-                           "description", `String "Each local, by the name it \
-                             is bound under, with its type." ]);
-        ("skipped", `Assoc [ "type", `String "array";
-                             "description", `String "Locals that could not be \
-                               bound, each with the reason." ]);
-        ("phrases", phrase_array) ] ]
+  tool ~name:"inspect"
+    "See a parked phrase's locals and every watch's recorded values, without \
+     resuming."
+    [ session_arg; id_arg ]
+    [ ("id", typed "integer"); ("bound", array); ("skipped", array);
+      ("phrases", phrase_array) ]
 
-(* Source queries. These take a file and a position rather than a session:
-   they ask about code as written, not about values in a toplevel, so they
-   need nothing loaded and no build. *)
+(* A marker is compiled into the code holding it, so it fires whenever that
+   code runs. This is what stops one. See docs/wayfinder/tickets/049. *)
+let markers_tool =
+  tool ~name:"markers"
+    "List, arm and disarm a session's breakpoints and watches; restore \
+     swapped functions."
+    [ session_arg;
+      ("disarm", list "string" ~description:"Names to turn off.");
+      ("arm", list "string" ~description:"Names to turn on.");
+      ("disarm_sites", list "integer" ~description:"Site ids to turn off.");
+      ("arm_sites", list "integer" ~description:"Site ids to turn on.");
+      ("restore", list "string" ~description:"Swapped paths to put back.") ]
+    [ ("markers", array); ("swapped", list "string");
+      ("unknown", list "string") ]
 
-let file_arg =
-  ("file", `Assoc [ "type", `String "string";
-                    "description", `String "Absolute path to an OCaml source \
-                      file in the project." ])
+(* Source queries take a file and a position rather than a session: they ask
+   about code as written, so they need nothing loaded and no build. *)
 
-let line_arg =
-  ("line", `Assoc [ "type", `String "integer";
-                    "description", `String "1-based line." ])
-
-let col_arg =
-  ("col", `Assoc [ "type", `String "integer";
-                   "description", `String "0-based column." ])
+let file_arg = ("file", str "Absolute path to a source file.")
+let at = [ file_arg; ("line", int "1-based."); ("col", int "0-based.") ]
+let error = ("error", typed "string")
 
 let locate_tool =
-  `Assoc [
-    "name", `String "locate";
-    "description", `String
-      "Find where the name at a position is defined. Answers from source, so \
-       nothing needs to be built or loaded into a session.";
-    "inputSchema", obj ~required:[ "file"; "line"; "col" ]
-      [ file_arg; line_arg; col_arg ];
-    "outputSchema", obj
-      [ ("file", `Assoc [ "type", `String "string" ]);
-        ("line", `Assoc [ "type", `String "integer" ]);
-        ("col", `Assoc [ "type", `String "integer" ]) ] ]
+  tool ~name:"locate" ~required:[ "file"; "line"; "col" ]
+    "Find where the name at a position is defined. No build or session."
+    at
+    [ ("file", typed "string"); ("line", typed "integer");
+      ("col", typed "integer") ]
 
 let type_at_tool =
-  `Assoc [
-    "name", `String "type_at";
-    "description", `String
-      "The type of the expression at a position, and of each enclosing \
-       expression, innermost first. Answers from source: no build, no load, \
-       no session. Enclosings are strictly nested, and exact duplicates from \
-       merlin are removed.";
-    "inputSchema", obj ~required:[ "file"; "line"; "col" ]
-      [ file_arg; line_arg; col_arg ];
-    "outputSchema", obj
-      [ ("enclosings", `Assoc [ "type", `String "array";
-                                "description", `String "Each with type and the \
-                                  range it covers, innermost first." ]) ] ]
-
-(* An agent cannot read a generated name off the source in front of it:
-   whether [@@deriving yojson] gives to_yojson or yojson_of_t is the deriver's
-   choice, and guessing it reads as confident. See tickets/037. *)
-(* Not a build, and the description has to say so or it becomes one that lies:
-   this types one file against what is already compiled around it, so it will
-   not notice that a dependency needs rebuilding. What it can do that nothing
-   else here can is answer about an edit that was never written. See
-   tickets/042. *)
-let diagnostics_tool =
-  `Assoc [
-    "name", `String "diagnostics";
-    "description", `String
-      "Errors and warnings for one file, from merlin, in milliseconds and \
-       without building anything. Pass source to ask about an edit you have \
-       not written to disk yet; the file still has to be named, because that \
-       is how the project configuration this is typed against is found. This \
-       is not a build: it types one file against what is already compiled \
-       around it, so it cannot tell you that a dependency needs rebuilding, \
-       and a clean answer here is not a passing build. Warnings come back \
-       apart from errors.";
-    "inputSchema", obj ~required:[ "file" ]
-      [ file_arg;
-        ("source", `Assoc
-           [ "type", `String "string";
-             "description", `String
-               "The file's contents as you would write them, typed instead of \
-                what is on disk. Positions in the answer are into this text." ]) ];
-    "outputSchema", obj
-      [ ("errors", `Assoc
-           [ "type", `String "array";
-             "description", `String
-               "Each with its message and the range it covers. Absent when \
-                there are none." ]);
-        ("warnings", `Assoc
-           [ "type", `String "array";
-             "description", `String
-               "The same shape, kept apart from the errors. Absent when there \
-                are none." ]) ] ]
-
-let expand_tool =
-  `Assoc [
-    "name", `String "expand";
-    "description", `String
-      "The code a ppx generated at a position: what [@@deriving ...] or a \
-       [%extension] expands to, as source. Answers from the file, with no \
-       build and no session, so it works on a name that does not exist yet \
-       anywhere else. Put the position on the deriver name inside \
-       [@@deriving ...], or on the [%extension] itself; a position on the type \
-       or expression it is attached to finds nothing. A structure-level \
-       extension such as let%test_module may not expand where an expression \
-       one does. When the generated names are all you want and the project \
-       builds, describe on the built module is cheaper.";
-    "inputSchema", obj ~required:[ "file"; "line"; "col" ]
-      [ file_arg; line_arg; col_arg ];
-    "outputSchema", obj
-      [ ("code", `Assoc [ "type", `String "string";
-                          "description", `String "The generated source." ]);
-        ("deriver", `Assoc
-           [ "type", `String "object";
-             "description", `String
-               "The range of the deriver or extension node this came from." ]);
-        ("error", `Assoc
-           [ "type", `String "string";
-             "description", `String
-               "Present instead of code when there is no ppx node at that \
-                position, which is an answer about the file rather than a \
-                failure." ]) ] ]
+  tool ~name:"type_at" ~required:[ "file"; "line"; "col" ]
+    "The type at a position and of each enclosing expression. No build or \
+     session."
+    at [ ("enclosings", array) ]
 
 let outline_tool =
-  `Assoc [
-    "name", `String "outline";
-    "description", `String
-      "What a source file defines: every value, type, module and class, with \
-       its kind and position. Cheaper than reading the file when you only \
-       need to know what is in it.";
-    "inputSchema", obj ~required:[ "file" ] [ file_arg ];
-    "outputSchema", obj [ ("items", `Assoc [ "type", `String "array" ]) ] ]
-
-let context_tool =
-  `Assoc [
-    "name", `String "context";
-    "description", `String
-      "The opens that put a session in a source file's context, so a fragment \
-       lifted out of that file resolves the way the file does. Evaluate the \
-       code this returns once, or pass it to reset, and later calls in the \
-       session keep it: an open is ordinary session state. Answers from \
-       source and needs no session, but the modules it names only exist in a \
-       session that has loaded the project. A file that belongs to no wrapped \
-       library gets only its own opens, because a session cannot name that \
-       file's module.";
-    "inputSchema", obj ~required:[ "file" ] [ file_arg ];
-    "outputSchema", obj
-      [ ("opens", `Assoc [ "type", `String "array";
-                           "items", `Assoc [ "type", `String "string" ];
-                           "description", `String "The module paths, in the \
-                             order they must be opened." ]) ] ]
+  tool ~name:"outline" ~required:[ "file" ]
+    "List what a source file defines, cheaper than reading it."
+    [ file_arg ] [ ("items", array) ]
 
 let uses_tool =
-  `Assoc [
-    "name", `String "uses";
-    "description", `String
-      "Every occurrence of the name at a position. Defaults to the whole \
-       project rather than the one file, and builds dune's index first if \
-       needed, because merlin otherwise answers from this file alone without \
-       saying so. If the index cannot be built the result says it is \
-       incomplete rather than looking whole.";
-    "inputSchema", obj ~required:[ "file"; "line"; "col" ]
-      [ file_arg; line_arg; col_arg;
-        ("scope", `Assoc [ "type", `String "string";
-                           "description", `String "project (the default) or \
-                             buffer." ]) ];
-    "outputSchema", obj
-      [ ("occurrences", `Assoc [ "type", `String "array" ]);
-        ("complete", `Assoc [ "type", `String "boolean";
-                              "description", `String "Absent when the answer \
-                                is project-wide. False, with a caveat, when it \
-                                covers only this file." ]);
-        ("caveat", `Assoc [ "type", `String "string" ]) ] ]
+  tool ~name:"uses" ~required:[ "file"; "line"; "col" ]
+    "Every occurrence of the name at a position, project-wide by default."
+    (at @ [ ("scope", str "project or buffer.") ])
+    [ ("occurrences", array); ("complete", typed "boolean");
+      ("caveat", typed "string") ]
 
 let search_type_tool =
-  `Assoc [
-    "name", `String "search_type";
-    "description", `String
-      "Find values by their type rather than their name, in scope at a \
-       position. A query is a type, such as \"int -> string\" or \
-       \"'a list -> 'a option\". Qualify type names: merlin matches against \
-       its own environment, not the buffer's, so write \"Core.term -> string\" \
-       even in a file that opens Core, or the search finds nothing.";
-    "inputSchema", obj ~required:[ "file"; "line"; "col"; "query" ]
-      [ file_arg; line_arg; col_arg;
-        ("query", `Assoc [ "type", `String "string" ]);
-        ("limit", `Assoc [ "type", `String "integer" ]) ];
-    "outputSchema", obj [ ("results", `Assoc [ "type", `String "array" ]) ] ]
+  tool ~name:"search_type" ~required:[ "file"; "line"; "col"; "query" ]
+    "Find values by type, such as 'a list -> 'a option. Qualify type names: \
+     Core.term, not term."
+    (at @ [ ("query", typed "string"); ("limit", typed "integer") ])
+    [ ("results", array) ]
+
+let expand_tool =
+  tool ~name:"expand" ~required:[ "file"; "line"; "col" ]
+    "Show the code a ppx generates. Put the position on the deriver name or \
+     the [%extension], not on what it is attached to."
+    at [ ("code", typed "string"); ("deriver", typed "object"); error ]
+
+let diagnostics_tool =
+  tool ~name:"diagnostics" ~required:[ "file" ]
+    "A file's errors and warnings in milliseconds, or an unwritten edit's. \
+     Not a build."
+    [ file_arg; ("source", str "Contents to check instead of the file.") ]
+    [ ("errors", array); ("warnings", array) ]
 
 let document_tool =
-  `Assoc [
-    "name", `String "document";
-    "description", `String
-      "The documentation comment on a name, as its author wrote it. Answers \
-       from source, so nothing needs to be built or loaded. Ask in exactly \
-       one of two ways: give identifier for anything in scope in that file, \
-       including its dependencies, which is usually what you want; or give \
-       line and column for whatever is at that position, which is how to \
-       reach a name defined in the file itself. Passing both, or neither, is \
-       refused. The text comes back as odoc markup, unrendered: braces such \
-       as {!Bytes.t} and {b bold} are the comment's own syntax.";
-    "inputSchema", obj ~required:[ "file" ]
-      [ file_arg;
-        ("identifier", `Assoc [ "type", `String "string";
-                                "description", `String "A name in scope in \
-                                  that file, such as List.map or \
-                                  Yojson.Safe.t. The file supplies the \
-                                  environment, and no position is needed or \
-                                  accepted with it." ]);
-        line_arg; col_arg ];
-    "outputSchema", obj
-      [ ("documentation", `Assoc [ "type", `String "string";
-                                   "description", `String "The comment, in \
-                                     odoc markup, verbatim." ]);
-        ("error", `Assoc [ "type", `String "string";
-                           "description", `String "Present instead of \
-                             documentation when there is none, or when the \
-                             name is not in scope in that file." ]) ] ]
+  tool ~name:"document" ~required:[ "file" ]
+    "A name's documentation comment. Give identifier, or line and col, not \
+     both."
+    (file_arg :: ("identifier", str "A name in scope in that file.")
+     :: List.tl at)
+    [ ("documentation", typed "string"); error ]
 
 let signature_tool =
-  `Assoc [
-    "name", `String "signature";
-    "description", `String
-      "Show the signature of a module, value or type in an installed findlib \
-       package, without loading it. Answers from the package's compiled \
-       interfaces, so no session is needed, nothing is linked and none of the \
-       package's code runs. Use describe instead for what a session already \
-       has, and for modules defined during the session.";
-    "inputSchema", obj ~required:[ "path" ]
-      [ ("path", `Assoc [ "type", `String "string";
-                          "description", `String "A module path such as \
-                            Lwt.Infix, or a value such as Lwt.bind." ]);
-        ("package", `Assoc [ "type", `String "string";
-                             "description", `String "The findlib package \
-                               holding it, such as lwt.unix. Omit when the \
-                               package is named after the first component of \
-                               the path, which is the usual case." ]) ];
-    "outputSchema", obj
-      [ ("signature", `Assoc [ "type", `String "string";
-                               "description", `String "What the toplevel \
-                                 prints for the path, as #show would." ]);
-        ("package", `Assoc [ "type", `String "string";
-                             "description", `String "The package that was \
-                               searched, guessed or given." ]);
-        ("guessed", `Assoc [ "type", `String "boolean";
-                             "description", `String "True when the package \
-                               was guessed from the path rather than given. \
-                               A failure with this set is worth retrying with \
-                               the package named; one without it is not." ]);
-        ("error", `Assoc [ "type", `String "string";
-                           "description", `String "Present instead of \
-                             signature when the package or the path was not \
-                             found." ]) ] ]
+  tool ~name:"signature" ~required:[ "path" ]
+    "Browse an installed findlib package's signatures, with no session."
+    [ ("path", str "Such as Lwt.Infix.");
+      ("package", str "Omit when named after the path's first module.") ]
+    [ ("signature", typed "string"); ("package", typed "string");
+      ("guessed", typed "boolean"); error ]
+
+let context_tool =
+  tool ~name:"context" ~required:[ "file" ]
+    "The opens that let a session read a fragment of a file the way the file \
+     does."
+    [ file_arg ] [ ("opens", list "string"); error ]
+
+let help_tool =
+  tool ~name:"help"
+    "A tool's full manual: limits, edge cases and what its result fields \
+     mean. Read it before relying on anything a description does not say."
+    [ ("tool", str "Tool name. Omit to list them.") ]
+    [ ("manual", typed "string"); ("tools", list "string"); error ]
 
 let all =
   [ eval_tool; describe_tool; require_tool; load_tool; reset_tool;
     continue_tool; inspect_tool;
     locate_tool; type_at_tool; outline_tool; uses_tool; search_type_tool;
     expand_tool; diagnostics_tool; markers_tool;
-    document_tool; signature_tool; context_tool ]
+    document_tool; signature_tool; context_tool; help_tool ]

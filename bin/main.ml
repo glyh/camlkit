@@ -112,6 +112,28 @@ let signature_call id args =
                structured = `Assoc (("package", `String package) :: fields);
                is_error = false }
 
+(* The manual behind a tool's description, which stays a trigger. An unknown
+   name is a negative answer that lists what there is, not a failure. See
+   ticket 062. *)
+let help_call id args =
+  let tools = `List (List.map (fun t -> `String t) Guide.topics) in
+  match Yojson.Safe.Util.member "tool" args with
+  | `String name ->
+    (match List.assoc_opt name Guide.manual with
+     | Some manual ->
+       reply id { Render.content = manual;
+                  structured = `Assoc [ "manual", `String manual ];
+                  is_error = false }
+     | None ->
+       let e = Printf.sprintf "no manual for %S" name in
+       reply id { Render.content =
+                    e ^ "; there is one for: " ^ String.concat ", " Guide.topics;
+                  structured = `Assoc [ "error", `String e; "tools", tools ];
+                  is_error = false })
+  | _ ->
+    reply id { Render.content = String.concat "\n" Guide.topics;
+               structured = `Assoc [ "tools", tools ]; is_error = false }
+
 (* Session-less like the rest, but the answer is code rather than a report:
    the caller evaluates it, or hands it to reset. See ticket 036. *)
 let context_call id args =
@@ -476,7 +498,8 @@ let handle_call id params =
     | `Assoc _ as a -> a | _ -> `Assoc [] in
   if is_source_query name then source_query id name args
   else if name = "signature" then signature_call id args
-  else if name = "context" then context_call id args else
+  else if name = "context" then context_call id args
+  else if name = "help" then help_call id args else
   (* A name is a handle, and most callers want one session. Defaulting it
      means a one-off evaluation needs no invented name; a caller that wants
      two independent toplevels still says so. *)
