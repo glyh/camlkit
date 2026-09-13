@@ -1051,6 +1051,8 @@ let test_a_swap_reaches_every_caller () =
   Alcotest.(check bool) "beside a watch in the same phrase too" true
     (has "swapped P.rate" r && has "= 150." r);
   ignore (ev "[%swap Swaplib.rate];;");
+  Alcotest.(check bool) "a constraint before function survives the rewrite" true
+    (has "= 1." (ev "Swaplib.flat 1. \"x\";;"));
   let r = ev "[%swap Swaplib.base (fun _ -> 1.)];;" in
   Alcotest.(check bool) "a value is refused, saying why" true
     (has "only top-level functions written with parameters" r);

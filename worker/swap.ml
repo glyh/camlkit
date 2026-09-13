@@ -80,15 +80,26 @@ let rewrite_function ~cell (e : expression) =
                    [ Ast_helper.Exp.case pat inner ]) :: unwraps))
         ([], [], []) params
     in
-    let params, args, inner =
-      match body with
-      | Pfunction_body b -> (params, args, b)
-      | Pfunction_cases (cases, _, _) ->
+    let params, args, inner, constraint_ =
+      match body, constraint_ with
+      | Pfunction_body b, _ -> (params, args, b, constraint_)
+      (* `let f x : t = function ...` constrains the cases as a function, so
+         the constraint stays on them: moved to the match they would otherwise
+         become, it would ask the match's result to be a t. *)
+      | Pfunction_cases _, Some c when args <> [] ->
+        let cases = Ast_helper.Exp.function_ ~loc [] None body in
+        let constrained =
+          match c with
+          | Pconstraint ty -> Ast_helper.Exp.constraint_ ~loc cases ty
+          | Pcoerce (from, ty) -> Ast_helper.Exp.coerce ~loc cases from ty in
+        (params, args, constrained, None)
+      | Pfunction_cases (cases, _, _), _ ->
         let v = fresh () in
         ({ pparam_desc = Pparam_val (Nolabel, None, var ~loc v); pparam_loc = loc }
          :: params,
          (Asttypes.Nolabel, ident ~loc [ v ]) :: args,
-         Ast_helper.Exp.match_ ~loc (ident ~loc [ v ]) cases)
+         Ast_helper.Exp.match_ ~loc (ident ~loc [ v ]) cases,
+         constraint_)
     in
     if args = [] then None else
     (* [unwraps] is last parameter first, so folding it wraps outwards and the
