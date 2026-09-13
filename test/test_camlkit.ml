@@ -841,6 +841,10 @@ let test_merlin_trim () =
     (merlin_roundtrip Merlin.enclosing_mcp ~f:(List.map Merlin.enclosing_tail)
        (Printf.sprintf {|[{"start":%s,"end":%s,"type":"int","tail":"call"},
                           {"start":%s,"end":%s,"type":"int","tail":"no"}]|} z z z z));
+  merlin_same "a project-wide occurrence keeps its file"
+    (Printf.sprintf {|[{"file":"/p/b.ml","start":%s,"end":%s}]|} z z)
+    (merlin_roundtrip Merlin.occurrence_mcp
+       (Printf.sprintf {|[{"file":"/p/b.ml","start":%s,"end":%s,"stale":false}]|} z z));
   merlin_same "stale true stays and false goes"
     (Printf.sprintf {|[{"start":%s,"end":%s,"stale":true},{"start":%s,"end":%s}]|} z z z z)
     (merlin_roundtrip Merlin.occurrence_mcp

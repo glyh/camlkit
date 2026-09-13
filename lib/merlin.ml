@@ -244,6 +244,8 @@ type enclosing = {
 } [@@deriving mcp]
 
 type occurrence = {
+  file : string option;
+  (** The file it is in, for a project-wide answer; absent within one file. *)
   start : pos;
   end_ : pos;
   stale : bool; [@default false]

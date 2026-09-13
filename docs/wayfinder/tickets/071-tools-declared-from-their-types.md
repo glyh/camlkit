@@ -253,3 +253,13 @@ server needed a type annotation. The deriver annotates its own code.
 **A decode failure from merlin is a server failure,** "unexpected merlin
 answer", with the field path, rather than a result: the question was fine and
 the server could not read the answer.
+
+**Decoding drops a field it has no record field for, silently.** Found on the
+installed build: project-scope `uses` answered occurrences in other files
+without their `file`, because `occurrence` had no such field, so an occurrence
+at line 82 of `session.ml` read as one in the file asked about. So the decision
+above holds only halfway: a field merlin removes or retypes fails as a decode
+error, and a field merlin sends that the record lacks disappears. That is
+intended for `constructible` and a diagnostic's `valid`, and was a regression
+for `file`. Fixed with a test; the other records were checked against
+merlin's replies and drop only what they mean to.
