@@ -27,6 +27,10 @@ let slice payload (p : Msg.phrase) =
    output it qualifies rather than carried as a flag beside it. *)
 let field name = function "" -> [] | s -> [ (name, `String s) ]
 
+(* The same rule for a list and an option: absent when there is nothing. *)
+let list_field name f = function [] -> [] | xs -> [ (name, `List (List.map f xs)) ]
+let opt_field name f = function None -> [] | Some x -> [ (name, f x) ]
+
 (* Readable rather than exact: three significant figures is more than a single
    un-repeated run in a toplevel can honestly support. *)
 let millis ms =
@@ -44,7 +48,7 @@ let bytes n =
 (* Where a site is written, as fields: which definition, which line of the call
    that sent it, and the watched text. *)
 let at_fields (a : Msg.at) =
-  (match a.Msg.in_def with None -> [] | Some d -> [ ("in", `String d) ])
+  opt_field "in" (fun d -> `String d) a.Msg.in_def
   @ [ ("line", `Int a.Msg.line) ]
   @ field "code" a.Msg.code
 
@@ -66,26 +70,19 @@ let json_phrase payload (p : Msg.phrase) =
     (field "rendering" p.rendering
      @ field "warnings" p.warnings
      @ field "output" out
-     @ (match p.ran with None -> [] | Some r -> [ ("ran", `String r) ])
-     @ (match p.watched with
-         | [] -> []
-         | ws ->
-           [ ("watched",
-              `List (List.map (fun (w : Msg.watched) ->
-                  `Assoc ([ ("name", `String w.Msg.site);
-                            ("id", `Int w.Msg.site_id) ]
-                          @ at_fields w.Msg.at
-                          @ [ ("hits", `Int w.Msg.site_hits);
-                              ("values",
-                               `List (List.map (fun v -> `String v)
-                                        w.Msg.values)) ]))
-                  ws)) ])
-     @ (match p.cost with
-         | None -> []
-         | Some c ->
-           [ ("cost",
-              `Assoc [ ("wall_ms", `Float (Float.round (c.wall_ms *. 1000.) /. 1000.));
-                       ("allocated_bytes", `Int c.allocated_bytes) ]) ]))
+     @ opt_field "ran" (fun r -> `String r) p.ran
+     @ list_field "watched"
+         (fun (w : Msg.watched) ->
+            `Assoc ([ ("name", `String w.Msg.site); ("id", `Int w.Msg.site_id) ]
+                    @ at_fields w.Msg.at
+                    @ [ ("hits", `Int w.Msg.site_hits);
+                        ("values", `List (List.map (fun v -> `String v) w.Msg.values)) ]))
+         p.watched
+     @ opt_field "cost"
+         (fun (c : Msg.cost) ->
+            `Assoc [ ("wall_ms", `Float (Float.round (c.wall_ms *. 1000.) /. 1000.));
+                     ("allocated_bytes", `Int c.allocated_bytes) ])
+         p.cost)
 
 (* A transcript, in the order a terminal would show it: warnings, then what
    the phrase printed, then what the toplevel made of it. *)
@@ -228,13 +225,10 @@ let of_response (response : Msg.response) payload =
         `Assoc
           ([ ("status", `String (if failed = [] then "ok" else "partial"));
              ("loaded", `List (List.map (fun l -> `String l) loaded)) ]
-           @ (match failed with
-               | [] -> []
-               | fs ->
-                 [ ("failed",
-                    `List (List.map (fun (lib, err) ->
-                        `Assoc [ ("library", `String lib);
-                                 ("error", `String err) ]) fs)) ]));
+           @ list_field "failed"
+               (fun (lib, err) ->
+                  `Assoc [ ("library", `String lib); ("error", `String err) ])
+               failed);
       is_error = false }
   (* A stop is not a completion and does not pretend to be one: the caller has
      to know the phrase is still waiting, and with which id. *)
@@ -268,23 +262,14 @@ let of_response (response : Msg.response) payload =
           ([ ("status", `String "stopped"); ("id", `Int id);
              ("marker", `String name);
              ("site", `Assoc (("id", `Int site_id) :: at_fields site_at)) ]
-           @ (match bound with
-               | [] -> []
-               | bs ->
-                 [ ("bound",
-                    `List (List.map (fun { Msg.bound; bound_type } ->
-                        `Assoc [ ("name", `String bound);
-                                 ("type", `String bound_type) ]) bs)) ])
-           @ (match skipped with
-               | [] -> []
-               | ss ->
-                 [ ("skipped",
-                    `List (List.map (fun (n, why) ->
-                        `Assoc [ ("name", `String n);
-                                 ("reason", `String why) ]) ss)) ])
-           @ (match done_ with
-               | [] -> []
-               | ps -> [ ("phrases", `List (List.map (json_phrase payload) ps)) ]));
+           @ list_field "bound"
+               (fun { Msg.bound; bound_type } ->
+                  `Assoc [ ("name", `String bound); ("type", `String bound_type) ])
+               bound
+           @ list_field "skipped"
+               (fun (n, why) -> `Assoc [ ("name", `String n); ("reason", `String why) ])
+               skipped
+           @ list_field "phrases" (json_phrase payload) done_);
       is_error = false }
   | Msg.Markers_listed { markers; swapped; unknown; unknown_sites } ->
     let plural n = if n = 1 then "" else "s" in
@@ -317,33 +302,23 @@ let of_response (response : Msg.response) payload =
     { content = body ^ note;
       structured =
         `Assoc
-          (("markers",
-            `List (List.map (fun (m : Msg.marker) ->
+          (list_field "markers"
+             (fun (m : Msg.marker) ->
                 `Assoc ([ ("name", `String m.Msg.marker);
                           ("kind", `String m.Msg.marker_kind);
                           ("armed", `Bool m.Msg.armed);
                           ("hits", `Int m.Msg.hits) ]
-                        @ (match m.Msg.sites with
-                            | [] -> []
-                            | ss ->
-                              [ ("sites",
-                                 `List (List.map (fun (st : Msg.marker_site) ->
-                                     `Assoc ([ ("id", `Int st.Msg.id) ]
-                                             @ at_fields st.Msg.where
-                                             @ [ ("armed", `Bool st.Msg.site_armed);
-                                                 ("hits", `Int st.Msg.hits_here) ]))
-                                     ss)) ])))
-                markers))
-           :: (match swapped with
-               | [] -> []
-               | sw -> [ ("swapped", `List (List.map (fun n -> `String n) sw)) ])
-           @ (match unknown with
-               | [] -> []
-               | ns -> [ ("unknown",
-                          `List (List.map (fun n -> `String n) ns)) ])
-           @ (match unknown_sites with
-               | [] -> []
-               | is -> [ ("unknown_sites", `List (List.map (fun i -> `Int i) is)) ]));
+                        @ list_field "sites"
+                            (fun (st : Msg.marker_site) ->
+                               `Assoc ([ ("id", `Int st.Msg.id) ]
+                                       @ at_fields st.Msg.where
+                                       @ [ ("armed", `Bool st.Msg.site_armed);
+                                           ("hits", `Int st.Msg.hits_here) ]))
+                            m.Msg.sites))
+             markers
+           @ list_field "swapped" (fun n -> `String n) swapped
+           @ list_field "unknown" (fun n -> `String n) unknown
+           @ list_field "unknown_sites" (fun i -> `Int i) unknown_sites);
       is_error = false }
   | Msg.Rejected why ->
     { content = why;

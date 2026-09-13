@@ -316,10 +316,9 @@ let source_query id name args =
          | [] -> ""
          | items -> Printf.sprintf "\n\n%s:\n%s" label (render items) in
        let body = section "errors" errors ^ section "warnings" warnings in
-       let field k = function [] -> [] | l -> [ (k, `List l) ] in
        reply id { Render.content = summary ^ body;
-                  structured = `Assoc (field "errors" errors
-                                       @ field "warnings" warnings);
+                  structured = `Assoc (Render.list_field "errors" Fun.id errors
+                                       @ Render.list_field "warnings" Fun.id warnings);
                   is_error = false })
   | Ok value when name = "expand" ->
     (match Merlin.expansion value with

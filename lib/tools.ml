@@ -187,7 +187,7 @@ let markers_tool =
            [ "type", `String "array";
              "description", `String
                "Each with name, kind, armed and hits. hits is the site's \
-                lifetime count, not this call's." ]);
+                lifetime count, not this call's. Absent when there are none." ]);
         ("swapped", `Assoc
            [ "type", `String "array";
              "items", `Assoc [ "type", `String "string" ];
