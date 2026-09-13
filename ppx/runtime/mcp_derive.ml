@@ -7,6 +7,15 @@ type json = Yojson.Safe.t
 
 let ( let* ) = Result.bind
 
+(* A derived type's four values in one, so a tool is declared with [t_mcp]
+   rather than four names. *)
+type 'a codec = {
+  to_json : 'a -> json;
+  of_json : json -> ('a, string) result;
+  schema_in : json;
+  schema_out : json;
+}
+
 (* --- encoding ----------------------------------------------------------- *)
 
 let string_to_json s : json = `String s

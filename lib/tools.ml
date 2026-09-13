@@ -198,16 +198,9 @@ let context_tool =
      does."
     [ file_arg ] [ ("opens", list "string"); error ]
 
-let help_tool =
-  tool ~name:"help"
-    "A tool's full manual: limits, edge cases and what its result fields \
-     mean. Read it before relying on anything a description does not say."
-    [ ("tool", str "Tool name. Omit to list them.") ]
-    [ ("manual", typed "string"); ("tools", list "string"); error ]
-
 let all =
   [ eval_tool; describe_tool; require_tool; load_tool; reset_tool;
     continue_tool; inspect_tool;
     locate_tool; type_at_tool; outline_tool; uses_tool; search_type_tool;
     expand_tool; diagnostics_tool; markers_tool;
-    document_tool; signature_tool; context_tool; help_tool ]
+    document_tool; signature_tool; context_tool ]

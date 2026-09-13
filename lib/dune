@@ -1,3 +1,5 @@
 (library
  (name camlkit)
- (libraries unix str jsonrpc yojson wire))
+ (libraries unix str jsonrpc yojson wire)
+ (preprocess
+  (pps ppx_mcp)))

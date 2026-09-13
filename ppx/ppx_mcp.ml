@@ -4,6 +4,7 @@
      t_of_json : Yojson.Safe.t -> (t, string) result
      t_schema_in : Yojson.Safe.t      (what a client may send)
      t_schema_out : Yojson.Safe.t     (what we send)
+     t_mcp : t Mcp_derive.codec        (the four together)
 
    from one definition, so a tool's schema and what the tool does with its
    JSON cannot disagree. The rules, decided in docs/wayfinder/tickets/071:
@@ -394,12 +395,23 @@ let generate ~ctxt:_ (_rec_flag, tds) tag =
            binding (n ^ "_schema_out") (schema_of ~ctx ~mode:"out" td sh) ])
       shapes
   in
+  let codecs =
+    List.map
+      (fun (td, _) ->
+         let n = td.ptype_name.txt in
+         let e s = B.evar ~loc (n ^ s) in
+         binding (n ^ "_mcp")
+           [%expr { Mcp_derive.to_json = [%e e "_to_json"]; of_json = [%e e "_of_json"];
+                    schema_in = [%e e "_schema_in"]; schema_out = [%e e "_schema_out"] }])
+      shapes
+  in
   [ B.pstr_include ~loc
       (B.include_infos ~loc
          (B.pmod_structure ~loc
             [ [%stri [@@@ocaml.warning "-39"]];
               B.pstr_value ~loc Recursive converters;
-              B.pstr_value ~loc Nonrecursive schemas ])) ]
+              B.pstr_value ~loc Nonrecursive schemas;
+              B.pstr_value ~loc Nonrecursive codecs ])) ]
 
 let () =
   let args = Deriving.Args.(empty +> arg "tag" (estring __)) in

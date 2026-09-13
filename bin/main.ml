@@ -115,24 +115,37 @@ let signature_call id args =
 (* The manual behind a tool's description, which stays a trigger. An unknown
    name is a negative answer that lists what there is, not a failure. See
    ticket 062. *)
-let help_call id args =
-  let tools = `List (List.map (fun t -> `String t) Guide.topics) in
-  match Yojson.Safe.Util.member "tool" args with
-  | `String name ->
-    (match List.assoc_opt name Guide.manual with
-     | Some manual ->
-       reply id { Render.content = manual;
-                  structured = `Assoc [ "manual", `String manual ];
-                  is_error = false }
-     | None ->
-       let e = Printf.sprintf "no manual for %S" name in
-       reply id { Render.content =
-                    e ^ "; there is one for: " ^ String.concat ", " Guide.topics;
-                  structured = `Assoc [ "error", `String e; "tools", tools ];
-                  is_error = false })
-  | _ ->
-    reply id { Render.content = String.concat "\n" Guide.topics;
-               structured = `Assoc [ "tools", tools ]; is_error = false }
+type help_args = {
+  tool : string option;
+  (** Tool name. Omit to list them. *)
+} [@@deriving mcp]
+
+type help_result = {
+  manual : string;
+  tools : string list;
+  (** What there is a manual for, when no tool or an unknown one was named. *)
+  error : string;
+} [@@deriving mcp]
+
+let help_tool =
+  Tool.make ~name:"help" ~read_only:true ~idempotent:true ~open_world:false
+    ~doc:"A tool's full manual: limits, edge cases and what its result fields \
+          mean. Read it before relying on anything a description does not say."
+    help_args_mcp help_result_mcp
+    (fun { tool } ->
+       let none = { manual = ""; tools = []; error = "" } in
+       match tool with
+       | None -> Ok { none with tools = Guide.topics }
+       | Some name ->
+         match List.assoc_opt name Guide.manual with
+         | Some manual -> Ok { none with manual }
+         | None ->
+           Ok { none with tools = Guide.topics;
+                          error = Printf.sprintf "no manual for %S" name })
+
+(* Tools declared from their types. The rest still go through Tools and the
+   dispatch below until each moves here. See ticket 071. *)
+let typed_tools = [ help_tool ]
 
 (* Session-less like the rest, but the answer is code rather than a report:
    the caller evaluates it, or hands it to reset. See ticket 036. *)
@@ -517,7 +530,9 @@ let handle_call id params =
   if is_source_query name then source_query id name args
   else if name = "signature" then signature_call id args
   else if name = "context" then context_call id args
-  else if name = "help" then help_call id args else
+  else match List.find_opt (fun (t : Tool.t) -> t.name = name) typed_tools with
+  | Some t -> t.call args ~reply:(reply id)
+  | None ->
   (* A name is a handle, and most callers want one session. Defaulting it
      means a one-off evaluation needs no invented name; a caller that wants
      two independent toplevels still says so. *)
@@ -724,7 +739,7 @@ let handle_packet (packet : Jsonrpc.Packet.t) =
        reply id (Render.infrastructure_failure
                    ("camlkit failed while answering this call: " ^ why)))
   | Jsonrpc.Packet.Request r ->
-    (match Mcp.dispatch ~call:(fun _ -> assert false) r with
+    (match Mcp.dispatch ~tools:typed_tools ~call:(fun _ -> assert false) r with
      | Ok result ->
        Mcp.respond stdout (Jsonrpc.Packet.Response (Jsonrpc.Response.ok r.id result))
      | Error e -> reply_error r.id e)

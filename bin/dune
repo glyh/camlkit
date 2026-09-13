@@ -1,4 +1,6 @@
 (executable
  (name main)
  (public_name camlkit)
- (libraries camlkit unix jsonrpc yojson wire))
+ (libraries camlkit unix jsonrpc yojson wire)
+ (preprocess
+  (pps ppx_mcp)))

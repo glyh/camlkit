@@ -34,7 +34,12 @@ let initialize_result params =
   | `String v -> result_for v
   | _ -> discover_result
 
-let tools_list = `Assoc [ "tools", `List Tools.all ]
+(* Typed tools first, then the hand-declared ones not yet moved over. *)
+let tools_list (typed : Tool.t list) =
+  let moved t = List.exists (fun (d : Tool.t) ->
+      Yojson.Safe.Util.member "name" t = `String d.name) typed in
+  `Assoc [ "tools", `List (List.map (fun (t : Tool.t) -> t.declaration) typed
+                           @ List.filter (fun t -> not (moved t)) Tools.all) ]
 
 let text s = `Assoc [ "type", `String "text"; "text", `String s ]
 
@@ -45,14 +50,14 @@ let tool_result ?structured ?(is_error = false) content =
       | Some s -> ("structuredContent", s) :: base)
 
 (* [call] performs a tool and is supplied by the server, which owns sessions. *)
-let dispatch ~call (request : Jsonrpc.Request.t) =
+let dispatch ~tools ~call (request : Jsonrpc.Request.t) =
   let params = match request.params with
     | Some (`Assoc _ as a) -> a
     | _ -> `Assoc [] in
   match request.method_ with
   | "initialize" -> Ok (initialize_result params)
   | "server/discover" -> Ok discover_result
-  | "tools/list" -> Ok tools_list
+  | "tools/list" -> Ok (tools_list tools)
   | "tools/call" -> call params
   | m -> Error (Jsonrpc.Response.Error.make ~code:MethodNotFound
                   ~message:("no such method: " ^ m) ())
