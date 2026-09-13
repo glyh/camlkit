@@ -356,7 +356,7 @@ let source_query id name args =
           v )
       | v -> (None, v)
     in
-    let value = dedup value in
+    let value = Merlin.trim (dedup value) in
     (* Trim only after dedup, so the caller gets the number it asked for. *)
     let value =
       match requested_limit, value with

@@ -337,9 +337,10 @@ must evaluate it first. Tests are Alcotest.
   to Lwt_main.run". Lwt recovers once the phrase is continued or abandoned;
   Async is not measured.
 - [merlin fields with nothing to say](tickets/053-merlin-fields-with-nothing-to-say.md)
-  — **open.** `outline`, `uses` and `type_at` forward merlin's empty and default
-  fields (`children: []`, `deprecated: false`, `stale: false`, `tail: "no"`) on
-  every item, against the absent-not-empty convention.
+  — **fixed.** `outline`, `uses` and `type_at` forwarded merlin's empty and
+  default fields (`children: []`, `deprecated: false`, `stale: false`,
+  `tail: "no"`) on every item; one recursive trim drops them. `selection` stays,
+  as the only span on the name itself.
 - [Swapping a function in a loaded project](tickets/054-swapping-a-function-in-a-loaded-project.md)
   — **done.** `[%swap M.f replacement]` in `eval` reaches every caller, those in
   `f`'s own module included, because load builds the project through the worker

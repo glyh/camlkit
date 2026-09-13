@@ -1,8 +1,8 @@
 ---
-status: open
+status: resolved
 type: defect
 blocked-by: [027, 004]
-assignee:
+assignee: lyh
 ---
 
 # merlin fields with nothing to say
@@ -27,7 +27,25 @@ where the cost is: a large file's outline pays for them once per definition.
 Not a regression from the recent work. `bin/main.ml` passed merlin's value
 through the same way at b3b5a41.
 
-## Open
+## Decided
+
+**One trim for every merlin tool, in `Merlin.trim`,** applied where the answer
+is named in `bin/main.ml`, rather than a function per tool. It removes the four
+constants by name at any depth: `children: []`, `deprecated: false`,
+`stale: false`, `tail: "no"`. Their other values are kept, since those are the
+case worth reading. None of the keys means anything else in any answer these
+tools forward, so one function is safe, and it is recursive because outline
+items nest.
+
+**`selection` stays.** An item's span starts at its `let`, so a position on the
+name, which is what `uses` and `locate` need, is only in `selection`. It is not
+a restatement.
+
+Measured on `worker/watch.ml`: `deprecated` gone, `children` left on the 12
+items that have some, `selection` on all 66.
+
+## Was open
+
 
 - **Drop or keep `selection`.** It is the name's own span inside the item's, so
   it is not a restatement; it may be what a caller wants for `locate` or

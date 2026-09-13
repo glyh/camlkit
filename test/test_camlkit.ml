@@ -806,6 +806,21 @@ let test_has_index () =
   Alcotest.(check bool) "a directory that does not exist is not an error" false
     (Merlin.has_index (Filename.concat root "nowhere"))
 
+(* Nothing-to-say fields leave, at any depth, and their informative values
+   stay. See tickets/053. *)
+let test_merlin_trim () =
+  let j = Yojson.Safe.from_string in
+  let same what a b =
+    Alcotest.(check string) what (Yojson.Safe.to_string (j b))
+      (Yojson.Safe.to_string (Merlin.trim (j a))) in
+  same "an outline item keeps its selection and nested children are trimmed"
+    {|[{"name":"f","children":[{"name":"g","children":[],"deprecated":false}],
+        "deprecated":false,"selection":{"start":1}}]|}
+    {|[{"name":"f","children":[{"name":"g"}],"selection":{"start":1}}]|};
+  same "the informative values stay"
+    {|[{"stale":true,"tail":"call","deprecated":true},{"stale":false,"tail":"no"}]|}
+    {|[{"stale":true,"tail":"call","deprecated":true},{}]|}
+
 (* A user's settings survive, and ours come after the `_`. See tickets/060. *)
 let test_ocamlparam () =
   let p = Wire.Exe.ocamlparam ~ours:[ "ppx=/w --swap-ppx"; "w=-a" ] in
@@ -872,7 +887,9 @@ let () =
        [ Alcotest.test_case "document sentinels" `Quick
            test_document_sentinels;
          Alcotest.test_case "an index that was not written" `Quick
-           test_has_index ]);
+           test_has_index;
+         Alcotest.test_case "fields with nothing to say" `Quick
+           test_merlin_trim ]);
       ("supervision",
        [ Alcotest.test_case "escalation" `Quick test_escalation;
          Alcotest.test_case "interrupt answered" `Quick

@@ -260,3 +260,25 @@ let diagnostics value =
    namespace is searched. The caller's position is therefore not used for a
    name it named itself; it gets this one. *)
 let neutral_position = position 1 0
+
+(* Fields merlin sends on every entry that say nothing: an outline item's empty
+   `children` and `deprecated: false`, an occurrence's `stale: false`, an
+   enclosing's `tail: "no"`. Absent is what an eval result means by nothing to
+   say, and an outline of a large file paid for them once per definition. The
+   other values of each are kept, since they are the case worth reading.
+
+   `selection` stays: it is the name's span inside the item's, and an item
+   starts at its `let`, so it is the position `uses` or `locate` on the name
+   needs. See docs/wayfinder/tickets/053. *)
+let rec trim = function
+  | `Assoc fields ->
+    `Assoc
+      (List.filter_map
+         (fun (k, v) ->
+            match k, v with
+            | "children", `List [] | "deprecated", `Bool false
+            | "stale", `Bool false | "tail", `String "no" -> None
+            | _ -> Some (k, trim v))
+         fields)
+  | `List items -> `List (List.map trim items)
+  | other -> other
