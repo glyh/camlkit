@@ -27,6 +27,15 @@ after = call(2, "eval", {"session": "s", "code": "Location.none;;"})
 one = call(5, "load", {"session": "one", "path": project, "libraries": ["camlkit"]})
 one_used = call(6, "eval", {"session": "one", "code": "Camlkit.Render.bytes 2048;;"})
 
+# A swap through a real load: the rewritten build, not the fixture the suite
+# compiles by hand. transcript calls bytes inside Render, which is the call
+# overwriting a module's field cannot reach. See docs/wayfinder/tickets/054.
+swapped = call(7, "eval", {"session": "one", "code":
+    '[%swap Camlkit.Render.bytes (fun _ -> "SWAPPED")];;\n'
+    'Camlkit.Render.transcript "" [ { Wire.Msg.rendering = ""; warnings = ""; '
+    'out_start = 0; out_len = 0; dropped = 0; ran = None; watched = []; '
+    'cost = Some { Wire.Msg.wall_ms = 1.; allocated_bytes = 2048 } } ];;'})
+
 # The wrapper half of `context`, which needs a dune project and so cannot be
 # reached from dune test either: dune passes -open for a wrapped library, and
 # that open is the one a reader cannot guess.
@@ -59,10 +68,12 @@ print("without dune  :", refused_text.split("\n")[0],
       "(expect a refusal, not a partial load)")
 print("next phrase   :", after, "(expect a Warnings.loc value)")
 print("one library   :", one, "/", one_used, "(expect camlkit with its deps)")
+print("swap          :", swapped.replace("\n", " "), "(expect SWAPPED allocated)")
 print("context said  :", opens.replace("\n", " "))
 print("in context    :", in_context, "(expect a function, not Unbound value)")
 ok = ("ocamltoplevel" not in loaded and "loc_ghost" in after
       and refused_ok and "not loaded" not in one and "2.0 kB" in one_used
+      and "SWAPPED allocated" in swapped
       and "open Camlkit.Render;;" in opens and "Unbound" not in in_context)
 print("PASS" if ok else "FAIL")
 try: p.terminate(); p.wait(timeout=5)

@@ -216,18 +216,55 @@ let run_ppx () =
    replacement for 'a list -> int that only takes int list is refused. *)
 
 let hook_name = "__camlkit_swap"
-let hook_type = cells_type ^ " -> string -> Obj.t -> unit"
+let hook_type = cells_type ^ " -> string -> string -> Obj.t -> unit"
+
+(* The swaps in force, oldest first, each under the path it was written with.
+   Kept because a swap outlives the call that made it and changes what every
+   later call computes, so forgetting one gives answers nothing explains; the
+   markers tool lists them. Keyed by the cell, so one function swapped under
+   two spellings is one entry. *)
+type active = { cell : Obj.t ref; written : string }
+let active : active list ref = ref []
+
+(* What the phrase running now swapped, rendered with it. A swap prints
+   nothing of its own, and a swap made by code a later phrase runs would
+   otherwise happen without a word. *)
+let this_phrase = Buffer.create 64
 
 (* The last cell under the key, since a unit that defines a name twice exports
    the second definition. The key was checked to exist before the phrase
-   typed. *)
-let hook (cells : (string * Obj.t ref) array) key value =
+   typed. An immediate is the empty cell, so storing one restores. *)
+let hook (cells : (string * Obj.t ref) array) key written value =
   let rec go i =
     if i >= 0 then
       let k, cell = cells.(i) in
-      if k = key then cell := value else go (i - 1)
+      if k <> key then go (i - 1)
+      else begin
+        cell := value;
+        let swapped = Obj.is_block value in
+        active := List.filter (fun a -> a.cell != cell) !active
+                  @ (if swapped then [ { cell; written } ] else []);
+        Buffer.add_string this_phrase
+          (Printf.sprintf "%s %s\n" (if swapped then "swapped" else "restored")
+             written)
+      end
   in
   go (Array.length cells - 1)
+
+let swapped () = List.map (fun a -> a.written) !active
+
+(* Restore by the path a swap was written with. The names not in force come
+   back, so a typo is not silent. *)
+let restore names =
+  List.filter
+    (fun n ->
+       match List.find_opt (fun a -> a.written = n) !active with
+       | Some a ->
+         a.cell := Obj.repr 0;
+         active := List.filter (fun b -> b.cell != a.cell) !active;
+         false
+       | None -> true)
+    names
 
 let marker (e : expression) =
   match e.pexp_desc with
@@ -310,6 +347,7 @@ let expand env (e : expression) (lid : Longident.t Location.loc) replacement =
       Ast_helper.Exp.apply ~loc:gloc (ident ~loc:gloc [ hook_name ])
         [ (Nolabel, cells);
           (Nolabel, Ast_helper.Exp.constant ~loc:gloc (Ast_helper.Const.string key));
+          (Nolabel, Ast_helper.Exp.constant ~loc:gloc (Ast_helper.Const.string written));
           (Nolabel, Ast_helper.Exp.apply ~loc:gloc
              (ident ~loc:gloc [ "Stdlib"; "Obj"; "repr" ]) [ (Nolabel, value) ]) ]
     in
@@ -361,6 +399,17 @@ let rewrite env str =
                 "A swap is written [%%swap Module.f replacement], or \
                  [%%swap Module.f] to put the original back: a path to the \
                  function, then optionally the expression to call instead."
-            | None -> Ast_mapper.default_mapper.expr self e) }
+            | None -> Ast_mapper.default_mapper.expr self e);
+        (* A swap sent as a phrase of its own is bound to (), so it takes no
+           implicit _N name and renders only the line saying what it did. *)
+        structure_item = (fun self i ->
+            match i.pstr_desc with
+            | Pstr_eval (e, _) when marker e <> None ->
+              let loc = ghost i.pstr_loc in
+              Ast_helper.Str.value ~loc Nonrecursive
+                [ Ast_helper.Vb.mk ~loc
+                    (Ast_helper.Pat.construct ~loc (lident ~loc [ "()" ]) None)
+                    (self.Ast_mapper.expr self e) ]
+            | _ -> Ast_mapper.default_mapper.structure_item self i) }
     in
     m.Ast_mapper.structure m str

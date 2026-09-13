@@ -71,7 +71,8 @@ let eval_tool =
        holding them runs; the markers tool lists them and turns them off. \
        [%swap Module.f replacement] makes every caller of a function in a \
        project brought in by load call the replacement instead, callers inside \
-       its own module included; [%swap Module.f] puts the original back. The \
+       its own module included; [%swap Module.f] puts the original back, and \
+       the markers tool lists the swaps in force. The \
        replacement must have the function's type, at least as general. Pass \
        check to typecheck without running.";
     "inputSchema", obj ~required:[ "code" ]
@@ -151,7 +152,8 @@ let markers_tool =
        definition and line it is in, and can be armed on its own. Writing a \
        name again adds a site, which starts armed, and the eval that adds it \
        warns with the site and the total. A name cannot be both a breakpoint \
-       and a watch.";
+       and a watch. The functions swapped with [%swap] are listed too, and \
+       restore puts them back.";
     "inputSchema", obj
       [ session_arg;
         ("disarm", `Assoc
@@ -173,19 +175,31 @@ let markers_tool =
         ("arm_sites", `Assoc
            [ "type", `String "array";
              "items", `Assoc [ "type", `String "integer" ];
-             "description", `String "Site ids to turn back on." ]) ];
+             "description", `String "Site ids to turn back on." ]);
+        ("restore", `Assoc
+           [ "type", `String "array";
+             "items", `Assoc [ "type", `String "string" ];
+             "description", `String
+               "Swapped functions to put back, by the path the swap was \
+                written with." ]) ];
     "outputSchema", obj
       [ ("markers", `Assoc
            [ "type", `String "array";
              "description", `String
                "Each with name, kind, armed and hits. hits is the site's \
                 lifetime count, not this call's." ]);
+        ("swapped", `Assoc
+           [ "type", `String "array";
+             "items", `Assoc [ "type", `String "string" ];
+             "description", `String
+               "Functions a swap has replaced, by the path it was written \
+                with. Absent when none are." ]);
         ("unknown", `Assoc
            [ "type", `String "array";
              "items", `Assoc [ "type", `String "string" ];
              "description", `String
-               "Names passed to disarm or arm that this session has never \
-                seen, so a typo is not silent. Absent when there are none." ]) ] ]
+               "Names passed to disarm, arm or restore that this session has \
+                not got, so a typo is not silent. Absent when there are none." ]) ] ]
 
 let describe_tool =
   `Assoc [

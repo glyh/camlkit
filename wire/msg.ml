@@ -30,7 +30,9 @@ type request =
      is what "destroy" means here. See docs/wayfinder/tickets/049. *)
   | Markers of { disarm : string list; arm : string list;
                  (* One site of a watch name written in several places. *)
-                 disarm_sites : int list; arm_sites : int list }
+                 disarm_sites : int list; arm_sites : int list;
+                 (* Swaps to put back, by the path they were written with. *)
+                 restore : string list }
   | Load of { path : string; libraries : string list;
               (* findlib packages to load first. A reset empties the session,
                  including anything it had required, and a project's libraries
@@ -166,6 +168,9 @@ type response =
                  skipped : (string * string) list;
                  done_ : phrase list }
   | Markers_listed of { markers : marker list;
+                        (* The swaps in force, by the path each was written
+                           with. See docs/wayfinder/tickets/054. *)
+                        swapped : string list;
                         (* Names asked for that the session has never seen. A
                            typo in a disarm is otherwise silent. *)
                         unknown : string list;

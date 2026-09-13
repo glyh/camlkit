@@ -286,7 +286,7 @@ let of_response (response : Msg.response) payload =
                | [] -> []
                | ps -> [ ("phrases", `List (List.map (json_phrase payload) ps)) ]));
       is_error = false }
-  | Msg.Markers_listed { markers; unknown; unknown_sites } ->
+  | Msg.Markers_listed { markers; swapped; unknown; unknown_sites } ->
     let plural n = if n = 1 then "" else "s" in
     let line (m : Msg.marker) =
       Printf.sprintf "  %-20s %-6s %s, %d hit%s%s" m.Msg.marker m.Msg.marker_kind
@@ -300,9 +300,12 @@ let of_response (response : Msg.response) payload =
                   (at_text st.Msg.where))
                m.Msg.sites))
     in
-    let body = match markers with
-      | [] -> "no markers in this session"
-      | ms -> String.concat "\n" (List.map line ms)
+    let body = match markers, swapped with
+      | [], [] -> "no markers in this session"
+      | ms, [] -> String.concat "\n" (List.map line ms)
+      | ms, sw ->
+        String.concat "\n"
+          (List.map line ms @ [ "swapped: " ^ String.concat ", " sw ])
     in
     let never = unknown @ List.map (Printf.sprintf "#%d") unknown_sites in
     let note = match never with
@@ -331,7 +334,10 @@ let of_response (response : Msg.response) payload =
                                                  ("hits", `Int st.Msg.hits_here) ]))
                                      ss)) ])))
                 markers))
-           :: (match unknown with
+           :: (match swapped with
+               | [] -> []
+               | sw -> [ ("swapped", `List (List.map (fun n -> `String n) sw)) ])
+           @ (match unknown with
                | [] -> []
                | ns -> [ ("unknown",
                           `List (List.map (fun n -> `String n) ns)) ])

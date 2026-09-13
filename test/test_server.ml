@@ -993,6 +993,18 @@ let test_a_swap_reaches_every_caller () =
   Alcotest.(check bool) "before" true (has "= 120." (ev "Swaplib.total \"EU\" [100.];;"));
   let r = ev "[%swap Swaplib.rate (fun _ -> 0.5)];; Swaplib.total \"EU\" [100.];;" in
   Alcotest.(check bool) "a caller in the same module sees the swap" true (has "= 150." r);
+  Alcotest.(check bool) "the swap says what it did, and takes no _N name" true
+    (has "swapped Swaplib.rate" r && not (has "unit = ()" r));
+  let markers args =
+    text (call c ~id:3 ~tool:"markers" ~args:(`Assoc (("session", session) :: args))) in
+  Alcotest.(check bool) "markers lists the swap" true
+    (has "swapped: Swaplib.rate" (markers []));
+  let r = markers [ "restore", `List [ `String "Swaplib.rate"; `String "Swaplib.nope" ] ] in
+  Alcotest.(check bool) "restore puts it back and names what was not swapped" true
+    (not (has "swapped:" r) && has "Swaplib.nope" r);
+  Alcotest.(check bool) "restored through markers" true
+    (has "= 120." (ev "Swaplib.total \"EU\" [100.];;"));
+  ignore (ev "[%swap Swaplib.rate (fun _ -> 0.5)];;");
   let r = ev "[%swap Swaplib.length (fun l -> 10 * List.length l)];; \
               Swaplib.length [\"a\"];;" in
   Alcotest.(check bool) "a polymorphic function swaps" true (has "= 10" r);

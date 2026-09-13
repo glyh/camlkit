@@ -72,6 +72,18 @@ let module Camlkit_swap : module type of struct let f = M.f end =
 so a replacement less general than the original (`int list -> int` for
 `'a list -> int`) is refused with the compiler's own signature mismatch.
 
+**Swaps in force are listed, and a swap says what it did.** A swap outlives the
+call that made it, so a forgotten one changes answers with nothing to explain
+them. `markers` lists the swaps in force by the path each was written with and
+`restore` puts them back; the list is keyed by the cell, so one function swapped
+under two spellings is one entry. A swap sent as a phrase of its own is bound to
+`()`, so it takes no `_N` name, and the phrase renders `swapped M.f` or
+`restored M.f` - including a swap made by code a later phrase runs.
+
+**The second build costs little.** camlkit loading itself, 17 libraries, with
+dune's cache disabled and no `_build/camlkit`: 0.4s for the first load, 0.2s
+for the next.
+
 **A fast path was considered and rejected.** Overwriting gives the same answer
 only when no reference in the whole program captures the value once: no call
 inside its own module, no `let g = M.f`, no `[M.f]` stored at module

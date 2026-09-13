@@ -569,6 +569,7 @@ let rec execute_from cap ~acc ~pos ~measure start phrases =
          cmis carrying the printers it then wants to use. *)
       Printers.scan ppf;
       Breakpoint.start_call ();
+      Buffer.clear Swap.this_phrase;
       (* Around the phrase itself, not around the printer scans or the record
          building. A minor collection precedes each reading, because without
          one the counters are quantised beyond use: `Array.make 1000` measured
@@ -616,7 +617,8 @@ let rec execute_from cap ~acc ~pos ~measure start phrases =
                      allocated_bytes =
                        int_of_float (after -. before) * (Sys.word_size / 8) }
       in
-      let record = Msg.{ rendering = Buffer.contents buf;
+      let record = Msg.{ rendering = Buffer.contents buf
+                                     ^ Buffer.contents Swap.this_phrase;
                          warnings = notes ^ Buffer.contents wbuf;
                          out_start = !pos; out_len = stop - !pos;
                          dropped = 0; ran; cost;
@@ -848,8 +850,9 @@ let load cap ~libraries ~packages path =
    the same path: without it the only way to re-enable a marker would be to
    redefine its function, which is the trap disarming exists to avoid.
    See docs/wayfinder/tickets/049. *)
-let markers ~disarm ~arm ~disarm_sites ~arm_sites =
+let markers ~disarm ~arm ~disarm_sites ~arm_sites ~restore =
   let unknown =
+    Swap.restore restore @
     List.filter (fun n -> not (Breakpoint.set_name ~armed:false n)) disarm
     @ List.filter (fun n -> not (Breakpoint.set_name ~armed:true n)) arm
   in
@@ -876,7 +879,7 @@ let markers ~disarm ~arm ~disarm_sites ~arm_sites =
               (Breakpoint.sites_of m.Breakpoint.name) }
   in
   Msg.Markers_listed { markers = List.map of_marker (Breakpoint.known ());
-                       unknown; unknown_sites }
+                       swapped = Swap.swapped (); unknown; unknown_sites }
 
 (* --- parked phrases ----------------------------------------------------- *)
 

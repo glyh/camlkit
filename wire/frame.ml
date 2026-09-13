@@ -21,7 +21,7 @@
    is not available at runtime. It catches a stale worker and a switch
    mismatch; it does not catch someone editing Msg and rebuilding one side
    without bumping it. *)
-let format_version = 8
+let format_version = 9
 
 let magic = "CKF1"
 
