@@ -1007,6 +1007,14 @@ let test_watch_records_without_stopping () =
                | `List [ `String "0" ] -> true | _ -> false))
          ws
      | _ -> false);
+  (* Equal but freshly allocated each time is still one entry, collapsed when
+     printed, since the cutoff above only sees physical equality. *)
+  let r = ev "for i = 1 to 5 do ignore [%watch \"fresh\" (string_of_int (i / 10))] done;;" in
+  Alcotest.(check (list string)) "an equal fresh value prints once"
+    [ "\"0\"" ] (values r);
+  (* A call repeating the last call's final value still reports it. *)
+  Alcotest.(check (list string)) "a repeated call reports its value"
+    [ "14" ] (values (ev "g [7];;"));
   (* Disarming stops the recording and not the counting, as for a breakpoint. *)
   ignore (call c ~id:2 ~tool:"markers"
             ~args:(`Assoc [ "session", session;
@@ -1079,6 +1087,38 @@ let test_markers_list_and_disarm () =
   Alcotest.(check bool) "an unknown name is reported" true
     (Yojson.Safe.Util.(member "structuredContent" r |> member "unknown")
      = `List [ `String "nosuch" ])
+
+(* A name is the handle a marker is disarmed by and the key a watch's values
+   are printed under, so two markers may not share one. Sharing across types
+   killed the worker: one site's ints were printed with the other's string
+   type. Re-evaluating a definition reuses its names, and stays allowed. *)
+let test_marker_names_do_not_clash () =
+  with_server @@ fun c ->
+  let ev code =
+    call c ~id:1 ~tool:"eval"
+      ~args:(`Assoc [ "session", `String "clash"; "code", `String code ]) in
+  let refused r = has "Give this one another name" (text r)
+                  || has "each marker needs its own" (text r) in
+  Alcotest.(check bool) "two in one call are refused" true
+    (refused (ev "let a () = [%watch \"n\" 1];;\nlet b () = [%watch \"n\" 2];;"));
+  Alcotest.(check bool) "and nothing of that call ran" true
+    (has "Unbound value a" (text (ev "a ();;")));
+  ignore (ev "let a () = [%watch \"n\" 12345];;");
+  Alcotest.(check bool) "another type under the name is refused" true
+    (refused (ev "let b () = [%watch \"n\" \"hello\"];;"));
+  Alcotest.(check bool) "another kind under the name is refused" true
+    (refused (ev "let c () = [%break \"n\"];;"));
+  Alcotest.(check bool) "redefining with the same type is not" false
+    (refused (ev "let a () = [%watch \"n\" 7];;"));
+  Alcotest.(check bool) "and the session is alive" true
+    (has "7" (text (ev "a ();;")));
+  (* A check runs nothing, so it registers nothing either. *)
+  ignore (call c ~id:2 ~tool:"eval"
+            ~args:(`Assoc [ "session", `String "clash"; "check", `Bool true;
+                            "code", `String "let d () = [%watch \"checked\" 1];;" ]));
+  Alcotest.(check bool) "a checked marker is not registered" false
+    (has "checked" (text (call c ~id:3 ~tool:"markers"
+                             ~args:(`Assoc [ "session", `String "clash" ]))))
 
 (* A marker that is not [%break "name"] is not a breakpoint. The compiler would
    call it an uninterpreted extension, which does not say what the right form
@@ -1289,6 +1329,8 @@ let () =
            test_watch_records_without_stopping;
          Alcotest.test_case "markers list and disarm" `Slow
            test_markers_list_and_disarm;
+         Alcotest.test_case "marker names do not clash" `Slow
+           test_marker_names_do_not_clash;
          Alcotest.test_case "a malformed marker says the right form" `Slow
            test_a_malformed_marker_says_the_right_form;
          Alcotest.test_case "a breakpoint the runtime cannot reach says so" `Slow

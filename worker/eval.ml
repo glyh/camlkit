@@ -171,7 +171,63 @@ type typed = {
   fired : string option;
   sg : Types.signature;
   warns : string;
+  (* The markers the phrase holds, each with a watch's type. Registered only
+     once the whole call is going to run; see commit_markers. *)
+  markers : (string * Breakpoint.kind * (Types.type_expr * Env.t) option) list;
 }
+
+(* A marker's name is the handle markers disarms by, and a watch's values are
+   printed under the type stored against its name. So two markers in one call
+   may not share a name, and a name already in the session may be used again
+   only by the same kind of marker watching the same type - which is what
+   re-evaluating a definition does. Sharing across types was not merely
+   confusing: the values of one were printed with the other's type, and the
+   worker died. *)
+let marker_clash ~earlier markers =
+  let rec dup seen = function
+    | [] -> None
+    | (name, _, _) :: rest ->
+      if List.mem name seen then Some name else dup (name :: seen) rest
+  in
+  let kind_name = function
+    | Breakpoint.Break -> "breakpoint" | Breakpoint.Watch -> "watch" in
+  match dup earlier markers with
+  | Some name ->
+    Some (Printf.sprintf
+            "Two markers in this call are named %S. A name is how the markers \
+             tool disarms a marker and what a watch's values are printed \
+             under, so each marker needs its own." name)
+  | None ->
+    List.find_map
+      (fun (name, kind, ty) ->
+         match Breakpoint.find_site name, ty with
+         | Some s, _ when s.Breakpoint.kind <> kind ->
+           Some (Printf.sprintf
+                   "%S is already a %s in this session, so it cannot name a \
+                    %s. Give this one another name." name
+                   (kind_name s.Breakpoint.kind) (kind_name kind))
+         | Some { Breakpoint.printed_as = Some (was, _); _ }, Some (ty, env)
+           when not (Ctype.is_equal env true [ was ] [ ty ]) ->
+           Some (Printf.sprintf
+                   "%S already watches a value of another type in this \
+                    session, and code holding that watch may still run. Give \
+                    this one another name." name)
+         | _ -> None)
+      markers
+
+(* Registered at run rather than at typing, so a call that fails or is only
+   checked leaves the registry alone, and before running, so a caller can list
+   a marker it has just defined and disarm it before calling the code that
+   reaches it. *)
+let commit_markers typed =
+  List.iter
+    (fun t ->
+       List.iter
+         (fun (name, kind, ty) ->
+            let s = Breakpoint.register ~kind name in
+            if ty <> None then s.Breakpoint.printed_as <- ty)
+         t.markers)
+    typed
 
 (* Warnings are raised by whoever is typing, through a global formatter, so
    they can only be attributed to a phrase by swapping the formatter around
@@ -195,7 +251,7 @@ let typecheck_all ~autorun phrases =
   let rec go i acc = function
     | [] -> restore (); Ok (List.rev acc)
     | (Parsetree.Ptop_dir _ as d) :: rest ->
-      go (i + 1) ({ tree = d; fired = None; sg = []; warns = "" } :: acc) rest
+      go (i + 1) ({ tree = d; fired = None; sg = []; warns = ""; markers = [] } :: acc) rest
     | Parsetree.Ptop_def str0 :: rest ->
       (* A marker cannot be typed as it stands, so it becomes a call with no
          locals first. What is in scope at it is only knowable from the typed
@@ -209,17 +265,6 @@ let typecheck_all ~autorun phrases =
       let breaking = Breakpoint.has_marker str0 in
       let str, marker_locs =
         if breaking then Breakpoint.rewrite_empty str0 else (str0, []) in
-      (* Registered at typing rather than at the first hit, so a caller can
-         list a marker it has just defined and disarm it before running the
-         code that reaches it. *)
-      List.iter
-        (fun (_, name) ->
-           ignore (Breakpoint.register ~kind:Breakpoint.Break name))
-        marker_locs;
-      List.iter
-        (fun (_, name) ->
-           ignore (Breakpoint.register ~kind:Breakpoint.Watch name))
-        watch_sites;
       (* The typing is wrapped so its warnings can be attributed to this
          phrase. It answers with a result rather than raising through the
          wrapper, so the failure path below is unchanged. *)
@@ -231,7 +276,20 @@ let typecheck_all ~autorun phrases =
       in
       (match typing with
        | Ok (tstr, sg, _, _, env) ->
-         Watch.stash_types tstr watch_sites;
+         let markers =
+           List.map (fun (_, name) -> (name, Breakpoint.Break, None)) marker_locs
+           @ List.map (fun (name, ty) -> (name, Breakpoint.Watch, ty))
+               (Watch.types tstr watch_sites)
+         in
+         let earlier =
+           List.concat_map (fun t -> List.map (fun (n, _, _) -> n) t.markers) acc
+         in
+         (match marker_clash ~earlier markers with
+         | Some message ->
+           restore ();
+           Error Msg.{ phase = Typecheck; phrase_index = i; message;
+                       spans = []; lines = []; done_ = [] }
+         | None ->
          let env_before = !Toploop.toplevel_env in
          let str', fired = Autorun.rewrite ~enabled:autorun env_before str tstr in
          if breaking && fired <> None then begin
@@ -277,8 +335,9 @@ let typecheck_all ~autorun phrases =
            in
            Toploop.toplevel_env := env;
            go (i + 1)
-             ({ tree = Parsetree.Ptop_def str'; fired; sg; warns } :: acc) rest
-         end
+             ({ tree = Parsetree.Ptop_def str'; fired; sg; warns; markers } :: acc)
+             rest
+         end)
        | Error exn ->
          let message, spans, lines = Toplevel.describe_exn exn in
          restore ();
@@ -592,8 +651,10 @@ let eval cap ~autorun ~check ~cost src =
       | Error f -> Msg.Failed f
       | Ok typed ->
         (* Which rule fired is known only from this first pass: by the second
-           a bare expression has become a let, so nothing there matches. *)
+           a bare expression has become a let, so nothing there matches. The
+           markers likewise, since the first pass rewrote them away. *)
         let fired = List.map (fun t -> t.fired) typed in
+        let first = typed in
         let phrases, next =
           bind_expressions !implicit_counter (List.map (fun t -> t.tree) typed) in
         (match typecheck_all ~autorun:rules phrases with
@@ -609,6 +670,7 @@ let eval cap ~autorun ~check ~cost src =
                                 autorun = Not_an_eval; checked = true })
            else begin
              implicit_counter := next;
+             commit_markers first;
              (* Everything in the capture file so far is the compiler talking
                 during the two typecheck passes, because nothing has run yet: a
                 phrase cannot print before it executes. Some of it does not go

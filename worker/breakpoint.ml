@@ -56,8 +56,10 @@ type kind = Break | Watch
 (* How many recorded values a watch keeps, per site and per call. A watch in a
    hot loop would otherwise be a leak with a printer attached: the table holds
    the values themselves, since printing needs the type and that is only known
-   at typecheck time. Consecutive duplicates are not stored at all, which is
-   incremental's cutoff idea and bounds an unchanging loop at one entry.
+   at typecheck time. A value physically equal to the one before it in a list
+   is not stored again, which is incremental's cutoff idea and bounds an
+   unchanging loop at one entry; an equal value freshly allocated each time is
+   stored, and collapsed when printed instead (Watch.printed).
    ponytail: one fixed cap; make it per call if anyone needs more. *)
 let trail_limit = 100
 
@@ -72,7 +74,6 @@ type site = {
      [this_call] is emptied at the start of every phrase. *)
   mutable trail : Obj.t list;
   mutable this_call : Obj.t list;
-  mutable last : Obj.t option;   (* for the cutoff *)
   (* The type and environment of the watched expression, stashed when the
      phrase carrying the marker is typed. *)
   mutable printed_as : (Types.type_expr * Env.t) option;
@@ -89,7 +90,7 @@ let register ~kind name =
   | Some s -> s
   | None ->
     let s = { site_name = name; kind; armed = true; hits = 0;
-              trail = []; this_call = []; last = None; printed_as = None } in
+              trail = []; this_call = []; printed_as = None } in
     Hashtbl.replace sites name s; s
 
 let known () =
@@ -118,18 +119,20 @@ let start_call () =
 let cap n l = if List.length l > n then List.filteri (fun i _ -> i < n) l else l
 
 (* Called by the rewritten code. Counts every hit; stores a value only when it
-   differs from the one before it, which is what keeps a loop that changes
-   nothing to a single entry. *)
+   differs from the newest one in that list. Each list is compared against its
+   own head rather than one shared last value, because this_call starts empty:
+   a shared one made a call that repeated the previous call's final value
+   report nothing, and let two sites of one name drop each other's values. *)
 let record name (v : Obj.t) =
   let s = register ~kind:Watch name in
   s.hits <- s.hits + 1;
   if s.armed then begin
-    let same = match s.last with Some p -> p == v | None -> false in
-    if not same then begin
-      s.last <- Some v;
-      s.trail <- cap trail_limit (v :: s.trail);
-      s.this_call <- cap trail_limit (v :: s.this_call)
-    end
+    let add = function
+      | p :: _ as l when p == v -> l
+      | l -> cap trail_limit (v :: l)
+    in
+    s.trail <- add s.trail;
+    s.this_call <- add s.this_call
   end
 
 (* What a continue with abandon raises inside the parked phrase. The toplevel

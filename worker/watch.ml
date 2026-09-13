@@ -128,9 +128,11 @@ let rewrite str =
   (str, List.rev !found)
 
 (* The type and environment at each site, taken from the typed tree the same
-   way a breakpoint's environment is, and stashed on the site so the values it
-   records can be printed once the phrase is over. *)
-let stash_types tstr sites =
+   way a breakpoint's environment is, so the values it records can be printed
+   once the phrase is over. Returned rather than stashed on the site: a call
+   that fails to type, or is only checked, must leave the registry as it was,
+   so eval stashes them once the call is going to run. *)
+let types tstr sites =
   let want = List.map fst sites in
   let found = Hashtbl.create 4 in
   let iter =
@@ -146,29 +148,27 @@ let stash_types tstr sites =
           Tast_iterator.default_iterator.expr self e) }
   in
   iter.Tast_iterator.structure iter tstr;
-  List.iteri
-    (fun i (_, name) ->
-       match Hashtbl.find_opt found i with
-       | None -> ()
-       | Some ty ->
-         let s = Breakpoint.register ~kind:Breakpoint.Watch name in
-         s.Breakpoint.printed_as <- Some ty)
-    sites
+  List.mapi (fun i (_, name) -> (name, Hashtbl.find_opt found i)) sites
 
-(* What a site recorded, printed. The values are raw and the type is the one
-   stashed above, so this is Toploop's own printer rather than a second
-   rendering path. A site whose type was never stashed - the phrase failed to
-   type, say - reports its count and no values rather than guessing. *)
+(* What a site recorded, printed, oldest first. The values are raw and the type
+   is the one stashed above, so this is Toploop's own printer rather than a
+   second rendering path. A site whose type was never stashed - the phrase
+   failed to type, say - reports its count and no values rather than guessing.
+   A run of equal printings is one entry: the record-time cutoff only sees
+   physical equality, so a loop recomputing the same string would otherwise
+   print it once per iteration. The hit count still says how many there were. *)
 let printed (s : Breakpoint.site) values =
   match s.Breakpoint.printed_as with
   | None -> []
   | Some (ty, env) ->
-    List.rev_map
-      (fun v ->
+    List.fold_left
+      (fun acc v ->
          let buf = Buffer.create 64 in
          let ppf = Format.formatter_of_buffer buf in
          (try Toploop.print_value env v ppf ty
           with _ -> Buffer.add_string buf "<could not be printed>");
          Format.pp_print_flush ppf ();
-         Buffer.contents buf)
-      values
+         match acc, Buffer.contents buf with
+         | prev :: _, p when prev = p -> acc
+         | _, p -> p :: acc)
+      [] values

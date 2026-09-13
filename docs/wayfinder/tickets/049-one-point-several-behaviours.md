@@ -152,3 +152,21 @@ bounds each site's trail.
 Two windows, both used: an eval result carries what its own phrase recorded,
 `inspect` carries the whole trail, and `inspect` no longer requires a parked
 phrase when there is something watched.
+
+## Fixed afterwards
+
+**One name, one marker.** Two watches sharing a name shared one stored type,
+so one site's ints were printed with the other's string type and the worker
+died. A call is now refused at typecheck, before anything runs, when two of its
+markers share a name, or when a name already in the session is reused by the
+other kind of marker or for a watch of another type (`Ctype.is_equal`). The
+same kind and type is allowed, because that is what re-evaluating a definition
+does. Markers are registered once a call is going to run rather than while it
+types, so a failed or checked call no longer leaves one in `markers`.
+
+**The cutoff was one slot shared too widely.** It compared against a single
+last value across calls and sites, so a call repeating the previous call's
+final value reported nothing. Each list now compares against its own head. And
+since that comparison is physical, a loop recomputing an equal string stored it
+every time; equal consecutive printings are collapsed when the result is built.
+

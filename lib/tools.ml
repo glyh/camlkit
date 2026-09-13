@@ -143,7 +143,9 @@ let markers_tool =
        marker cannot be removed, because it is compiled into the code that \
        holds it, so a marker in a function you call often keeps firing until \
        you disarm it or redefine the function. Disarming a marker and then \
-       re-evaluating its definition leaves it disarmed.";
+       re-evaluating its definition leaves it disarmed. A name belongs to one \
+       marker: two in one call cannot share it, and a later call may reuse it \
+       only for the same kind of marker watching the same type.";
     "inputSchema", obj
       [ session_arg;
         ("disarm", `Assoc
