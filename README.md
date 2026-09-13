@@ -171,7 +171,7 @@ an empty environment and `lwt.unix`.
 
 ## Using it
 
-Eighteen tools, in two groups.
+Nineteen tools: two groups, and `help`, which returns any tool's manual.
 
 **About values, in a session.** `eval` runs OCaml phrases, `describe` shows a
 signature, `require` loads findlib packages, `load` brings in a dune
@@ -280,7 +280,7 @@ echo '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"eval","arg
 
 ## Status
 
-Working end to end. All eighteen tools are served over MCP stdio, against
+Working end to end. All nineteen tools are served over MCP stdio, against
 real toplevels, one worker per session. 100 tests, of which 57 drive the
 server binary the way a client does.
 

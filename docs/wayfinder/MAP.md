@@ -60,6 +60,26 @@ links loads bytecode archives; the server is native.
 `opam env` is not loaded in the user's fish shell, so every build command
 must evaluate it first. Tests are Alcotest.
 
+**A tool description is a trigger.** It says when to reach for the tool and
+the one mistake that would make a call wrong, nothing more; it is loaded
+whether or not the tool is called. Limits, edge cases and what result fields
+mean go in the tool's manual in `lib/guide.ml`, read through `help`. See
+[Descriptions are triggers](tickets/062-descriptions-are-triggers.md).
+
+**The interface is consistent.** A new tool follows what the others do: the
+same argument names for the same things (`session`, `file`, `line`, `col`,
+`path`), `session` defaulting to `main`, absent rather than empty fields, a
+negative answer rather than `isError` when the question was fine, and a manual
+behind a short description. A deviation needs a reason recorded in its ticket.
+
+**Report, don't guess.** When a result could be tidied by a clever rule, such
+as replacing a watch site when its definition is sent again, do not build the
+rule. Report what happened, with the ids and counts that let the calling agent
+act on it (a warning naming the site and the total, which `markers
+disarm_sites` can then use), and leave the cleanup to that agent. A heuristic
+that hides or replaces something guesses at intent the caller has and we do
+not.
+
 ## Decisions so far
 
 - [Architecture baseline](tickets/001-architecture-baseline.md) — **largely
@@ -375,6 +395,10 @@ must evaluate it first. Tests are Alcotest.
   — **declined.** A bare swap phrase renders only what it did; the same swap
   under `let open` or `let module` renders `val _0 : unit = ()` too. That line
   is true and cheap, and hiding it would add rules to the rewrite.
+- [Descriptions are triggers](tickets/062-descriptions-are-triggers.md)
+  — **decided.** Descriptions say when to use a tool; the detail moved to a
+  manual behind a nineteenth tool, `help`. 16.4 KB loaded with the tools
+  became 7.2 KB.
 - [Testing strategy](tickets/013-testing-strategy.md) — one tier, integration
   tests spawn a real worker and the real server in the default `dune test`.
 

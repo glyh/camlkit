@@ -7,14 +7,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 An MCP server, written in OCaml, that gives an MCP client live OCaml
 toplevels. A bytecode worker process owns the toplevel over
 `compiler-libs.toplevel`; the native server supervises one worker per named
-session and speaks MCP over stdio. Eighteen tools: `eval`, `describe`, `require`,
+session and speaks MCP over stdio. Nineteen tools: `eval`, `describe`, `require`,
 `load`, `reset`, `continue`, `inspect` (session state), `markers` (the
 breakpoints and watches a session knows), `locate`, `type_at`,
 `outline`, `uses`, `search_type`, `document`, `expand` (what a ppx generated at
 a position), `diagnostics` (errors for one file, or for an edit not yet
 written), `context` (the opens that put a
-session in a file's context; merlin, no session needed) and
-`signature` (an installed package's interfaces, no session needed). There is
+session in a file's context; merlin, no session needed),
+`signature` (an installed package's interfaces, no session needed), and `help`
+(each tool's manual, behind a description kept short: ticket 062). There is
 no build tool; see ticket 025.
 
 ## Commands
