@@ -263,8 +263,11 @@ let neutral_position = position 1 0
 
 (* Fields merlin sends on every entry that say nothing: an outline item's empty
    `children` and `deprecated: false`, an occurrence's `stale: false`, an
-   enclosing's `tail: "no"`. Absent is what an eval result means by nothing to
-   say, and an outline of a large file paid for them once per definition. The
+   enclosing's `tail: "no"`, and any null, such as a search result's `doc` on
+   a value with no comment. A search result's `constructible` goes too: it is
+   the name and one `_` per argument, which its type already says. Absent is
+   what an eval result means by nothing to say, and an outline of a large file
+   paid for them once per definition. The
    other values of each are kept, since they are the case worth reading.
 
    `selection` stays: it is the name's span inside the item's, and an item
@@ -277,7 +280,8 @@ let rec trim = function
          (fun (k, v) ->
             match k, v with
             | "children", `List [] | "deprecated", `Bool false
-            | "stale", `Bool false | "tail", `String "no" -> None
+            | "stale", `Bool false | "tail", `String "no"
+            | _, `Null | "constructible", _ -> None
             | _ -> Some (k, trim v))
          fields)
   | `List items -> `List (List.map trim items)
