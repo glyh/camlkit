@@ -966,6 +966,29 @@ let test_two_parked_phrases_need_an_id () =
 (* Stopping escapes the blocking run autorun would wrap the phrase in, which
    would leave the scheduler unable to start another. Refused before anything
    runs rather than left as a trap. *)
+(* A breakpoint defined earlier and reached from inside a run is not seen by
+   that refusal, and stops. A promise phrase sent while it is parked fails with
+   the scheduler's message, so the failure also names the parked phrase. See
+   tickets/052. *)
+let test_a_run_blocked_by_a_parked_run_says_so () =
+  with_server @@ fun c ->
+  let s = `String "bp52" in
+  ignore (call c ~id:1 ~tool:"require"
+            ~args:(`Assoc [ "session", s; "packages", `List [ `String "lwt.unix" ] ]));
+  let ev id code = call c ~id ~tool:"eval" ~args:(`Assoc [ "session", s; "code", `String code ]) in
+  ignore (ev 2 "let hb () = [%break \"inner\"]; 7;;");
+  let r = ev 3 "Lwt.map (fun () -> hb ()) (Lwt_unix.sleep 0.01);;" in
+  Alcotest.(check bool) "it stops inside the run" true (has "inner" (text r));
+  let r = ev 4 "Lwt.map (fun () -> 5) (Lwt_unix.sleep 0.01);;" in
+  Alcotest.(check bool) "the next run fails, naming the parked phrase" true
+    (has "Nested calls" (text r) && has "stopped at \"inner\"" (text r));
+  let r = ev 5 "1 + 1;;" in
+  Alcotest.(check bool) "a phrase that is not a run says nothing of it" true
+    (not (has "stopped at" (text r)));
+  ignore (call c ~id:6 ~tool:"continue" ~args:(`Assoc [ "session", s ]));
+  let r = ev 7 "Lwt.map (fun () -> 5) (Lwt_unix.sleep 0.01);;" in
+  Alcotest.(check bool) "released, runs start again" true (has "= 5" (text r))
+
 let test_a_breakpoint_under_autorun_is_refused () =
   with_server @@ fun c ->
   ignore (call c ~id:1 ~tool:"require"
@@ -1464,6 +1487,8 @@ let () =
            test_two_parked_phrases_need_an_id;
          Alcotest.test_case "a breakpoint under autorun is refused" `Slow
            test_a_breakpoint_under_autorun_is_refused;
+         Alcotest.test_case "a run blocked by a parked run says so" `Slow
+           test_a_run_blocked_by_a_parked_run_says_so;
          Alcotest.test_case "a swap reaches every caller" `Slow
            test_a_swap_reaches_every_caller;
          Alcotest.test_case "a watch records without stopping" `Slow

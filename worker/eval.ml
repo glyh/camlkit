@@ -631,7 +631,7 @@ let rec execute_from cap ~acc ~pos ~measure start phrases =
         let id = Breakpoint.fresh_id () in
         let name, site_at = stopped_at site in
         Breakpoint.park { Breakpoint.id; site; k; locals; buf;
-                          seen = Buffer.length buf; rest; index = i };
+                          seen = Buffer.length buf; rest; index = i; run = ran };
         Msg.Stopped { id; name; site_id = site; site_at; phrase_index = i;
                       bound; skipped;
                       done_ = List.rev !acc }
@@ -640,6 +640,30 @@ let rec execute_from cap ~acc ~pos ~measure start phrases =
         Msg.Interrupted { phrase_index = i; done_ = List.rev !acc }
       else if ok then go (i + 1) rest
       else
+        (* A promise phrase that fails while another is parked inside a run of
+           the same rule most likely failed for that reason, and the
+           scheduler's own message ("Nested calls to Lwt_main.run") names
+           nothing the caller did. Said beside it, not instead of it, since the
+           phrase may have failed on its own account. See tickets/052. *)
+        let parked_note =
+          match ran with
+          | None -> ""
+          | Some rule ->
+            match Breakpoint.parked_in_run rule with
+            | [] -> ""
+            | ps ->
+              let ids = String.concat ", "
+                  (List.map (fun (p : Breakpoint.parked) ->
+                       Printf.sprintf "id %d (stopped at %S)" p.Breakpoint.id
+                         (fst (stopped_at p.Breakpoint.site))) ps) in
+              Printf.sprintf
+                "\nThis phrase ran under autorun %s while the phrase parked as \
+                 %s is still inside its own %s run. A run cannot start while \
+                 another has not returned: continue or abandon it, then \
+                 send this again.\n"
+                rule ids rule
+        in
+        let record = { record with Msg.rendering = record.Msg.rendering ^ parked_note } in
         (* The phrases before this one really ran. Keep their records, and
            this one's, so their output is not thrown away with the error. *)
         Msg.Failed { phase = Execute; phrase_index = i;

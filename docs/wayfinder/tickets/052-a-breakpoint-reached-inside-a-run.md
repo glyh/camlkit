@@ -1,8 +1,8 @@
 ---
-status: open
+status: resolved
 type: defect
 blocked-by: [035, 019]
-assignee:
+assignee: lyh
 ---
 
 # A breakpoint reached inside a run
@@ -51,3 +51,36 @@ and its scheduler may not recover the way Lwt's does.
 - **Whether the static refusal is still earned.** If Lwt recovers after
   release, a breakpoint written directly in an autorun phrase is no worse than
   this case. Measuring Async decides it.
+
+## Decided
+
+**Explain the failure; the stop stays allowed.** Each parked phrase records the
+autorun rule its phrase ran under (`Breakpoint.parked.run`). A phrase that runs
+under the same rule and fails at execute gets a note after the scheduler's
+message, naming the parked phrase by the id `continue` takes and the marker it
+stopped at:
+
+    Exception: Failure "Nested calls to Lwt_main.run are not allowed".
+
+    This phrase ran under autorun lwt while the phrase parked as id 1
+    (stopped at "inner") is still inside its own lwt run. A run cannot start
+    while another has not returned: continue or abandon it, then send
+    this again.
+
+Beside the message, not instead of it, and no matching on its text: while a
+run is parked, an Lwt promise phrase can only fail this way, but a promise
+phrase under Async, which is not measured, might fail for a reason of its own,
+and then both are shown rather than ours hiding it.
+
+Refusing at the stop was rejected. It would take away a working stop, because
+Lwt recovers once the phrase is released, to prevent a failure that now
+explains itself.
+
+Tested in `a run blocked by a parked run says so`: the stop, the failure with
+the note, no note on a phrase that is not a run, and runs working again after
+`continue`.
+
+## Still open
+
+Whether the static refusal in 035 is still earned. It turns on Async, which is
+still not measured, and nothing here changed it.

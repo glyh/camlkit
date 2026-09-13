@@ -227,6 +227,10 @@ type parked = {
      made while parked cannot change what they refer to. *)
   rest : (Parsetree.toplevel_phrase * string option * string) list;
   index : int;
+  (* The autorun rule the stopped phrase runs under, if any. Its run has not
+     returned, so a later phrase under the same rule cannot start one, and
+     fails with the scheduler's message rather than ours; see tickets/052. *)
+  run : string option;
   (* The rest of the phrase prints into the buffer the original call gave
      execute_phrase, which is inside the continuation and cannot be swapped.
      They are held here so the call that resumes can read what was added. *)
@@ -241,6 +245,12 @@ let fresh_id () = incr last_id; !last_id
 let find id = Hashtbl.find_opt table id
 let forget id = Hashtbl.remove table id
 let park p = Hashtbl.replace table p.id p
+
+(* The parked phrases stopped inside a run of this rule, oldest first. *)
+let parked_in_run rule =
+  List.sort (fun a b -> compare a.id b.id)
+    (Hashtbl.fold (fun _ p acc -> if p.run = Some rule then p :: acc else acc)
+       table [])
 
 let ids () =
   List.sort compare (Hashtbl.fold (fun id _ acc -> id :: acc) table [])
