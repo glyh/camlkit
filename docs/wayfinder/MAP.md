@@ -432,6 +432,11 @@ not.
 - [Output schemas drift from results](tickets/070-output-schemas-drift-from-results.md)
   — **open.** `locate` declared fields it never sent; `eval` declares none of
   its failure fields. No test compares a result's keys with its schema.
+- [Tools declared from their types](tickets/071-tools-declared-from-their-types.md)
+  — **open.** A deriver, as the C# SDK derives from a method: arguments, result
+  and annotations from types. Decided: tagged `oneOf` variants, empty absent by
+  default, `content` always the serialized structure. `Tool.make` owns
+  `isError`. Open: `eval`'s late reply, where the manual goes.
 - [Testing strategy](tickets/013-testing-strategy.md) — one tier, integration
   tests spawn a real worker and the real server in the default `dune test`.
 

@@ -1,7 +1,7 @@
 ---
 status: open
 type: defect
-blocked-by: [002, 062]
+blocked-by: [002, 062, 071]
 assignee:
 ---
 
@@ -29,6 +29,10 @@ extra keys conform. The cost is a schema that is wrong by omission, and one
 that was wrong outright with no test to notice.
 
 ## Direction
+
+Superseded by [Tools declared from their types](071-tools-declared-from-their-types.md):
+results and arguments derived from types, so drift is a compile error rather
+than something a test samples. What follows was the first proposal.
 
 A test is the fix that stays fixed: for each result the server suite already
 produces, every top-level key of `structuredContent` is declared in that tool's
