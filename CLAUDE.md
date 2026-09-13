@@ -167,7 +167,11 @@ stop one short of redefining its function. See ticket 049.
 function check a cell on entry, and `[%swap M.f replacement]` in eval fills it
 after checking the replacement against `f`'s type. Callers inside `f`'s own
 module see it too, which overwriting the module's field cannot give. See ticket
-054.
+054. **Only functions swap.** That covers a function written with parameters,
+and one computed by an expression, found by typing the unit (ticket 056). A
+value is read once by callers at their own initialisation, so no cell reaches
+them. Externals, functor bodies (057) and session definitions (058) are left as
+built too.
 
 Prefer stability over linking: merlin is shelled out to in single mode rather
 than linked, and the reasoning is a long comment at the top of

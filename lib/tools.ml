@@ -72,8 +72,11 @@ let eval_tool =
        [%swap Module.f replacement] makes every caller of a function in a \
        project brought in by load call the replacement instead, callers inside \
        its own module included; [%swap Module.f] puts the original back, and \
-       the markers tool lists the swaps in force. The \
-       replacement must have the function's type, at least as general. Pass \
+       the markers tool lists the swaps in force. Only functions can be \
+       swapped: a top-level function of that project, including one computed \
+       by an expression such as let pp = Fmt.list item. A value, an external, \
+       a function inside a functor, and anything load did not build cannot. \
+       The replacement must have the function's type, at least as general. Pass \
        check to typecheck without running.";
     "inputSchema", obj ~required:[ "code" ]
       [ session_arg;
